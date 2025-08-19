@@ -1,0 +1,12 @@
+~
+.DS_Store
+trading-app/target
+trading-app/.env
+trading-app/**/target
+backend/target
+backend/**/target
+postgres-data/*
+postgres-data/**/*
+default.profraw
+jts.ini
+output.log

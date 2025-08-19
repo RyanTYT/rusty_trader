@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                order_perm_id,\n                order_id,\n                strategy,\n                stock,\n                primary_exchange,\n                expiry,\n                strike,\n                multiplier,\n                option_type AS \"option_type!:OptionType\",\n                time,\n                quantity,\n                executions,\n                filled\n            FROM trading.open_option_orders\n            WHERE strategy = $1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "order_perm_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "order_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "expiry",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "strike",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "multiplier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "option_type!:OptionType",
+        "type_info": {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "quantity",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 11,
+        "name": "executions",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 12,
+        "name": "filled",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b4e8dc58675fa370f6d28e6b638ea380bac9b56ec9928c5a2212273a6c4b6d55"
+}

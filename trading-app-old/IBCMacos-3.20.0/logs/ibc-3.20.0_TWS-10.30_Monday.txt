@@ -1,0 +1,896 @@
+
+================================================================================
+
+Starting IBC version 3.20.0 on 2025-02-03 at 16:33:24
+
+Operating system: Darwin rtyt-m2-mac.local 23.5.0 Darwin Kernel Version 23.5.0: Wed May  1 20:19:05 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8112 arm64
+
+Arguments:
+
+TWS version = 10.30
+Program = TWS
+Entry point = ibcalpha.ibc.IbcTws
+--tws-path = /Applications
+--tws-settings-path = 
+--ibc-path = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0
+--ibc-ini = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+--mode = paper
+--java-path = 
+--user =
+--pw =
+
+=================================
+Generating the classpath
+Classpath=/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+
+Generating the JAVA VM options
+autorestart file not found
+
+Java VM Options=-Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=fhsIcHQB
+
+Determining the location of java executable
+Location of java executable=/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin
+
+Renaming IB's TWS or Gateway start script to prevent restart without IBC
+
+Starting TWS with this command:
+"/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin/java" -cp "/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar" -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=fhsIcHQB ibcalpha.ibc.IbcTws "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini"  paper
+
+IBC Settings:
+    AcceptBidAskLastSizeDisplayUpdateNotification=
+    AcceptIncomingConnectionAction=manual
+    AcceptNonBrokerageAccountWarning=yes
+    AllowBlindTrading=no
+    AutoLogoffTime=12:30 AM
+    AutoRestartTime=
+    BindAddress=
+    BypassBondWarning=
+    BypassCalledBondWarning=
+    BypassNegativeYieldToWorstConfirmation=
+    BypassNoOverfillProtectionPrecaution=
+    BypassOrderPrecautions=
+    BypassPriceBasedVolatilityRiskWarning=
+    BypassRedirectOrderWarning=
+    BypassSameActionPairTradeWarning=
+    BypassUSStocksMarketDataInSharesWarning=
+    ClosedownAt=
+    ColdRestartTime=
+    CommandPrompt=
+    CommandServerPort=7462
+    ConfirmCryptoCurrencyOrders=manual
+    ConfirmOrderIdReset=
+    ControlFrom=
+    DismissNSEComplianceNotice=yes
+    DismissPasswordExpiryWarning=no
+    ExistingSessionDetectedAction=manual
+    ExitAfterSecondFactorAuthenticationTimeout=no
+    FIX=no
+    FIXLoginId=***
+    FIXPassword=***
+    IbDir=
+    IbLoginId=***
+    IbPassword=***
+    LogStructureScope=known
+    LogStructureWhen=never
+    LoginDialogDisplayTimeout=60
+    MinimizeMainWindow=no
+    OverrideTwsApiPort=
+    OverrideTwsMasterClientID=
+    ReadOnlyApi=no
+    ReadOnlyLogin=no
+    ReloginAfterSecondFactorAuthenticationTimeout=yes
+    ResetOrderIdsAtStart=
+    SaveTwsSettingsAt=
+    SecondFactorAuthenticationExitInterval=30
+    SecondFactorAuthenticationTimeout=180
+    SecondFactorDevice=
+    SendMarketDataInLotsForUSstocks=
+    StoreSettingsOnServer=
+    SuppressInfoMessages=yes
+    TradingMode=paper
+    TrustedTwsApiClientIPs=
+End IBC Settings
+
+2025-02-03 16:33:25:060 IBC: version: 3.20.0
+System Properties
+------------------------------------------------------------
+gopherProxySet = false
+awt.toolkit = sun.lwawt.macosx.LWCToolkit
+java.specification.version = 11
+sun.cpu.isalist = 
+sun.jnu.encoding = UTF-8
+channel = latest
+java.class.path = /Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+java.vm.vendor = Azul Systems, Inc.
+ibcsessionid = fhsIcHQB
+sun.arch.data.model = 64
+java.vendor.url = http://www.azul.com/
+user.timezone = Asia/Singapore
+os.name = Mac OS X
+java.vm.specification.version = 11
+sun.java.launcher = SUN_STANDARD
+user.country = SG
+sun.boot.library.path = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/lib
+sun.java.command = ibcalpha.ibc.IbcTws /Users/ryantan/Downloads/Personal *** *** paper
+http.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+jdk.debug = release
+sun.cpu.endian = little
+user.home = /Users/ryantan
+user.language = en
+java.specification.vendor = Oracle Corporation
+java.version.date = 2021-10-19
+java.home = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home
+jtsConfigDir = /Users/ryantan/Jts
+file.separator = /
+java.vm.compressedOopsMode = Zero based
+line.separator = 
+
+java.specification.name = Java Platform API Specification
+java.vm.specification.vendor = Oracle Corporation
+twslaunch.autoupdate.serviceImpl = com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService
+jdk.vendor.version = Zulu11.52+13-CA
+install4jType = standalone
+java.awt.graphicsenv = sun.awt.CGraphicsEnvironment
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+ftp.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+exe4j.isInstall4j = true
+java.runtime.version = 11.0.13+8-LTS
+user.name = ryantan
+path.separator = :
+os.version = 14.5
+java.runtime.name = OpenJDK Runtime Environment
+file.encoding = UTF-8
+java.vm.name = OpenJDK 64-Bit Server VM
+java.vendor.version = Zulu11.52+13-CA
+java.vendor.url.bug = http://www.azul.com/support/
+java.io.tmpdir = /var/folders/xg/5rkvcq9n79jgm1bb8vc6mj6w0000gn/T/
+java.version = 11.0.13
+user.dir = /Users/ryantan/Jts
+os.arch = aarch64
+java.vm.specification.name = Java Virtual Machine Specification
+java.awt.printerjob = sun.lwawt.macosx.CPrinterJob
+sun.os.patch.level = unknown
+java.library.path = /Users/ryantan/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:.
+java.vm.info = mixed mode
+java.vendor = Azul Systems, Inc.
+java.vm.version = 11.0.13+8-LTS
+sun.io.unicode.encoding = UnicodeBig
+java.class.version = 55.0
+socksNonProxyHosts = local|*.local|169.254/16|*.169.254/16
+------------------------------------------------------------
+2025-02-03 16:33:25:062 IBC: using default settings provider: ini file is /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+2025-02-03 16:33:25:062 IBC: using default login manager: will get username and password from settings; FIX username and password (if required) from settings
+2025-02-03 16:33:25:062 IBC: using default main window manager
+2025-02-03 16:33:25:062 IBC: using default trading mode manager: constructor parameter args: tradingMode=paper
+2025-02-03 16:33:25:062 IBC: using default config dialog manager
+2025-02-03 16:33:25:064 IBC: CommandServer is starting with port 7462
+2025-02-03 16:33:25:070 IBC: CommandServer listening on addresses: fe80:0:0:0:ce81:b1c:bd2c:69e%utun3,fe80:0:0:0:b614:d05a:225f:9b0f%utun2,fe80:0:0:0:3976:8f22:6cf9:56d6%utun1,fe80:0:0:0:9966:2b07:fd87:6daa%utun0,fe80:0:0:0:869:c6ff:fea7:594b%llw0,fe80:0:0:0:869:c6ff:fea7:594b%awdl0,fe80:0:0:0:10b2:4ff8:7a9d:516b%en0,192.168.1.27,fe80:0:0:0:0:0:0:1%lo0,0:0:0:0:0:0:0:1%lo0,127.0.0.1; port: 7462
+2025-02-03 16:33:25:070 IBC: CommandServer started and is ready to accept commands
+2025-02-03 16:33:25:272 IBC: TWS Settings directory is: /Users/ryantan/Jts
+2025-02-03 16:33:25:273 IBC: Starting session: will exit if login dialog is not displayed within 60 seconds
+2025-02-03 16:33:25:310 IBC: Ensuring /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 16:33:25:311 IBC: Found setting: [Logon]/s3store=true
+2025-02-03 16:33:25:311 IBC: Found setting: [Logon]/Locale=en
+2025-02-03 16:33:25:311 IBC: Found setting: [Logon]/displayedproxymsg=1
+2025-02-03 16:33:25:311 IBC: Found setting: [Logon]/UseSSL=true
+2025-02-03 16:33:25:311 IBC: Found setting: [IBGateway]/ApiOnly=true
+2025-02-03 16:33:25:311 IBC: Confirmed /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 16:33:25:311 IBC: Starting TWS
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by feature.search.recorder.JtsMultiLookAndFeel (file:/Applications/Trader%20Workstation%2010.30/jars/twslaunch-1030.jar) to method javax.swing.UIManager.getLAFState()
+WARNING: Please consider reporting this to the maintainers of feature.search.recorder.JtsMultiLookAndFeel
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+2025-02-03 16:33:26:843 IBC: Getting config dialog
+2025-02-03 16:33:26:843 IBC: Creating config dialog future
+2025-02-03 16:33:26:845 IBC: Getting config dialog
+2025-02-03 16:33:26:845 IBC: Getting main window
+2025-02-03 16:33:26:845 IBC: Creating main window future
+2025-02-03 16:33:26:845 IBC: Waiting for config dialog future to complete
+2025-02-03 16:33:28:153 IBC: detected frame entitled: Login; event=Activated
+2025-02-03 16:33:28:155 IBC: detected frame entitled: Login; event=Focused
+2025-02-03 16:33:28:156 IBC: detected frame entitled: Login; event=Opened
+2025-02-03 16:33:28:156 IBC: Login dialog WINDOW_OPENED: LoginState is LOGGED_OUT
+2025-02-03 16:33:28:156 IBC: Setting Trading mode = paper
+2025-02-03 16:33:28:233 IBC: Setting user name
+2025-02-03 16:33:28:233 IBC: Setting password
+2025-02-03 16:33:35:007 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-03 16:33:35:008 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-03 16:33:35:008 IBC: detected dialog entitled: Existing session detected; event=Activated
+2025-02-03 16:33:35:033 IBC: detected dialog entitled: Existing session detected; event=Focused
+2025-02-03 16:33:35:033 IBC: detected dialog entitled: Existing session detected; event=Opened
+2025-02-03 16:33:35:034 IBC: User must choose whether to continue with this session (scenario 1)
+2025-02-03 16:33:39:708 IBC: detected dialog entitled: Existing session detected; event=Lost focus
+2025-02-03 16:33:39:723 IBC: detected dialog entitled: Existing session detected; event=Deactivated
+2025-02-03 16:33:39:723 IBC: detected frame entitled: Login; event=Activated
+2025-02-03 16:33:39:724 IBC: detected frame entitled: Login; event=Focused
+2025-02-03 16:33:39:724 IBC: detected dialog entitled: Existing session detected; event=Closed
+2025-02-03 16:33:42:044 IBC: detected dialog entitled: Downloading settings from server; event=Closed
+2025-02-03 16:33:42:773 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-03 16:33:42:773 IBC: detected frame entitled: Login; event=Deactivated
+LogModuleConfigurator-Init: Log4j Ver2.x found on classpath
+LogModuleConfigurator-Init: LogModuleConfigurator initialized with Log4j Verd.x
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+2025-02-03 16:33:53:692 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Opened
+2025-02-03 16:33:53:693 IBC: Found TWS main window
+2025-02-03 16:33:53:693 IBC: Login has completed
+2025-02-03 16:33:53:697 IBC: Got main window from future
+2025-02-03 16:33:53:697 IBC: Invoking config dialog menu
+2025-02-03 16:33:54:328 IBC: detected frame entitled: Daily Lineup: Monday, February 03, 2025; event=Opened
+2025-02-03 16:33:54:329 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 16:33:54:329 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 16:34:06:361 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Activated
+2025-02-03 16:34:06:361 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Focused
+2025-02-03 16:34:06:569 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Lost focus
+2025-02-03 16:34:06:570 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Deactivated
+2025-02-03 16:34:06:570 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:34:06:573 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:34:06:578 IBC: detected frame entitled: ; event=Opened
+2025-02-03 16:34:07:115 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:34:07:116 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:34:07:117 IBC: detected dialog entitled: Warning; event=Activated
+2025-02-03 16:34:07:117 IBC: detected dialog entitled: Warning; event=Focused
+2025-02-03 16:34:07:970 IBC: detected dialog entitled: Warning; event=Opened
+2025-02-03 16:34:07:971 IBC: Click button: I understand and accept
+2025-02-03 16:34:08:541 IBC: detected dialog entitled: Warning; event=Lost focus
+2025-02-03 16:34:08:542 IBC: detected dialog entitled: Warning; event=Deactivated
+2025-02-03 16:34:08:542 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Activated
+2025-02-03 16:34:08:543 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Focused
+2025-02-03 16:34:08:543 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Opened
+2025-02-03 16:34:08:546 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Lost focus
+2025-02-03 16:34:08:546 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Deactivated
+2025-02-03 16:34:08:596 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Activated
+2025-02-03 16:34:08:597 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Focused
+2025-02-03 16:34:09:401 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Lost focus
+2025-02-03 16:34:09:401 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Deactivated
+2025-02-03 16:34:09:401 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:34:09:402 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:34:09:403 IBC: detected dialog entitled: API announcements; event=Closed
+2025-02-03 16:34:09:404 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Closed
+2025-02-03 16:34:09:404 IBC: detected dialog entitled: Warning; event=Closed
+2025-02-03 16:34:09:596 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Opened
+2025-02-03 16:34:09:596 IBC: Got config dialog from future
+2025-02-03 16:34:09:596 IBC: Got config dialog from future
+2025-02-03 16:34:09:597 IBC: detected dialog entitled: API announcements; event=Opened
+2025-02-03 16:34:09:598 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:34:09:599 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:34:09:600 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Activated
+2025-02-03 16:34:09:601 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Focused
+2025-02-03 16:34:09:878 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Lost focus
+2025-02-03 16:34:09:879 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Deactivated
+2025-02-03 16:34:09:879 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:34:09:880 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:34:09:883 IBC: Setting ReadOnlyApi
+2025-02-03 16:34:09:908 IBC: Read-Only API checkbox is already set to: false
+2025-02-03 16:34:09:908 IBC: Setting Auto logoff time
+2025-02-03 16:34:09:929 IBC: Auto logoff time already set to 12:30 AM
+2025-02-03 16:34:09:932 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:34:09:933 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:34:09:933 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Activated
+2025-02-03 16:34:09:933 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Focused
+2025-02-03 16:34:09:942 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Lost focus
+2025-02-03 16:34:09:942 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Deactivated
+2025-02-03 16:34:09:942 IBC: detected dialog entitled: Login Messages; event=Activated
+2025-02-03 16:34:09:943 IBC: detected dialog entitled: Login Messages; event=Focused
+2025-02-03 16:34:09:943 IBC: detected dialog entitled: Login Messages; event=Opened
+2025-02-03 16:34:10:351 IBC: Configuration tasks completed
+2025-02-03 16:34:10:351 IBC: Click button: OK
+2025-02-03 16:34:10:590 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Closed
+2025-02-03 16:34:13:917 IBC: detected dialog entitled: Login Messages; event=Closing
+2025-02-03 16:34:13:919 IBC: detected dialog entitled: Login Messages; event=Lost focus
+2025-02-03 16:34:13:919 IBC: detected dialog entitled: Login Messages; event=Deactivated
+2025-02-03 16:34:13:920 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Activated
+2025-02-03 16:34:13:921 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Focused
+2025-02-03 16:34:13:921 IBC: detected dialog entitled: Login Messages; event=Closed
+2025-02-03 16:34:15:278 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Lost focus
+2025-02-03 16:34:15:278 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Deactivated
+2025-02-03 16:34:15:278 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Activated
+2025-02-03 16:34:15:280 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Focused
+2025-02-03 16:34:16:825 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Closing
+2025-02-03 16:34:17:068 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Lost focus
+2025-02-03 16:34:17:069 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Deactivated
+2025-02-03 16:34:17:070 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Activated
+2025-02-03 16:34:17:071 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Focused
+2025-02-03 16:34:17:083 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Opened
+2025-02-03 16:34:18:596 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Closed
+2025-02-03 16:34:18:596 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Lost focus
+2025-02-03 16:34:18:596 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Deactivated
+2025-02-03 16:34:18:598 IBC: detected frame entitled: DU3156861 OptionTrader - AAPL (Simulated Trading); event=Closed
+2025-02-03 16:34:18:599 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Activated
+2025-02-03 16:34:18:602 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Focused
+2025-02-03 16:34:19:813 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Closing
+2025-02-03 16:34:20:062 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Lost focus
+2025-02-03 16:34:20:062 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Deactivated
+2025-02-03 16:34:20:062 IBC: detected dialog entitled: API announcements; event=Activated
+2025-02-03 16:34:20:064 IBC: detected dialog entitled: API announcements; event=Focused
+2025-02-03 16:34:20:066 IBC: detected frame entitled: Dow Jones Today's Top Ten; event=Closed
+2025-02-03 16:34:25:523 IBC: detected dialog entitled: API announcements; event=Lost focus
+2025-02-03 16:34:25:524 IBC: detected dialog entitled: API announcements; event=Deactivated
+2025-02-03 16:34:25:524 IBC: detected dialog entitled: API announcements; event=Closed
+2025-02-03 16:34:25:525 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:34:25:526 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:34:27:138 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:34:27:139 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:34:40:762 IBC: CommandServer: ControlFrom setting = 
+2025-02-03 16:34:40:762 IBC: CommandServer accepted connection from: /127.0.0.1
+2025-02-03 16:34:40:764 IBC: CommandServer received command: STOP
+2025-02-03 16:34:40:764 IBC: Closing command channel
+2025-02-03 16:34:40:764 IBC: Login has completed: exiting via [File, Exit] menu
+2025-02-03 16:34:40:764 IBC: Getting main window
+2025-02-03 16:34:40:764 IBC: Main window already found
+2025-02-03 16:34:40:912 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Opened
+2025-02-03 16:34:40:913 IBC: Click button: Yes
+2025-02-03 16:34:41:022 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Closed
+2025-02-03 16:34:41:024 IBC: detected dialog entitled: Shutdown progress; event=Opened
+2025-02-03 16:34:41:024 IBC: CommandServer closing
+2025-02-03 16:34:41:024 IBC: CommandServer is shutdown
+
+================================================================================
+
+Starting IBC version 3.20.0 on 2025-02-03 at 16:34:42
+
+Operating system: Darwin rtyt-m2-mac.local 23.5.0 Darwin Kernel Version 23.5.0: Wed May  1 20:19:05 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8112 arm64
+
+Arguments:
+
+TWS version = 10.30
+Program = TWS
+Entry point = ibcalpha.ibc.IbcTws
+--tws-path = /Applications
+--tws-settings-path = 
+--ibc-path = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0
+--ibc-ini = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+--mode = paper
+--java-path = 
+--user =
+--pw =
+
+=================================
+Generating the classpath
+Classpath=/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+
+Generating the JAVA VM options
+autorestart file not found
+
+Java VM Options=-Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=qPKrzRwm
+
+Determining the location of java executable
+Location of java executable=/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin
+
+Renaming IB's TWS or Gateway start script to prevent restart without IBC
+
+Starting TWS with this command:
+"/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin/java" -cp "/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar" -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=qPKrzRwm ibcalpha.ibc.IbcTws "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini"  paper
+
+IBC Settings:
+    AcceptBidAskLastSizeDisplayUpdateNotification=
+    AcceptIncomingConnectionAction=manual
+    AcceptNonBrokerageAccountWarning=yes
+    AllowBlindTrading=no
+    AutoLogoffTime=12:30 AM
+    AutoRestartTime=
+    BindAddress=
+    BypassBondWarning=
+    BypassCalledBondWarning=
+    BypassNegativeYieldToWorstConfirmation=
+    BypassNoOverfillProtectionPrecaution=
+    BypassOrderPrecautions=
+    BypassPriceBasedVolatilityRiskWarning=
+    BypassRedirectOrderWarning=
+    BypassSameActionPairTradeWarning=
+    BypassUSStocksMarketDataInSharesWarning=
+    ClosedownAt=
+    ColdRestartTime=
+    CommandPrompt=
+    CommandServerPort=7462
+    ConfirmCryptoCurrencyOrders=manual
+    ConfirmOrderIdReset=
+    ControlFrom=
+    DismissNSEComplianceNotice=yes
+    DismissPasswordExpiryWarning=no
+    ExistingSessionDetectedAction=manual
+    ExitAfterSecondFactorAuthenticationTimeout=no
+    FIX=no
+    FIXLoginId=***
+    FIXPassword=***
+    IbDir=
+    IbLoginId=***
+    IbPassword=***
+    LogStructureScope=known
+    LogStructureWhen=never
+    LoginDialogDisplayTimeout=60
+    MinimizeMainWindow=no
+    OverrideTwsApiPort=
+    OverrideTwsMasterClientID=
+    ReadOnlyApi=no
+    ReadOnlyLogin=no
+    ReloginAfterSecondFactorAuthenticationTimeout=yes
+    ResetOrderIdsAtStart=
+    SaveTwsSettingsAt=
+    SecondFactorAuthenticationExitInterval=30
+    SecondFactorAuthenticationTimeout=180
+    SecondFactorDevice=
+    SendMarketDataInLotsForUSstocks=
+    StoreSettingsOnServer=
+    SuppressInfoMessages=yes
+    TradingMode=paper
+    TrustedTwsApiClientIPs=
+End IBC Settings
+
+2025-02-03 16:34:42:300 IBC: version: 3.20.0
+System Properties
+------------------------------------------------------------
+gopherProxySet = false
+awt.toolkit = sun.lwawt.macosx.LWCToolkit
+java.specification.version = 11
+sun.cpu.isalist = 
+sun.jnu.encoding = UTF-8
+channel = latest
+java.class.path = /Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+java.vm.vendor = Azul Systems, Inc.
+ibcsessionid = qPKrzRwm
+sun.arch.data.model = 64
+java.vendor.url = http://www.azul.com/
+user.timezone = Asia/Singapore
+os.name = Mac OS X
+java.vm.specification.version = 11
+sun.java.launcher = SUN_STANDARD
+user.country = SG
+sun.boot.library.path = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/lib
+sun.java.command = ibcalpha.ibc.IbcTws /Users/ryantan/Downloads/Personal *** *** paper
+http.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+jdk.debug = release
+sun.cpu.endian = little
+user.home = /Users/ryantan
+user.language = en
+java.specification.vendor = Oracle Corporation
+java.version.date = 2021-10-19
+java.home = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home
+jtsConfigDir = /Users/ryantan/Jts
+file.separator = /
+java.vm.compressedOopsMode = Zero based
+line.separator = 
+
+java.specification.name = Java Platform API Specification
+java.vm.specification.vendor = Oracle Corporation
+twslaunch.autoupdate.serviceImpl = com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService
+jdk.vendor.version = Zulu11.52+13-CA
+install4jType = standalone
+java.awt.graphicsenv = sun.awt.CGraphicsEnvironment
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+ftp.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+exe4j.isInstall4j = true
+java.runtime.version = 11.0.13+8-LTS
+user.name = ryantan
+path.separator = :
+os.version = 14.5
+java.runtime.name = OpenJDK Runtime Environment
+file.encoding = UTF-8
+java.vm.name = OpenJDK 64-Bit Server VM
+java.vendor.version = Zulu11.52+13-CA
+java.vendor.url.bug = http://www.azul.com/support/
+java.io.tmpdir = /var/folders/xg/5rkvcq9n79jgm1bb8vc6mj6w0000gn/T/
+java.version = 11.0.13
+user.dir = /Users/ryantan/Jts
+os.arch = aarch64
+java.vm.specification.name = Java Virtual Machine Specification
+java.awt.printerjob = sun.lwawt.macosx.CPrinterJob
+sun.os.patch.level = unknown
+java.library.path = /Users/ryantan/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:.
+java.vm.info = mixed mode
+java.vendor = Azul Systems, Inc.
+java.vm.version = 11.0.13+8-LTS
+sun.io.unicode.encoding = UnicodeBig
+java.class.version = 55.0
+socksNonProxyHosts = local|*.local|169.254/16|*.169.254/16
+------------------------------------------------------------
+2025-02-03 16:34:42:301 IBC: using default settings provider: ini file is /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+2025-02-03 16:34:42:302 IBC: using default login manager: will get username and password from settings; FIX username and password (if required) from settings
+2025-02-03 16:34:42:302 IBC: using default main window manager
+2025-02-03 16:34:42:302 IBC: using default trading mode manager: constructor parameter args: tradingMode=paper
+2025-02-03 16:34:42:302 IBC: using default config dialog manager
+2025-02-03 16:34:42:303 IBC: CommandServer is starting with port 7462
+2025-02-03 16:34:42:309 IBC: CommandServer listening on addresses: fe80:0:0:0:ce81:b1c:bd2c:69e%utun3,fe80:0:0:0:b614:d05a:225f:9b0f%utun2,fe80:0:0:0:3976:8f22:6cf9:56d6%utun1,fe80:0:0:0:9966:2b07:fd87:6daa%utun0,fe80:0:0:0:869:c6ff:fea7:594b%llw0,fe80:0:0:0:869:c6ff:fea7:594b%awdl0,fe80:0:0:0:10b2:4ff8:7a9d:516b%en0,192.168.1.27,fe80:0:0:0:0:0:0:1%lo0,0:0:0:0:0:0:0:1%lo0,127.0.0.1; port: 7462
+2025-02-03 16:34:42:309 IBC: CommandServer started and is ready to accept commands
+2025-02-03 16:34:42:485 IBC: TWS Settings directory is: /Users/ryantan/Jts
+2025-02-03 16:34:42:485 IBC: Starting session: will exit if login dialog is not displayed within 60 seconds
+2025-02-03 16:34:42:498 IBC: Ensuring /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 16:34:42:498 IBC: Found setting: [Logon]/s3store=true
+2025-02-03 16:34:42:498 IBC: Found setting: [Logon]/Locale=en
+2025-02-03 16:34:42:499 IBC: Found setting: [Logon]/displayedproxymsg=1
+2025-02-03 16:34:42:499 IBC: Found setting: [Logon]/UseSSL=true
+2025-02-03 16:34:42:499 IBC: Found setting: [IBGateway]/ApiOnly=true
+2025-02-03 16:34:42:499 IBC: Confirmed /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 16:34:42:499 IBC: Starting TWS
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by feature.search.recorder.JtsMultiLookAndFeel (file:/Applications/Trader%20Workstation%2010.30/jars/twslaunch-1030.jar) to method javax.swing.UIManager.getLAFState()
+WARNING: Please consider reporting this to the maintainers of feature.search.recorder.JtsMultiLookAndFeel
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+2025-02-03 16:34:43:535 IBC: detected dialog entitled: Uploading settings to server; event=Closed
+2025-02-03 16:34:43,548 JTS-ShutdownTask-Shutdown_IA-214 ERROR Attempted to append to non-started appender d
+2025-02-03 16:34:43,552 JTS-ShutdownTask-Shutdown_IA-214 ERROR Attempted to append to non-started appender d
+2025-02-03 16:34:43,565 NIA-Input-Queue-2 ERROR Attempted to append to non-started appender d
+2025-02-03 16:34:43,584 NIA-Input-Queue-2 ERROR Attempted to append to non-started appender d
+2025-02-03 16:34:43:713 IBC: Getting config dialog
+2025-02-03 16:34:43:714 IBC: Getting config dialog
+2025-02-03 16:34:43:714 IBC: Creating config dialog future
+2025-02-03 16:34:43:715 IBC: Waiting for config dialog future to complete
+2025-02-03 16:34:43:715 IBC: Getting main window
+2025-02-03 16:34:43:715 IBC: Creating main window future
+2025-02-03 16:34:43,736 pool-3-thread-1 ERROR Attempted to append to non-started appender f
+IBC returned exit status 0
+autorestart file not found
+
+TWS finished
+
+2025-02-03 16:34:44:931 IBC: detected frame entitled: Login; event=Activated
+2025-02-03 16:34:44:933 IBC: detected frame entitled: Login; event=Focused
+2025-02-03 16:34:44:933 IBC: detected frame entitled: Login; event=Opened
+2025-02-03 16:34:44:934 IBC: Login dialog WINDOW_OPENED: LoginState is LOGGED_OUT
+2025-02-03 16:34:44:934 IBC: Setting Trading mode = paper
+2025-02-03 16:34:45:009 IBC: Setting user name
+2025-02-03 16:34:45:010 IBC: Setting password
+2025-02-03 16:34:45:407 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-03 16:34:45:408 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-03 16:34:47:799 IBC: detected frame entitled: Login; event=Activated
+2025-02-03 16:34:47:800 IBC: detected frame entitled: Login; event=Focused
+2025-02-03 16:34:55:271 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-03 16:34:55:271 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-03 16:34:56:319 IBC: detected dialog entitled: Downloading settings from server; event=Closed
+LogModuleConfigurator-Init: Log4j Ver2.x found on classpath
+LogModuleConfigurator-Init: LogModuleConfigurator initialized with Log4j Verd.x
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+2025-02-03 16:35:04:267 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Opened
+2025-02-03 16:35:04:268 IBC: Found TWS main window
+2025-02-03 16:35:04:268 IBC: Login has completed
+2025-02-03 16:35:04:268 IBC: Got main window from future
+2025-02-03 16:35:04:268 IBC: Invoking config dialog menu
+2025-02-03 16:35:04:269 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 16:35:04:311 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 16:35:05:150 IBC: detected dialog entitled: Warning; event=Opened
+2025-02-03 16:35:05:150 IBC: Click button: I understand and accept
+2025-02-03 16:35:05:272 IBC: detected dialog entitled: Warning; event=Activated
+2025-02-03 16:35:05:272 IBC: detected dialog entitled: Warning; event=Focused
+2025-02-03 16:35:05:362 IBC: detected dialog entitled: Warning; event=Lost focus
+2025-02-03 16:35:05:362 IBC: detected dialog entitled: Warning; event=Deactivated
+2025-02-03 16:35:05:423 IBC: detected dialog entitled: API announcements; event=Closed
+2025-02-03 16:35:05:423 IBC: detected dialog entitled: Warning; event=Closed
+2025-02-03 16:35:05:461 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Opened
+2025-02-03 16:35:05:462 IBC: Got config dialog from future
+2025-02-03 16:35:05:462 IBC: Got config dialog from future
+2025-02-03 16:35:05:468 IBC: Setting Auto logoff time
+2025-02-03 16:35:05:492 IBC: Auto logoff time already set to 12:30 AM
+2025-02-03 16:35:05:492 IBC: Setting ReadOnlyApi
+2025-02-03 16:35:05:510 IBC: Read-Only API checkbox is already set to: false
+2025-02-03 16:35:05:521 IBC: Configuration tasks completed
+2025-02-03 16:35:05:521 IBC: Click button: OK
+2025-02-03 16:35:05:617 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Closed
+2025-02-03 16:35:08:326 IBC: detected dialog entitled: Login Messages; event=Opened
+2025-02-03 16:35:23:227 IBC: detected dialog entitled: Login Messages; event=Activated
+2025-02-03 16:35:23:273 IBC: detected dialog entitled: Login Messages; event=Focused
+2025-02-03 16:35:25:668 IBC: detected dialog entitled: Login Messages; event=Lost focus
+2025-02-03 16:35:25:668 IBC: detected dialog entitled: Login Messages; event=Deactivated
+2025-02-03 16:36:14:219 IBC: detected dialog entitled: Login Messages; event=Activated
+2025-02-03 16:36:14:231 IBC: detected dialog entitled: Login Messages; event=Focused
+2025-02-03 16:36:15:137 IBC: detected dialog entitled: Login Messages; event=Closing
+2025-02-03 16:36:15:140 IBC: detected dialog entitled: Login Messages; event=Lost focus
+2025-02-03 16:36:15:140 IBC: detected dialog entitled: Login Messages; event=Deactivated
+2025-02-03 16:36:15:140 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:36:15:142 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:36:15:143 IBC: detected dialog entitled: Login Messages; event=Closed
+2025-02-03 16:36:21:930 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:36:21:931 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Focused
+2025-02-03 16:36:21:932 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Opened
+2025-02-03 16:36:22:459 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Lost focus
+2025-02-03 16:36:22:459 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:36:22:460 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:36:22:461 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Focused
+2025-02-03 16:36:22:638 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Lost focus
+2025-02-03 16:36:22:639 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:36:25:966 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:36:25:967 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:36:25:968 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Activated
+2025-02-03 16:36:25:968 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Focused
+2025-02-03 16:36:25:968 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Opened
+2025-02-03 16:39:24:116 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Lost focus
+2025-02-03 16:39:24:117 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Deactivated
+2025-02-03 16:39:24:117 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Activated
+2025-02-03 16:39:24:123 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Focused
+2025-02-03 16:39:24:123 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Opened
+2025-02-03 16:39:25:600 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Closed
+2025-02-03 16:39:25:601 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Lost focus
+2025-02-03 16:39:25:601 IBC: detected dialog entitled: DU3156861 IBKR Trader Workstation (Simulated Trading); event=Deactivated
+2025-02-03 16:39:25:601 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Activated
+2025-02-03 16:39:25:602 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Focused
+2025-02-03 16:39:27:284 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Lost focus
+2025-02-03 16:39:27:284 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Deactivated
+2025-02-03 16:39:57:600 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Activated
+2025-02-03 16:39:57:603 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Focused
+2025-02-03 16:40:01:246 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Lost focus
+2025-02-03 16:40:01:246 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Deactivated
+2025-02-03 16:40:39:835 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Activated
+2025-02-03 16:40:39:850 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Focused
+2025-02-03 16:40:41:902 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Closed
+2025-02-03 16:40:41:903 IBC: detected window: type=javax.swing.Popup$HeavyWeightWindow; event=Opened
+2025-02-03 16:40:42:819 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Lost focus
+2025-02-03 16:40:42:820 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Deactivated
+2025-02-03 16:40:50:953 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Activated
+2025-02-03 16:40:50:959 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Focused
+2025-02-03 16:41:17:506 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Lost focus
+2025-02-03 16:41:17:507 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Deactivated
+2025-02-03 16:41:17:507 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:41:17:511 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:41:17:512 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Closed
+2025-02-03 16:41:27:000 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Lost focus
+2025-02-03 16:41:27:005 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Deactivated
+2025-02-03 16:42:54:371 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Activated
+2025-02-03 16:42:54:387 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Focused
+2025-02-03 16:42:56:262 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=State changed
+IBC returned exit status 0
+autorestart file not found
+
+TWS finished
+
+
+================================================================================
+
+Starting IBC version 3.20.0 on 2025-02-03 at 17:00:25
+
+Operating system: Darwin rtyt-m2-mac.local 23.5.0 Darwin Kernel Version 23.5.0: Wed May  1 20:19:05 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8112 arm64
+
+Arguments:
+
+TWS version = 10.30
+Program = TWS
+Entry point = ibcalpha.ibc.IbcTws
+--tws-path = /Applications
+--tws-settings-path = 
+--ibc-path = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0
+--ibc-ini = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+--mode = paper
+--java-path = 
+--user =
+--pw =
+
+=================================
+Generating the classpath
+Classpath=/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+
+Generating the JAVA VM options
+autorestart file not found
+
+Java VM Options=-Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=WMK3LNt8
+
+Determining the location of java executable
+Location of java executable=/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin
+
+Renaming IB's TWS or Gateway start script to prevent restart without IBC
+
+Starting TWS with this command:
+"/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin/java" -cp "/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar" -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=WMK3LNt8 ibcalpha.ibc.IbcTws "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini"  paper
+
+IBC Settings:
+    AcceptBidAskLastSizeDisplayUpdateNotification=
+    AcceptIncomingConnectionAction=manual
+    AcceptNonBrokerageAccountWarning=yes
+    AllowBlindTrading=no
+    AutoLogoffTime=12:30 AM
+    AutoRestartTime=
+    BindAddress=
+    BypassBondWarning=
+    BypassCalledBondWarning=
+    BypassNegativeYieldToWorstConfirmation=
+    BypassNoOverfillProtectionPrecaution=
+    BypassOrderPrecautions=
+    BypassPriceBasedVolatilityRiskWarning=
+    BypassRedirectOrderWarning=
+    BypassSameActionPairTradeWarning=
+    BypassUSStocksMarketDataInSharesWarning=
+    ClosedownAt=
+    ColdRestartTime=
+    CommandPrompt=
+    CommandServerPort=7462
+    ConfirmCryptoCurrencyOrders=manual
+    ConfirmOrderIdReset=
+    ControlFrom=
+    DismissNSEComplianceNotice=yes
+    DismissPasswordExpiryWarning=no
+    ExistingSessionDetectedAction=manual
+    ExitAfterSecondFactorAuthenticationTimeout=no
+    FIX=no
+    FIXLoginId=***
+    FIXPassword=***
+    IbDir=
+    IbLoginId=***
+    IbPassword=***
+    LogStructureScope=known
+    LogStructureWhen=never
+    LoginDialogDisplayTimeout=60
+    MinimizeMainWindow=no
+    OverrideTwsApiPort=
+    OverrideTwsMasterClientID=
+    ReadOnlyApi=no
+    ReadOnlyLogin=no
+    ReloginAfterSecondFactorAuthenticationTimeout=yes
+    ResetOrderIdsAtStart=
+    SaveTwsSettingsAt=
+    SecondFactorAuthenticationExitInterval=30
+    SecondFactorAuthenticationTimeout=180
+    SecondFactorDevice=
+    SendMarketDataInLotsForUSstocks=
+    StoreSettingsOnServer=
+    SuppressInfoMessages=yes
+    TradingMode=paper
+    TrustedTwsApiClientIPs=
+End IBC Settings
+
+2025-02-03 17:00:25:801 IBC: version: 3.20.0
+System Properties
+------------------------------------------------------------
+gopherProxySet = false
+awt.toolkit = sun.lwawt.macosx.LWCToolkit
+java.specification.version = 11
+sun.cpu.isalist = 
+sun.jnu.encoding = UTF-8
+channel = latest
+java.class.path = /Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+java.vm.vendor = Azul Systems, Inc.
+ibcsessionid = WMK3LNt8
+sun.arch.data.model = 64
+java.vendor.url = http://www.azul.com/
+user.timezone = Asia/Singapore
+os.name = Mac OS X
+java.vm.specification.version = 11
+sun.java.launcher = SUN_STANDARD
+user.country = SG
+sun.boot.library.path = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/lib
+sun.java.command = ibcalpha.ibc.IbcTws /Users/ryantan/Downloads/Personal *** *** paper
+http.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+jdk.debug = release
+sun.cpu.endian = little
+user.home = /Users/ryantan
+user.language = en
+java.specification.vendor = Oracle Corporation
+java.version.date = 2021-10-19
+java.home = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home
+jtsConfigDir = /Users/ryantan/Jts
+file.separator = /
+java.vm.compressedOopsMode = Zero based
+line.separator = 
+
+java.specification.name = Java Platform API Specification
+java.vm.specification.vendor = Oracle Corporation
+twslaunch.autoupdate.serviceImpl = com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService
+jdk.vendor.version = Zulu11.52+13-CA
+install4jType = standalone
+java.awt.graphicsenv = sun.awt.CGraphicsEnvironment
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+ftp.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+exe4j.isInstall4j = true
+java.runtime.version = 11.0.13+8-LTS
+user.name = ryantan
+path.separator = :
+os.version = 14.5
+java.runtime.name = OpenJDK Runtime Environment
+file.encoding = UTF-8
+java.vm.name = OpenJDK 64-Bit Server VM
+java.vendor.version = Zulu11.52+13-CA
+java.vendor.url.bug = http://www.azul.com/support/
+java.io.tmpdir = /var/folders/xg/5rkvcq9n79jgm1bb8vc6mj6w0000gn/T/
+java.version = 11.0.13
+user.dir = /Users/ryantan/Jts
+os.arch = aarch64
+java.vm.specification.name = Java Virtual Machine Specification
+java.awt.printerjob = sun.lwawt.macosx.CPrinterJob
+sun.os.patch.level = unknown
+java.library.path = /Users/ryantan/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:.
+java.vm.info = mixed mode
+java.vendor = Azul Systems, Inc.
+java.vm.version = 11.0.13+8-LTS
+sun.io.unicode.encoding = UnicodeBig
+java.class.version = 55.0
+socksNonProxyHosts = local|*.local|169.254/16|*.169.254/16
+------------------------------------------------------------
+2025-02-03 17:00:25:804 IBC: using default settings provider: ini file is /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+2025-02-03 17:00:25:804 IBC: using default login manager: will get username and password from settings; FIX username and password (if required) from settings
+2025-02-03 17:00:25:804 IBC: using default main window manager
+2025-02-03 17:00:25:804 IBC: using default trading mode manager: constructor parameter args: tradingMode=paper
+2025-02-03 17:00:25:804 IBC: using default config dialog manager
+2025-02-03 17:00:25:807 IBC: CommandServer is starting with port 7462
+2025-02-03 17:00:25:818 IBC: CommandServer listening on addresses: fe80:0:0:0:ce81:b1c:bd2c:69e%utun3,fe80:0:0:0:b614:d05a:225f:9b0f%utun2,fe80:0:0:0:3976:8f22:6cf9:56d6%utun1,fe80:0:0:0:9966:2b07:fd87:6daa%utun0,fe80:0:0:0:869:c6ff:fea7:594b%llw0,fe80:0:0:0:869:c6ff:fea7:594b%awdl0,fe80:0:0:0:10b2:4ff8:7a9d:516b%en0,192.168.1.27,fe80:0:0:0:0:0:0:1%lo0,0:0:0:0:0:0:0:1%lo0,127.0.0.1; port: 7462
+2025-02-03 17:00:25:818 IBC: CommandServer started and is ready to accept commands
+2025-02-03 17:00:26:031 IBC: TWS Settings directory is: /Users/ryantan/Jts
+2025-02-03 17:00:26:031 IBC: Starting session: will exit if login dialog is not displayed within 60 seconds
+2025-02-03 17:00:26:051 IBC: Ensuring /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 17:00:26:051 IBC: Found setting: [Logon]/s3store=true
+2025-02-03 17:00:26:051 IBC: Found setting: [Logon]/Locale=en
+2025-02-03 17:00:26:051 IBC: Found setting: [Logon]/displayedproxymsg=1
+2025-02-03 17:00:26:051 IBC: Found setting: [Logon]/UseSSL=true
+2025-02-03 17:00:26:051 IBC: Found setting: [IBGateway]/ApiOnly=true
+2025-02-03 17:00:26:051 IBC: Confirmed /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-03 17:00:26:051 IBC: Starting TWS
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by feature.search.recorder.JtsMultiLookAndFeel (file:/Applications/Trader%20Workstation%2010.30/jars/twslaunch-1030.jar) to method javax.swing.UIManager.getLAFState()
+WARNING: Please consider reporting this to the maintainers of feature.search.recorder.JtsMultiLookAndFeel
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+2025-02-03 17:00:27:465 IBC: Getting config dialog
+2025-02-03 17:00:27:465 IBC: Creating config dialog future
+2025-02-03 17:00:27:465 IBC: Getting config dialog
+2025-02-03 17:00:27:466 IBC: Getting main window
+2025-02-03 17:00:27:466 IBC: Creating main window future
+2025-02-03 17:00:27:466 IBC: Waiting for config dialog future to complete
+2025-02-03 17:00:28:935 IBC: detected frame entitled: Login; event=Activated
+2025-02-03 17:00:28:939 IBC: detected frame entitled: Login; event=Focused
+2025-02-03 17:00:28:940 IBC: detected frame entitled: Login; event=Opened
+2025-02-03 17:00:28:940 IBC: Login dialog WINDOW_OPENED: LoginState is LOGGED_OUT
+2025-02-03 17:00:28:941 IBC: Setting Trading mode = paper
+2025-02-03 17:00:29:017 IBC: Setting user name
+2025-02-03 17:00:29:018 IBC: Setting password
+2025-02-03 17:00:29:018 IBC: Login attempt: 1
+2025-02-03 17:00:29:045 IBC: Click button: Paper Log In
+2025-02-03 17:00:29:170 IBC: Button now disabled: Paper Log In
+2025-02-03 17:00:31:680 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-03 17:00:31:681 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-03 17:00:34:670 IBC: detected dialog entitled: Downloading settings from server; event=Closed
+LogModuleConfigurator-Init: Log4j Ver2.x found on classpath
+LogModuleConfigurator-Init: LogModuleConfigurator initialized with Log4j Verd.x
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+EVENT TRADER ALREADY PRESET
+2025-02-03 17:00:43:614 IBC: detected frame entitled: DU3156861 Interactive Brokers (Simulated Trading); event=Opened
+2025-02-03 17:00:43:615 IBC: Found TWS main window
+2025-02-03 17:00:43:615 IBC: Login has completed
+2025-02-03 17:00:43:615 IBC: Got main window from future
+2025-02-03 17:00:43:615 IBC: Invoking config dialog menu
+2025-02-03 17:00:43:703 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 17:00:43:703 IBC: detected frame entitled: Login; event=Closed
+2025-02-03 17:00:44:552 IBC: detected dialog entitled: Warning; event=Opened
+2025-02-03 17:00:44:553 IBC: Click button: I understand and accept
+2025-02-03 17:00:44:823 IBC: detected dialog entitled: API announcements; event=Closed
+2025-02-03 17:00:44:824 IBC: detected dialog entitled: Warning; event=Closed
+2025-02-03 17:00:44:869 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Opened
+2025-02-03 17:00:44:874 IBC: Got config dialog from future
+2025-02-03 17:00:44:874 IBC: Got config dialog from future
+2025-02-03 17:00:44:876 IBC: detected dialog entitled: API announcements; event=Opened
+2025-02-03 17:00:44:887 IBC: Setting ReadOnlyApi
+2025-02-03 17:00:44:945 IBC: Read-Only API checkbox is already set to: false
+2025-02-03 17:00:44:946 IBC: Setting Auto logoff time
+2025-02-03 17:00:44:979 IBC: Auto logoff time already set to 12:30 AM
+2025-02-03 17:00:45:006 IBC: Configuration tasks completed
+2025-02-03 17:00:45:007 IBC: Click button: OK
+2025-02-03 17:00:45:111 IBC: detected dialog entitled: DU3156861 Trader Workstation Configuration (Simulated Trading); event=Closed
+2025-02-03 17:00:46:029 IBC: detected dialog entitled: Login Messages; event=Opened
+2025-02-03 17:00:55:325 IBC: detected dialog entitled: Login Messages; event=Activated
+2025-02-03 17:00:55:357 IBC: detected dialog entitled: Login Messages; event=Focused
+2025-02-03 17:00:56:410 IBC: detected dialog entitled: Login Messages; event=Lost focus
+2025-02-03 17:00:56:411 IBC: detected dialog entitled: Login Messages; event=Deactivated
+2025-02-03 17:00:57:951 IBC: detected dialog entitled: Login Messages; event=Activated
+2025-02-03 17:00:58:038 IBC: detected dialog entitled: Login Messages; event=Focused
+2025-02-03 17:01:03:724 IBC: detected dialog entitled: Login Messages; event=Closing
+2025-02-03 17:01:03:726 IBC: detected dialog entitled: Login Messages; event=Lost focus
+2025-02-03 17:01:03:726 IBC: detected dialog entitled: Login Messages; event=Deactivated
+2025-02-03 17:01:03:726 IBC: detected dialog entitled: API announcements; event=Activated
+2025-02-03 17:01:03:730 IBC: detected dialog entitled: API announcements; event=Focused
+2025-02-03 17:01:03:736 IBC: detected dialog entitled: Login Messages; event=Closed
+2025-02-03 17:01:04:826 IBC: detected dialog entitled: API announcements; event=Lost focus
+2025-02-03 17:01:04:832 IBC: detected dialog entitled: API announcements; event=Deactivated
+IBC returned exit status 143
+autorestart file not found
+
+TWS finished
+

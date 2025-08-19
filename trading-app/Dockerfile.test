@@ -1,0 +1,68 @@
+ARG RUST_VERSION=1.85.1
+
+# ------------------------------------------------------------------------------
+# Stage: Build & Test
+# FROM --platform=linux/amd64 rust:${RUST_VERSION}-slim AS test
+FROM debian:bullseye-slim AS final
+
+# Install required system dependencies
+# RUN apk add --no-cache clang lld musl-dev git bash \
+#     libxtst \
+#     libxi \
+#     libxrender \
+#     libxrandr \
+#     freetype \
+#     libc6-compat \
+#     libxext \
+#     libx11 \
+#     libxfixes \
+#     libxinerama \
+#     libxcursor \
+#     mesa-gl \
+#     xdotool \
+#     openbox \
+#     unzip \
+#     xvfb
+
+# Install dependencies for building Rust
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install rustup and Cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable
+
+# Add Cargo to PATH
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y \
+    clang lld musl-dev git bash \
+    libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
+    libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
+    libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
+    xdotool openbox \
+    unzip xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy full project (or adjust as needed for cache efficiency)
+COPY . .
+
+# Install IBC properly
+COPY IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/; \
+    chown -R root /IBCLinux-3.21.2/; \
+    chmod -u+x -R /IBCLinux-3.21.2/;
+COPY IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
+RUN chmod -u+x -R /IBCLinux-3.21.2/
+
+# Copy the entrypoint script
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set the default entrypoint to run your orchestrated script
+ENTRYPOINT ["sh", "/entrypoint.sh"]

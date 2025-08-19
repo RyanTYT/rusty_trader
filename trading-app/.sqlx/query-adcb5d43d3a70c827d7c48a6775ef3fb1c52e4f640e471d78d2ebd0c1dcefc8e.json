@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH latest_bar_time AS (\n                SELECT\n                    time::time AS latest_close\n                FROM\n                    market_data.historical_data\n                WHERE\n                    stock = $1\n                AND \n                    primary_exchange = $2\n                ORDER BY\n                    time DESC\n                LIMIT 1\n            ),\n            historical_matches AS (\n                SELECT\n                    h.stock,\n                    h.primary_exchange,\n                    h.time::date AS trading_day,\n                    h.time,\n                    h.close\n                FROM market_data.historical_data h\n                JOIN latest_bar_time lb ON h.time::time = lb.latest_close\n                WHERE h.stock = $1\n                    AND primary_exchange = $2\n                ORDER BY h.time DESC\n                LIMIT 15\n            ),\n            opens AS (\n                SELECT stock, primary_exchange, day AS trading_day, open AS open_at_0930\n                FROM market_data.daily_ohlcv\n                WHERE stock = $1\n                    AND primary_exchange = $2\n            )\n            SELECT\n                hm.close / o.open_at_0930 AS movement_since_open\n            FROM historical_matches hm\n            JOIN opens o ON hm.stock = o.stock AND hm.primary_exchange = o.primary_exchange AND hm.trading_day = o.trading_day\n            ORDER BY hm.time DESC;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "movement_since_open",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "adcb5d43d3a70c827d7c48a6775ef3fb1c52e4f640e471d78d2ebd0c1dcefc8e"
+}

@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                COALESCE(t.stock, c.stock) AS stock,\n                COALESCE(t.primary_exchange, c.primary_exchange) AS primary_exchange,\n                COALESCE(t.strategy, c.strategy) AS strategy,\n                COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0) AS qty_diff,\n                COALESCE(t.avg_price, 0.0) AS avg_price\n            FROM trading.target_stock_positions t\n            FULL OUTER JOIN trading.current_stock_positions  c\n                ON t.stock = c.stock AND t.strategy = c.strategy\n            WHERE COALESCE(t.strategy, c.strategy) = $1\n                AND COALESCE(t.stock, c.stock) = $2;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "qty_diff",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "avg_price",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e88f90fb372d68ca2a57ea7d970bb976ec0294c3b55c7af90dd7b0cf6c176fed"
+}

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT * \n            FROM trading.stock_transactions\n            WHERE stock = $1\n                AND primary_exchange = $2\n            ORDER BY time DESC\n            LIMIT 1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "order_perm_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "price",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "fees",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "quantity",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "001a9fc66f30e12adc372274178715712e2e55e023dd1300078a966621bfb0b5"
+}

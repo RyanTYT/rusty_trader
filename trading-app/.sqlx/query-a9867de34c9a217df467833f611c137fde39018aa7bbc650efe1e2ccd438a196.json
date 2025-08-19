@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                COALESCE(t.stock, c.stock) AS stock,\n                COALESCE(t.primary_exchange, c.primary_exchange) AS primary_exchange,\n                COALESCE(t.expiry, c.expiry) AS expiry,\n                COALESCE(t.strike, c.strike) AS strike,\n                COALESCE(t.multiplier, c.multiplier) AS multiplier,\n                COALESCE(t.option_type, c.option_type) AS \"option_type!:OptionType\",\n                COALESCE(t.strategy, c.strategy) AS strategy,\n                COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0) AS qty_diff,\n                COALESCE(t.avg_price, 0.0) AS avg_price\n            FROM trading.target_option_positions t\n            FULL OUTER JOIN trading.current_option_positions  c\n                ON t.stock = c.stock \n                AND t.primary_exchange = c.primary_exchange\n                AND t.expiry = c.expiry \n                AND t.strike = c.strike\n                AND t.multiplier = c.multiplier\n                AND t.option_type = c.option_type\n                AND t.strategy = c.strategy\n            WHERE COALESCE(t.strategy, c.strategy) = $1\n                AND COALESCE(t.stock, c.stock) = $2\n                AND COALESCE(t.primary_exchange, c.primary_exchange) = $3\n                AND COALESCE(t.expiry, c.expiry) = $4\n                AND COALESCE(t.strike, c.strike) = $5\n                AND COALESCE(t.multiplier, c.multiplier) = $6\n                AND COALESCE(t.option_type, c.option_type) = $7::option_type;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "expiry",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "strike",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "multiplier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "option_type!:OptionType",
+        "type_info": {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "qty_diff",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 8,
+        "name": "avg_price",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Text",
+        {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a9867de34c9a217df467833f611c137fde39018aa7bbc650efe1e2ccd438a196"
+}

@@ -1,0 +1,5 @@
+[env]
+TRADING_BOT_URL = "localhost:8000"
+DATABASE_URL = "postgresql://ryantan:admin@localhost:5432/trading_system_mock"
+BEARER_TOKEN = "12345"
+SERVER_HOST="127.0.0.1"

@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                order_perm_id,\n                order_id,\n                strategy,\n                stock,\n                primary_exchange,\n                time,\n                quantity,\n                executions,\n                filled\n            FROM trading.open_stock_orders\n            WHERE strategy = $1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "order_perm_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "order_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "quantity",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "executions",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "filled",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "62f574f4b21d9eca01b2951067568323aa876cfa03fc09b5bec4a9d4cf26d2f0"
+}

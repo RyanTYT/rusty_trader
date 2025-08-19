@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            CALL refresh_continuous_aggregate(\n                'market_data.daily_ohlcv',\n                NOW() - INTERVAL '30 days',\n                NOW()\n            );\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "2c74ed14cb91963c3d9475b3828b951ed2e5933ad233dd1dbdb42a1466402653"
+}

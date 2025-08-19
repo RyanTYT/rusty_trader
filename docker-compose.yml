@@ -1,0 +1,147 @@
+services:
+  tws:
+    image: ib-gateway
+    platform: linux/amd64
+    restart: always
+    build:
+      context: ./IB
+    stdin_open: true
+    tty: true
+    privileged: true
+    security_opt:
+      - seccomp:./IB/config/chrome.json
+    devices:
+      - /dev/snd/:/dev/snd/
+    ipc: host
+    network_mode: host
+    volumes:
+      - /tmp/.X11-unix/:/tmp/.X11-unix/:ro
+      - ~/.Xauthority:/home/tws/.Xauthority:rw
+      - /var/lib/usbmux:/var/lib/usbmux
+      - /var/run/user/501/pulse:/run/user/501/pulse
+      - /etc/asound.conf:/etc/asound.conf
+      - ib-volume:/home/tws
+
+  trading-bot:
+    restart: always
+    build:
+      context: ./trading-app # assumes Dockerfile is in the root directory
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ib-volume:/home/tws
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://ryantan:admin@db:5432/trading_system
+      - DATABASE_HOST=db
+      - ASYNC_DATABASE_URL=postgresql+asyncpg://ryantan:admin@db:5432/trading_system
+      - HOST=127.0.0.1
+      - SERVER_HOST=127.0.0.1
+      - PORT=8000
+      - DISPLAY=:99
+      # - DISPLAY=192.168.1.90:0
+      - RUST_BACKEND_URL=http://backend:4875
+      - TRADING_TYPE=paper
+    ports:
+      - 7462:7462
+      - 4002:4002
+      - 8000:8000
+    depends_on:
+      tws:
+        condition: service_started
+      db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend # assumes Dockerfile is in the root directory
+    restart: always
+    platform: linux/amd64
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - TRADING_BOT_URL=trading-bot:8000
+      - DATABASE_URL=postgresql://ryantan:admin@db:5432/trading_system
+      - BEARER_TOKEN=12345
+      - RUST_BACKTRACE=full
+    ports:
+      - 3000:3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--tries=1",
+          "-qO-",
+          "http://localhost:3000/check-health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: timescale/timescaledb:latest-pg17
+    restart: always
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data # Mount a volume for persistent PostgreSQL data
+    environment:
+      - POSTGRES_USER=ryantan
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=trading_system
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  test-db:
+    image: timescale/timescaledb:latest-pg17
+    restart: always
+    environment:
+      - POSTGRES_USER=ryantan
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=trading_system
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  test-trading-bot:
+    restart: always
+    build:
+      context: ./trading-app
+      dockerfile: Dockerfile.test
+    platform: linux/amd64
+    volumes:
+      - ib-volume:/home/tws
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgres://ryantan:admin@test-db:5432/trading_system
+      - DATABASE_HOST=test-db
+      - HOST=127.0.0.1
+      - SERVER_HOST=127.0.0.1
+      - PORT=8000
+      - DISPLAY=:99
+      - SQLX_OFFLINE=true
+      # - DISPLAY=192.168.1.90:0
+      - RUST_BACKEND_URL=http://backend:4875
+      - TRADING_TYPE=paper
+    ports:
+      - 7462:7462
+      - 8000:8000
+    depends_on:
+      tws:
+        condition: service_started
+      test-db:
+        condition: service_healthy
+
+volumes:
+  ib-volume:
+    driver: local

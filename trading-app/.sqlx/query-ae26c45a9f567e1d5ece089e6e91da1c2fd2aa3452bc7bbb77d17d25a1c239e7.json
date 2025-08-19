@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO trading.current_option_positions (\n                stock, \n                primary_exchange,\n                strategy, \n                expiry, \n                strike, \n                multiplier, \n                option_type, \n                quantity, \n                avg_price\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ON CONFLICT (stock, primary_exchange, strategy, expiry, strike, multiplier, option_type)\n            DO UPDATE SET quantity = current_option_positions.quantity + EXCLUDED.quantity;\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Varchar",
+        {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        },
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ae26c45a9f567e1d5ece089e6e91da1c2fd2aa3452bc7bbb77d17d25a1c239e7"
+}

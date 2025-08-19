@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO trading.current_stock_positions (\n                strategy, \n                stock, \n                quantity, \n                avg_price\n            )\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (stock, strategy)\n            DO UPDATE SET quantity = current_stock_positions.quantity + EXCLUDED.quantity;\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5c3adc71a32c03f057401036fa8319f8e1f8409548fbc2737c1102011b6faab1"
+}

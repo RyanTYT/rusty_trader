@@ -1,0 +1,23 @@
+services:
+  tws:
+    image: ib-tws
+    platform: linux/amd64
+    build: .
+    stdin_open: true
+    tty: true
+    privileged: true
+    security_opt:
+      - seccomp:./config/chrome.json
+    devices:
+      - /dev/snd/:/dev/snd/
+    ipc: host
+    environment:
+      - TZ=US/Eastern
+      - DISPLAY=host.docker.internal:0
+    network_mode: host
+    volumes:
+      - /tmp/.X11-unix/:/tmp/.X11-unix/:ro
+      - ~/.Xauthority:/home/tws/.Xauthority:rw
+      - /var/lib/usbmux:/var/lib/usbmux
+      - /var/run/user/501/pulse:/run/user/501/pulse
+      - /etc/asound.conf:/etc/asound.conf

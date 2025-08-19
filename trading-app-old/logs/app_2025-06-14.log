@@ -1,0 +1,468 @@
+2025-06-14 16:17:16,872 - models_types_generator - INFO - 
+[32mFound class: Notification[0m
+2025-06-14 16:17:16,872 - models_types_generator - INFO - 
+[32m  Processing field: title[0m
+2025-06-14 16:17:16,872 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,872 - models_types_generator - INFO - 
+[32m  Processing field: body[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m  Processing field: alert_type[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m  Fields: {'title': 'str', 'body': 'str', 'alert_type': 'str'}[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32mFound class: Strategy[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,873 - models_types_generator - INFO - 
+[32m  Processing field: capital[0m
+2025-06-14 16:17:16,874 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m  Processing field: initial_capital[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m  Processing field: status[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m    Field type: Status[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m  Processing field: current_stock_positions[0m
+2025-06-14 16:17:16,881 - models_types_generator - INFO - 
+[32m  Processing field: current_option_positions[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: target_stock_positions[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: target_option_positions[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: open_stock_orders[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: open_option_orders[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: stock_transactions[0m
+2025-06-14 16:17:16,882 - models_types_generator - INFO - 
+[32m  Processing field: option_transactions[0m
+2025-06-14 16:17:16,883 - models_types_generator - INFO - 
+[32m  Fields: {'strategy': 'str', 'capital': 'float', 'initial_capital': 'float', 'status': 'Status'}[0m
+2025-06-14 16:17:16,883 - models_types_generator - INFO - 
+[32mFound class: CurrentStockPositions[0m
+2025-06-14 16:17:16,883 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,883 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,883 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: avg_price[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: stop_limit[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'avg_price': 'float', 'quantity': 'float', 'stop_limit': 'float'}[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32mFound class: CurrentOptionPositions[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: expiry[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,884 - models_types_generator - INFO - 
+[32m  Processing field: multiplier[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m  Processing field: option_type[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m    Field type: OptionType[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m  Processing field: avg_price[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,885 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'expiry': 'str', 'strike': 'float', 'multiplier': 'float', 'option_type': 'OptionType', 'avg_price': 'float', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32mFound class: TargetStockPositions[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: stop_limit[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: avg_price[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'stop_limit': 'float', 'avg_price': 'float', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32mFound class: TargetOptionPositions[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,887 - models_types_generator - INFO - 
+[32m  Processing field: expiry[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: multiplier[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: option_type[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: OptionType[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: avg_price[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,889 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'expiry': 'str', 'strike': 'float', 'multiplier': 'float', 'option_type': 'OptionType', 'avg_price': 'float', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32mFound class: OpenStockOrders[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: order_id[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: int[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Fields: {'order_id': 'int', 'stock': 'str', 'strategy': 'str', 'time': 'datetime.datetime', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32mFound class: OpenOptionOrders[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: order_id[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: int[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,890 - models_types_generator - INFO - 
+[32m  Processing field: expiry[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: option_type[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: OptionType[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: multiplier[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Fields: {'order_id': 'int', 'stock': 'str', 'strategy': 'str', 'expiry': 'str', 'strike': 'float', 'option_type': 'OptionType', 'multiplier': 'float', 'time': 'datetime.datetime', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32mFound class: StockTransactions[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: price_transacted[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: fees[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,891 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32mFound class: OptionTransactions[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: strategy[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: expiry[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: multiplier[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: option_type[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: OptionType[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: price_transacted[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: fees[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: quantity[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Processing field: strategy_rel[0m
+2025-06-14 16:17:16,892 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'strategy': 'str', 'expiry': 'str', 'strike': 'float', 'multiplier': 'float', 'option_type': 'OptionType', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float'}[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32mFound class: HistoricalData[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: open[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: high[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: low[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: close[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: volume[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: int[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int'}[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32mFound class: HistoricalVolatilityData[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,893 - models_types_generator - INFO - 
+[32m  Processing field: open[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: high[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: low[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: close[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float'}[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32mFound class: HistoricalOptionsData[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: stock[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: expiry[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: str[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m  Processing field: multiplier[0m
+2025-06-14 16:17:16,894 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: option_type[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: OptionType[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: open[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: high[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: low[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m  Processing field: close[0m
+2025-06-14 16:17:16,895 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: volume[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Fields: {'stock': 'str', 'expiry': 'str', 'strike': 'float', 'multiplier': 'float', 'option_type': 'OptionType', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'float'}[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32mFound class: PhantomPortfolioValue[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: time[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: datetime.datetime[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: cash_portfolio_value[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: option_portfolio_value[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: bought_price[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: strike[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: peak[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: float[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m  Processing field: paused[0m
+2025-06-14 16:17:16,897 - models_types_generator - INFO - 
+[32m    Field type: bool[0m
+2025-06-14 16:17:16,899 - models_types_generator - INFO - 
+[32m  Processing field: resume_trades[0m
+2025-06-14 16:17:16,899 - models_types_generator - INFO - 
+[32m    Field type: int[0m
+2025-06-14 16:17:16,899 - models_types_generator - INFO - 
+[32m  Fields: {'time': 'datetime.datetime', 'cash_portfolio_value': 'float', 'option_portfolio_value': 'float', 'bought_price': 'float', 'strike': 'float', 'peak': 'float', 'paused': 'bool', 'resume_trades': 'int'}[0m

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) > $1 \n            FROM market_data.historical_data\n            WHERE stock = $2 AND primary_exchange = $3 AND time > $4;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cd2bcdd98fac569a52fe4e2211c6799fdfb2c5dd45273e9f2a07d39cbc351f1e"
+}

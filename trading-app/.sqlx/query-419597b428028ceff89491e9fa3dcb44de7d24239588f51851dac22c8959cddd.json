@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT stock, primary_exchange, expiry, strike, multiplier, option_type AS \"option_type!:OptionType\", SUM(quantity) AS quantity\n            FROM trading.current_option_positions\n            GROUP BY stock, primary_exchange, expiry, strike, multiplier, option_type;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "expiry",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "strike",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "multiplier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "option_type!:OptionType",
+        "type_info": {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "quantity",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "419597b428028ceff89491e9fa3dcb44de7d24239588f51851dac22c8959cddd"
+}

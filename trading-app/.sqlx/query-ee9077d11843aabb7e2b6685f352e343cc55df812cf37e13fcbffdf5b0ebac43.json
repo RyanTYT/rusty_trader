@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) > $1 \n            FROM market_data.historical_options_data\n            WHERE stock = $2 \n                AND primary_exchange = $3\n                AND expiry = $4 \n                AND strike = $5\n                AND multiplier = $6\n                AND option_type = $7\n                AND time > $8;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Text",
+        {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        },
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ee9077d11843aabb7e2b6685f352e343cc55df812cf37e13fcbffdf5b0ebac43"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT stock, primary_exchange, SUM(quantity) AS quantity\n            FROM trading.current_stock_positions\n            GROUP BY stock, primary_exchange;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "quantity",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "710a08febf9b7206b030b3d51afa6929569039baa095f6b468c284edf7138d3c"
+}

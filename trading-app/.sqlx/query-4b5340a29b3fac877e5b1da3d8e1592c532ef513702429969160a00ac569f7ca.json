@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT * FROM market_data.daily_historical_data\n            WHERE stock = $1\n            ORDER BY time DESC\n            LIMIT $2;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "open",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 3,
+        "name": "high",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 4,
+        "name": "low",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "close",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "volume",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4b5340a29b3fac877e5b1da3d8e1592c532ef513702429969160a00ac569f7ca"
+}
