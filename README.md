@@ -1,6 +1,7 @@
 # rusty_trader
 
 A rust implementation of a trading bot based on the IBKR API (with rust ibapi) with fully automated executions and a frontend to track strategy performance
+Check this [out](https://ryantyt.github.io/RTYT/journal/summer_trading_bot_3) for a more personal post on the building of this.
 
 ---
 
