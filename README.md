@@ -10,9 +10,10 @@ This repository showcases the **public interface** of the trading system.
 The full implementation connects to **Interactive Brokers (IBKR)** via their API (with the help of rust ibapi), manages portfolio positions, executes trades, and supports research/backtesting.  
 
 The goal of this repo is to showcase the:
-- [**Backend architecture**](/backend/README.md) used for the strategies; the older Python implementation is left in for posterity.
+- [**Backend architecture**](/trading-app/README.md) used for the strategies; the older Python implementation is left in for posterity.
+- A separate [**Backend**](/backend/README.md) used for easy user interface built in rust as well.
 - **Containerized development setup** with Docker for portability.
-- The frontend architecture can be found [here](https://github.com/RyanTYT/rusty_trader_front)
+- The frontend architecture can be found [here](https://github.com/RyanTYT/rusty_trader_front).
 
 ---
 
