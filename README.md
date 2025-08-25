@@ -4,14 +4,15 @@ A rust implementation of a trading bot based on the IBKR API (with rust ibapi) w
 
 ---
 
-## 🚀 Overview
+## Overview
 
 This repository showcases the **public interface** of the trading system.  
 The full implementation connects to **Interactive Brokers (IBKR)** via their API (with the help of rust ibapi), manages portfolio positions, executes trades, and supports research/backtesting.  
 
 The goal of this repo is to showcase the:
-- **Backend architecture** used for the strategies; the older Python implementation is left in for posterity.
+- [**Backend architecture**](/backend/README.md) used for the strategies; the older Python implementation is left in for posterity.
 - **Containerized development setup** with Docker for portability.
+- The frontend architecture can be found [here](https://github.com/RyanTYT/rusty_trader_front)
 
 ---
 
