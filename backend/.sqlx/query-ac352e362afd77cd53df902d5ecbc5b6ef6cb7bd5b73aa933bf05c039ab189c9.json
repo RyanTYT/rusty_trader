@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT stock, primary_exchange, currency, strategy, quantity, avg_price, last_updated FROM trading.current_stock_positions WHERE strategy=$1 AND stock=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "currency",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "strategy",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "quantity",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "avg_price",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_updated",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ac352e362afd77cd53df902d5ecbc5b6ef6cb7bd5b73aa933bf05c039ab189c9"
+}

@@ -1,0 +1,42 @@
+2025-02-08 11:39:08,639 - run.py - ERROR - 
+[31m--------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 44, in init_app
+    generate_models_types("app/models.py")
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 213, in generate_models_types
+    models = extract_model_classes(file_path)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 65, in extract_model_classes
+    with open(file_path, "r") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'app/models.py'
+
+--------------------------------------------------------------------------------[0m
+2025-02-08 11:39:49,340 - run.py - ERROR - 
+[31m--------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 44, in init_app
+    generate_models_types("app/models.py")
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 213, in generate_models_types
+    models = extract_model_classes(file_path)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 65, in extract_model_classes
+    with open(file_path, "r") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'app/models.py'
+
+--------------------------------------------------------------------------------[0m
+2025-02-08 11:43:24,536 - run.py - ERROR - 
+[31m--------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 44, in init_app
+    generate_models_types("app/models.py")
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 213, in generate_models_types
+    models = extract_model_classes(file_path)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/models_types_generator.py", line 65, in extract_model_classes
+    with open(file_path, "r") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'app/models.py'
+
+--------------------------------------------------------------------------------[0m

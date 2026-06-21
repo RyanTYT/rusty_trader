@@ -1,0 +1,783 @@
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00044s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00039s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00032s] (610.72, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00019s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00019s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00048s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00011s] (608.72, 610.72, 549.648, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00032s] (457, '2025-02-18 01:07:48.434192', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00012s] (457, '2025-02-18 01:07:48.434192', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00008s] (457, 'SPY', '2025-02-18 01:07:48.434192', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00015s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00008s] (610.865, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00006s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00007s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00013s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00009s] (608.865, 610.865, 549.7785, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00009s] (467, '2025-02-18 01:13:58.490521', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] (467, '2025-02-18 01:13:58.490521', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00006s] (467, 'SPY', '2025-02-18 01:13:58.490521', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00064s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00009s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00008s] (610.82, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00009s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00013s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00009s] (608.82, 610.82, 549.738, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00012s] (477, '2025-02-18 01:33:36.392470', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] (477, '2025-02-18 01:33:36.392470', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00010s] (477, 'SPY', '2025-02-18 01:33:36.392470', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00020s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00013s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00008s] (0.0, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00045s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00010s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00008s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00008s] (-2.0, 0.0, 0.0, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00026s] (488, '2025-02-18 01:39:31.699723', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00011s] (488, '2025-02-18 01:39:31.699723', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00011s] (488, 'SPY', '2025-02-18 01:39:31.699723', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00019s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00010s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00007s] (610.845, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00006s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00007s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00010s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00009s] (608.845, 610.845, 549.7605000000001, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00009s] (487, '2025-02-18 01:50:14.065858', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00008s] (487, '2025-02-18 01:50:14.065858', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00008s] (487, 'SPY', '2025-02-18 01:50:14.065858', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00014s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00008s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00006s] (611.015, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00006s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00008s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00008s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00007s] (609.015, 611.015, 549.9135, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00012s] (497, '2025-02-18 05:11:35.071568', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] (497, '2025-02-18 05:11:35.071568', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00007s] (497, 'SPY', '2025-02-18 05:11:35.071568', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT
+BEGIN (implicit)
+PRAGMA main.table_info("current_positions")
+[raw sql] ()
+PRAGMA main.table_info("target_positions")
+[raw sql] ()
+PRAGMA main.table_info("open_orders")
+[raw sql] ()
+PRAGMA main.table_info("transactions")
+[raw sql] ()
+PRAGMA main.table_info("historical_data")
+[raw sql] ()
+COMMIT
+BEGIN (implicit)
+SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' ORDER BY name
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("current_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("target_positions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("open_orders")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("transactions")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+PRAGMA main.table_xinfo("historical_data")
+[raw sql] ()
+ROLLBACK
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions
+[generated in 0.00013s] ()
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00007s] ('SPY', 'LinReg', 1, 0)
+UPDATE current_positions SET current_price=? WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00006s] (612.11, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT historical_data.stock AS historical_data_stock, historical_data.time AS historical_data_time, historical_data.open AS historical_data_open, historical_data.high AS historical_data_high, historical_data.low AS historical_data_low, historical_data.close AS historical_data_close, historical_data.volume AS historical_data_volume 
+FROM historical_data 
+WHERE historical_data.stock = ? ORDER BY historical_data.time DESC
+ LIMIT ? OFFSET ?
+[generated in 0.00006s] ('SPY', 50, 0)
+BEGIN (implicit)
+SELECT current_positions.stock AS current_positions_stock, current_positions.avg_price_bought AS current_positions_avg_price_bought, current_positions.current_price AS current_positions_current_price, current_positions.quantity AS current_positions_quantity, current_positions.stop_limit AS current_positions_stop_limit, current_positions.stop_limit_in_place AS current_positions_stop_limit_in_place, current_positions.strategy AS current_positions_strategy 
+FROM current_positions 
+WHERE current_positions.stock = ? AND current_positions.strategy = ?
+[generated in 0.00006s] ('SPY', 'LinReg')
+BEGIN (implicit)
+SELECT target_positions.stock AS target_positions_stock, target_positions.avg_price_bought AS target_positions_avg_price_bought, target_positions.current_price AS target_positions_current_price, target_positions.quantity AS target_positions_quantity, target_positions.stop_limit AS target_positions_stop_limit, target_positions.strategy AS target_positions_strategy 
+FROM target_positions 
+WHERE target_positions.stock = ? AND target_positions.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00013s] ('SPY', 'LinReg', 1, 0)
+UPDATE target_positions SET avg_price_bought=?, current_price=?, stop_limit=? WHERE target_positions.stock = ? AND target_positions.strategy = ?
+[generated in 0.00012s] (610.11, 612.11, 550.899, 'SPY', 'LinReg')
+COMMIT
+BEGIN (implicit)
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+[generated in 0.00030s] (507, '2025-02-18 13:55:36.879578', 'LinReg')
+SELECT open_orders.order_id AS open_orders_order_id, open_orders.stock AS open_orders_stock, open_orders.time AS open_orders_time, open_orders.price_transacted AS open_orders_price_transacted, open_orders.fees AS open_orders_fees, open_orders.quantity AS open_orders_quantity, open_orders.strategy AS open_orders_strategy 
+FROM open_orders 
+WHERE open_orders.order_id = ? AND open_orders.time = ? AND open_orders.strategy = ?
+ LIMIT ? OFFSET ?
+[generated in 0.00008s] (507, '2025-02-18 13:55:36.879578', 'LinReg', 1, 0)
+INSERT INTO open_orders (order_id, stock, time, price_transacted, fees, quantity, strategy) VALUES (?, ?, ?, ?, ?, ?, ?)
+[generated in 0.00007s] (507, 'SPY', '2025-02-18 13:55:36.879578', -1.0, -1.0, -1.0, 'LinReg')
+COMMIT

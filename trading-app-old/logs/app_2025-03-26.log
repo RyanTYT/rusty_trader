@@ -1,0 +1,412 @@
+2025-03-26 21:55:08,413 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: Strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: capital
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'strategy': 'str', 'capital': 'float'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: CurrentPosition
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stock
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: avg_price_bought
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: quantity
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stop_limit
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,414 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stop_limit_in_place
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: int
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'quantity': 'float', 'stop_limit': 'float', 'stop_limit_in_place': 'int', 'strategy': 'str'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: TargetPosition
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stock
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: avg_price_bought
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: quantity
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stop_limit
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'quantity': 'float', 'stop_limit': 'float', 'strategy': 'str'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: OpenOrders
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: order_id
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,415 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: int
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stock
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: time
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: datetime.datetime
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: price_transacted
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: fees
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: quantity
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'order_id': 'int', 'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: Transaction
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stock
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: time
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: datetime.datetime
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: price_transacted
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,416 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: fees
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: quantity
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: strategy
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+Found class: HistoricalData
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: stock
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: str
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: time
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: datetime.datetime
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: open
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: high
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: low
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: close
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: float
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Processing field: volume
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,417 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+    Field type: int
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,418 - models_types_generator - INFO - 
+[32m--------------------------------------------------------------------------------
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int'}
+--------------------------------------------------------------------------------[0m
+2025-03-26 21:55:08,426 - run.py - ERROR - 
+[31m--------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    self._dbapi_connection = engine.raw_connection()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 3298, in raw_connection
+    return self.pool.connect()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 449, in connect
+    return _ConnectionFairy._checkout(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 1263, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/impl.py", line 179, in _do_get
+    with util.safe_reraise():
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+    return self._create_connection()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 390, in _create_connection
+    return _ConnectionRecord(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+    return dialect.connect(*cargs, **cparams)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/default.py", line 622, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (fe80::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 26, in run
+    daily, hourly, five_minute = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 21, in init_app
+    init_db(f'logs/sqlalchemy/app_{date_str}.log')
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/utils/db.py", line 43, in init_db
+    with engine.connect() as connection:
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 3274, in connect
+    return self._connection_cls(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 148, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 2439, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    self._dbapi_connection = engine.raw_connection()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 3298, in raw_connection
+    return self.pool.connect()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 449, in connect
+    return _ConnectionFairy._checkout(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 1263, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/impl.py", line 179, in _do_get
+    with util.safe_reraise():
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+    return self._create_connection()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 390, in _create_connection
+    return _ConnectionRecord(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+    return dialect.connect(*cargs, **cparams)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/sqlalchemy/engine/default.py", line 622, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (fe80::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+--------------------------------------------------------------------------------[0m

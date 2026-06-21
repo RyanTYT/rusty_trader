@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT rolling_volatility\n            FROM market_data.daily_volatility\n            WHERE stock = $1\n                AND primary_exchange = $2\n            ORDER BY day DESC\n            LIMIT 1;\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rolling_volatility",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "336d0a9069cc8b9b6ac525c28e2531446c53668b1eefa70741f8028fe7bad3b1"
+}

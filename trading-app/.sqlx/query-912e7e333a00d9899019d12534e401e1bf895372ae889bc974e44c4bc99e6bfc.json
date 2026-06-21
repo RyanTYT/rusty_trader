@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT stock, primary_exchange, currency, SUM(quantity) AS quantity, AVG(avg_price) as fx_avg_price\n            FROM trading.current_stock_positions\n            GROUP BY stock, primary_exchange, currency;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "currency",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "quantity",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "fx_avg_price",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "912e7e333a00d9899019d12534e401e1bf895372ae889bc974e44c4bc99e6bfc"
+}

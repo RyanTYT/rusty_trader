@@ -1,0 +1,776 @@
+Found class: CurrentPosition
+  Processing field: stock
+    Field type: str
+  Processing field: avg_price_bought
+    Field type: float
+  Processing field: current_price
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: stop_limit
+    Field type: float
+  Processing field: stop_limit_in_place
+    Field type: int
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'stop_limit_in_place': 'int', 'strategy': 'str'}
+Found class: TargetPosition
+  Processing field: stock
+    Field type: str
+  Processing field: avg_price_bought
+    Field type: float
+  Processing field: current_price
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: stop_limit
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'strategy': 'str'}
+Found class: OpenOrders
+  Processing field: order_id
+    Field type: int
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: price_transacted
+    Field type: float
+  Processing field: fees
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'order_id': 'int', 'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+Found class: Transaction
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: price_transacted
+    Field type: float
+  Processing field: fees
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+Found class: HistoricalData
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: open
+    Field type: float
+  Processing field: high
+    Field type: float
+  Processing field: low
+    Field type: float
+  Processing field: close
+    Field type: float
+  Processing field: volume
+    Field type: int
+  Processing field: close_reg_20
+    Field type: float
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int', 'close_reg_20': 'float'}
+Models extracted: [{'name': 'CurrentPosition', 'fields': {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'stop_limit_in_place': 'int', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'strategy': 'str'}, 'required_keys': ['stock', 'strategy']}, {'name': 'TargetPosition', 'fields': {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'strategy': 'str'}, 'required_keys': ['stock', 'strategy']}, {'name': 'OpenOrders', 'fields': {'order_id': 'int', 'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}, 'primary_keys': {'order_id': 'int', 'time': 'datetime.datetime', 'strategy': 'str'}, 'required_keys': ['order_id', 'time', 'strategy']}, {'name': 'Transaction', 'fields': {'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'time': 'datetime.datetime', 'strategy': 'str'}, 'required_keys': ['stock', 'time', 'strategy']}, {'name': 'HistoricalData', 'fields': {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int', 'close_reg_20': 'float'}, 'primary_keys': {'stock': 'str', 'time': 'datetime.datetime'}, 'required_keys': ['stock', 'time']}]
+TypedDicts generated successfully.
+2025-02-08 12:42:52,174 - init_db() - INFO - 
+[32m--------------------------------------------------------------------------------
+Database initialization complete.
+--------------------------------------------------------------------------------[0m
+2025-02-08 12:42:52,174 - init_db() - INFO - 
+--------------------------------------------------------------------------------
+Database initialization complete.
+--------------------------------------------------------------------------------
+2025-02-08 12:42:52,177 - IBC - INFO - 
+[32m--------------------------------------------------------------------------------
+IBC LOGS START
+--------------------------------------------------------------------------------[0m
+2025-02-08 12:42:52,177 - IBC - INFO - 
+--------------------------------------------------------------------------------
+IBC LOGS START
+--------------------------------------------------------------------------------
+
+================================================================================
+
+Starting IBC version  on 2025-02-08 at 12:42:52
+
+Operating system: Darwin rtyt-m2-mac.local 23.5.0 Darwin Kernel Version 23.5.0: Wed May  1 20:19:05 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8112 arm64
+
+Arguments:
+
+TWS version = 10.30
+Program = TWS
+Entry point = ibcalpha.ibc.IbcTws
+--tws-path = /Applications
+--tws-settings-path =
+--ibc-path = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0
+--ibc-ini = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+--mode = paper
+--java-path =
+--user =
+--pw =
+
+=================================
+Generating the classpath
+Classpath=/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+
+Generating the JAVA VM options
+autorestart file not found
+
+Java VM Options=-Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=STmD5neh
+
+Determining the location of java executable
+Location of java executable=/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin
+
+Renaming IB's TWS or Gateway start script to prevent restart without IBC
+
+Starting TWS with this command:
+"/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin/java" -cp "/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar" -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=STmD5neh ibcalpha.ibc.IbcTws "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini"  paper
+
+IBC Settings:
+AcceptBidAskLastSizeDisplayUpdateNotification=
+AcceptIncomingConnectionAction=manual
+AcceptNonBrokerageAccountWarning=yes
+AllowBlindTrading=no
+AutoLogoffTime=12:30 AM
+AutoRestartTime=
+BindAddress=
+BypassBondWarning=
+BypassCalledBondWarning=
+BypassNegativeYieldToWorstConfirmation=
+BypassNoOverfillProtectionPrecaution=
+BypassOrderPrecautions=
+BypassPriceBasedVolatilityRiskWarning=
+BypassRedirectOrderWarning=
+BypassSameActionPairTradeWarning=
+BypassUSStocksMarketDataInSharesWarning=
+ClosedownAt=
+ColdRestartTime=
+CommandPrompt=
+CommandServerPort=7462
+ConfirmCryptoCurrencyOrders=manual
+ConfirmOrderIdReset=
+ControlFrom=
+DismissNSEComplianceNotice=yes
+DismissPasswordExpiryWarning=no
+ExistingSessionDetectedAction=manual
+ExitAfterSecondFactorAuthenticationTimeout=no
+FIX=no
+FIXLoginId=***
+FIXPassword=***
+IbDir=
+IbLoginId=***
+IbPassword=***
+LogStructureScope=known
+LogStructureWhen=never
+LoginDialogDisplayTimeout=60
+MinimizeMainWindow=no
+OverrideTwsApiPort=
+OverrideTwsMasterClientID=
+ReadOnlyApi=no
+ReadOnlyLogin=no
+ReloginAfterSecondFactorAuthenticationTimeout=yes
+ResetOrderIdsAtStart=
+SaveTwsSettingsAt=
+SecondFactorAuthenticationExitInterval=30
+SecondFactorAuthenticationTimeout=180
+SecondFactorDevice=
+SendMarketDataInLotsForUSstocks=
+StoreSettingsOnServer=
+SuppressInfoMessages=yes
+TradingMode=paper
+TrustedTwsApiClientIPs=
+End IBC Settings
+
+2025-02-08 12:42:52:307 IBC: version: 3.20.0
+System Properties
+------------------------------------------------------------
+gopherProxySet = false
+awt.toolkit = sun.lwawt.macosx.LWCToolkit
+java.specification.version = 11
+sun.cpu.isalist =
+sun.jnu.encoding = UTF-8
+channel = latest
+java.class.path = /Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+java.vm.vendor = Azul Systems, Inc.
+ibcsessionid = STmD5neh
+sun.arch.data.model = 64
+java.vendor.url = http://www.azul.com/
+user.timezone = Asia/Singapore
+os.name = Mac OS X
+java.vm.specification.version = 11
+sun.java.launcher = SUN_STANDARD
+user.country = SG
+sun.boot.library.path = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/lib
+sun.java.command = ibcalpha.ibc.IbcTws /Users/ryantan/Downloads/Personal *** *** paper
+http.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+jdk.debug = release
+sun.cpu.endian = little
+user.home = /Users/ryantan
+user.language = en
+java.specification.vendor = Oracle Corporation
+java.version.date = 2021-10-19
+java.home = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home
+jtsConfigDir = /Users/ryantan/Jts
+file.separator = /
+java.vm.compressedOopsMode = Zero based
+line.separator =
+
+java.specification.name = Java Platform API Specification
+java.vm.specification.vendor = Oracle Corporation
+twslaunch.autoupdate.serviceImpl = com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService
+jdk.vendor.version = Zulu11.52+13-CA
+install4jType = standalone
+java.awt.graphicsenv = sun.awt.CGraphicsEnvironment
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+ftp.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+exe4j.isInstall4j = true
+java.runtime.version = 11.0.13+8-LTS
+user.name = ryantan
+path.separator = :
+os.version = 14.5
+java.runtime.name = OpenJDK Runtime Environment
+file.encoding = UTF-8
+java.vm.name = OpenJDK 64-Bit Server VM
+java.vendor.version = Zulu11.52+13-CA
+java.vendor.url.bug = http://www.azul.com/support/
+java.io.tmpdir = /var/folders/xg/5rkvcq9n79jgm1bb8vc6mj6w0000gn/T/
+java.version = 11.0.13
+user.dir = /Users/ryantan/Jts
+os.arch = aarch64
+java.vm.specification.name = Java Virtual Machine Specification
+java.awt.printerjob = sun.lwawt.macosx.CPrinterJob
+sun.os.patch.level = unknown
+java.library.path = /Users/ryantan/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:.
+java.vm.info = mixed mode
+java.vendor = Azul Systems, Inc.
+java.vm.version = 11.0.13+8-LTS
+sun.io.unicode.encoding = UnicodeBig
+java.class.version = 55.0
+socksNonProxyHosts = local|*.local|169.254/16|*.169.254/16
+------------------------------------------------------------
+2025-02-08 12:42:52:308 IBC: using default settings provider: ini file is /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+2025-02-08 12:42:52:308 IBC: using default login manager: will get username and password from settings; FIX username and password (if required) from settings
+2025-02-08 12:42:52:308 IBC: using default main window manager
+2025-02-08 12:42:52:308 IBC: using default trading mode manager: constructor parameter args: tradingMode=paper
+2025-02-08 12:42:52:309 IBC: using default config dialog manager
+2025-02-08 12:42:52:310 IBC: CommandServer is starting with port 7462
+2025-02-08 12:42:52:316 IBC: CommandServer listening on addresses: fe80:0:0:0:ce81:b1c:bd2c:69e%utun3,fe80:0:0:0:b614:d05a:225f:9b0f%utun2,fe80:0:0:0:3976:8f22:6cf9:56d6%utun1,fe80:0:0:0:9966:2b07:fd87:6daa%utun0,fe80:0:0:0:3440:65ff:fef6:5ffa%llw0,fe80:0:0:0:3440:65ff:fef6:5ffa%awdl0,fe80:0:0:0:10b2:4ff8:7a9d:516b%en0,192.168.230.119,fe80:0:0:0:0:0:0:1%lo0,0:0:0:0:0:0:0:1%lo0,127.0.0.1; port: 7462
+2025-02-08 12:42:52:316 IBC: CommandServer started and is ready to accept commands
+2025-02-08 12:42:52:513 IBC: TWS Settings directory is: /Users/ryantan/Jts
+2025-02-08 12:42:52:513 IBC: Starting session: will exit if login dialog is not displayed within 60 seconds
+2025-02-08 12:42:52:522 IBC: Ensuring /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-08 12:42:52:522 IBC: Found setting: [Logon]/s3store=true
+2025-02-08 12:42:52:522 IBC: Found setting: [Logon]/Locale=en
+2025-02-08 12:42:52:522 IBC: Found setting: [Logon]/displayedproxymsg=1
+2025-02-08 12:42:52:522 IBC: Found setting: [Logon]/UseSSL=true
+2025-02-08 12:42:52:522 IBC: Found setting: [IBGateway]/ApiOnly=true
+2025-02-08 12:42:52:522 IBC: Confirmed /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-08 12:42:52:522 IBC: Starting TWS
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by feature.search.recorder.JtsMultiLookAndFeel (file:/Applications/Trader%20Workstation%2010.30/jars/twslaunch-1030.jar) to method javax.swing.UIManager.getLAFState()
+WARNING: Please consider reporting this to the maintainers of feature.search.recorder.JtsMultiLookAndFeel
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+2025-02-08 12:42:53:995 IBC: Getting config dialog
+2025-02-08 12:42:53:995 IBC: Creating config dialog future
+2025-02-08 12:42:53:996 IBC: Getting config dialog
+2025-02-08 12:42:53:997 IBC: Getting main window
+2025-02-08 12:42:53:997 IBC: Creating main window future
+2025-02-08 12:42:53:997 IBC: Waiting for config dialog future to complete
+2025-02-08 12:42:55:006 IBC: detected frame entitled: Login; event=Opened
+2025-02-08 12:42:55:006 IBC: Login dialog WINDOW_OPENED: LoginState is LOGGED_OUT
+2025-02-08 12:42:55:007 IBC: Setting Trading mode = paper
+2025-02-08 12:42:55:082 IBC: Setting user name
+2025-02-08 12:42:55:083 IBC: Setting password
+2025-02-08 12:42:55:083 IBC: Login attempt: 1
+2025-02-08 12:42:55:105 IBC: Click button: Paper Log In
+2025-02-08 12:42:55:212 IBC: Button now disabled: Paper Log In
+2025-02-08 12:42:57:176 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:42:57:182 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:43:16:281 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:43:16:283 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-08 12:43:21:739 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:43:21:741 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:43:24:792 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:43:24:794 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-08 12:43:25:711 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:43:25:712 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:43:31:297 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:43:31:299 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-08 12:43:34:095 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:43:34:096 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:43:36:295 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:43:36:296 IBC: detected frame entitled: Login; event=Deactivated
+2025-02-08 12:43:51:554 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:43:51:566 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:43:55:556 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:43:55:618 IBC: detected frame entitled: Login; event=Deactivated
+Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 30, in run
+    return loop.run_until_complete(task)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 92, in run_until_complete
+    self._run_once()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 115, in _run_once
+    event_list = self._selector.select(timeout)
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/selectors.py", line 562, in select
+    kev_list = self._selector.control(None, max_ev, timeout)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 31, in <module>
+    asyncio.run(run())
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 35, in run
+    loop.run_until_complete(task)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/asyncio/futures.py", line 201, in result
+    raise self._exception
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/asyncio/tasks.py", line 234, in __step
+    result = coro.throw(exc)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 27, in run
+    send_command_to_ibc('STOP\r\n')
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/services/IBC.py", line 20, in send_command_to_ibc
+    response = sock.recv(1024)
+ConnectionResetError: [Errno 54] Connection reset by peer
+Found class: CurrentPosition
+  Processing field: stock
+    Field type: str
+  Processing field: avg_price_bought
+    Field type: float
+  Processing field: current_price
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: stop_limit
+    Field type: float
+  Processing field: stop_limit_in_place
+    Field type: int
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'stop_limit_in_place': 'int', 'strategy': 'str'}
+Found class: TargetPosition
+  Processing field: stock
+    Field type: str
+  Processing field: avg_price_bought
+    Field type: float
+  Processing field: current_price
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: stop_limit
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'strategy': 'str'}
+Found class: OpenOrders
+  Processing field: order_id
+    Field type: int
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: price_transacted
+    Field type: float
+  Processing field: fees
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'order_id': 'int', 'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+Found class: Transaction
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: price_transacted
+    Field type: float
+  Processing field: fees
+    Field type: float
+  Processing field: quantity
+    Field type: float
+  Processing field: strategy
+    Field type: str
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}
+Found class: HistoricalData
+  Processing field: stock
+    Field type: str
+  Processing field: time
+    Field type: datetime.datetime
+  Processing field: open
+    Field type: float
+  Processing field: high
+    Field type: float
+  Processing field: low
+    Field type: float
+  Processing field: close
+    Field type: float
+  Processing field: volume
+    Field type: int
+  Processing field: close_reg_20
+    Field type: float
+  Fields: {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int', 'close_reg_20': 'float'}
+Models extracted: [{'name': 'CurrentPosition', 'fields': {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'stop_limit_in_place': 'int', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'strategy': 'str'}, 'required_keys': ['stock', 'strategy']}, {'name': 'TargetPosition', 'fields': {'stock': 'str', 'avg_price_bought': 'float', 'current_price': 'float', 'quantity': 'float', 'stop_limit': 'float', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'strategy': 'str'}, 'required_keys': ['stock', 'strategy']}, {'name': 'OpenOrders', 'fields': {'order_id': 'int', 'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}, 'primary_keys': {'order_id': 'int', 'time': 'datetime.datetime', 'strategy': 'str'}, 'required_keys': ['order_id', 'time', 'strategy']}, {'name': 'Transaction', 'fields': {'stock': 'str', 'time': 'datetime.datetime', 'price_transacted': 'float', 'fees': 'float', 'quantity': 'float', 'strategy': 'str'}, 'primary_keys': {'stock': 'str', 'time': 'datetime.datetime', 'strategy': 'str'}, 'required_keys': ['stock', 'time', 'strategy']}, {'name': 'HistoricalData', 'fields': {'stock': 'str', 'time': 'datetime.datetime', 'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'int', 'close_reg_20': 'float'}, 'primary_keys': {'stock': 'str', 'time': 'datetime.datetime'}, 'required_keys': ['stock', 'time']}]
+TypedDicts generated successfully.
+2025-02-08 12:46:07,169 - init_db() - INFO - 
+[32m--------------------------------------------------------------------------------
+Database initialization complete.
+--------------------------------------------------------------------------------[0m
+2025-02-08 12:46:07,169 - init_db() - INFO - 
+--------------------------------------------------------------------------------
+Database initialization complete.
+--------------------------------------------------------------------------------
+2025-02-08 12:46:07,172 - IBC - INFO - 
+[32m--------------------------------------------------------------------------------
+IBC LOGS START
+--------------------------------------------------------------------------------[0m
+2025-02-08 12:46:07,172 - IBC - INFO - 
+--------------------------------------------------------------------------------
+IBC LOGS START
+--------------------------------------------------------------------------------
+
+================================================================================
+
+Starting IBC version  on 2025-02-08 at 12:46:07
+
+Operating system: Darwin rtyt-m2-mac.local 23.5.0 Darwin Kernel Version 23.5.0: Wed May  1 20:19:05 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8112 arm64
+
+Arguments:
+
+TWS version = 10.30
+Program = TWS
+Entry point = ibcalpha.ibc.IbcTws
+--tws-path = /Applications
+--tws-settings-path =
+--ibc-path = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0
+--ibc-ini = /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+--mode = paper
+--java-path =
+--user =
+--pw =
+
+=================================
+Generating the classpath
+Classpath=/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+
+Generating the JAVA VM options
+autorestart file not found
+
+Java VM Options=-Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=WNwulBqT
+
+Determining the location of java executable
+Location of java executable=/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin
+
+Renaming IB's TWS or Gateway start script to prevent restart without IBC
+
+Starting TWS with this command:
+"/Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/bin/java" -cp "/Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar" -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=20 -XX:ConcGCThreads=5 -XX:InitiatingHeapOccupancyPercent=70 -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService -Dchannel=latest -Dexe4j.isInstall4j=true -Dinstall4jType=standalone -DjtsConfigDir=/Users/ryantan/Jts -Dibcsessionid=WNwulBqT ibcalpha.ibc.IbcTws "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini"  paper
+
+IBC Settings:
+AcceptBidAskLastSizeDisplayUpdateNotification=
+AcceptIncomingConnectionAction=manual
+AcceptNonBrokerageAccountWarning=yes
+AllowBlindTrading=no
+AutoLogoffTime=12:30 AM
+AutoRestartTime=
+BindAddress=
+BypassBondWarning=
+BypassCalledBondWarning=
+BypassNegativeYieldToWorstConfirmation=
+BypassNoOverfillProtectionPrecaution=
+BypassOrderPrecautions=
+BypassPriceBasedVolatilityRiskWarning=
+BypassRedirectOrderWarning=
+BypassSameActionPairTradeWarning=
+BypassUSStocksMarketDataInSharesWarning=
+ClosedownAt=
+ColdRestartTime=
+CommandPrompt=
+CommandServerPort=7462
+ConfirmCryptoCurrencyOrders=manual
+ConfirmOrderIdReset=
+ControlFrom=
+DismissNSEComplianceNotice=yes
+DismissPasswordExpiryWarning=no
+ExistingSessionDetectedAction=manual
+ExitAfterSecondFactorAuthenticationTimeout=no
+FIX=no
+FIXLoginId=***
+FIXPassword=***
+IbDir=
+IbLoginId=***
+IbPassword=***
+LogStructureScope=known
+LogStructureWhen=never
+LoginDialogDisplayTimeout=60
+MinimizeMainWindow=no
+OverrideTwsApiPort=
+OverrideTwsMasterClientID=
+ReadOnlyApi=no
+ReadOnlyLogin=no
+ReloginAfterSecondFactorAuthenticationTimeout=yes
+ResetOrderIdsAtStart=
+SaveTwsSettingsAt=
+SecondFactorAuthenticationExitInterval=30
+SecondFactorAuthenticationTimeout=180
+SecondFactorDevice=
+SendMarketDataInLotsForUSstocks=
+StoreSettingsOnServer=
+SuppressInfoMessages=yes
+TradingMode=paper
+TrustedTwsApiClientIPs=
+End IBC Settings
+
+2025-02-08 12:46:07:507 IBC: version: 3.20.0
+System Properties
+------------------------------------------------------------
+gopherProxySet = false
+awt.toolkit = sun.lwawt.macosx.LWCToolkit
+java.specification.version = 11
+sun.cpu.isalist =
+sun.jnu.encoding = UTF-8
+channel = latest
+java.class.path = /Applications/Trader Workstation 10.30/jars/batik-all-1.16.jar:/Applications/Trader Workstation 10.30/jars/commons-io-2.11.0.jar:/Applications/Trader Workstation 10.30/jars/fop-2.8.jar:/Applications/Trader Workstation 10.30/jars/jackson-annotations-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-core-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jackson-databind-2.12.3.jar:/Applications/Trader Workstation 10.30/jars/jts4launch-1030.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-mac-arm-7.29.jar:/Applications/Trader Workstation 10.30/jars/jxbrowser-swing-7.29.jar:/Applications/Trader Workstation 10.30/jars/locales.jar:/Applications/Trader Workstation 10.30/jars/log4j-api-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/log4j-core-2.17.1.jar:/Applications/Trader Workstation 10.30/jars/total-2023.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-1030.jar:/Applications/Trader Workstation 10.30/jars/twslaunch-install4j-1.12.jar:/Applications/Trader Workstation 10.30/jars/xmlgraphics-commons-2.8.jar:/Applications/Trader Workstation 10.30/.install4j/i4jruntime.jar:/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/IBC.jar
+java.vm.vendor = Azul Systems, Inc.
+ibcsessionid = WNwulBqT
+sun.arch.data.model = 64
+java.vendor.url = http://www.azul.com/
+user.timezone = Asia/Singapore
+os.name = Mac OS X
+java.vm.specification.version = 11
+sun.java.launcher = SUN_STANDARD
+user.country = SG
+sun.boot.library.path = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home/lib
+sun.java.command = ibcalpha.ibc.IbcTws /Users/ryantan/Downloads/Personal *** *** paper
+http.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+jdk.debug = release
+sun.cpu.endian = little
+user.home = /Users/ryantan
+user.language = en
+java.specification.vendor = Oracle Corporation
+java.version.date = 2021-10-19
+java.home = /Applications/Trader Workstation 10.30/.install4j/jre.bundle/Contents/Home
+jtsConfigDir = /Users/ryantan/Jts
+file.separator = /
+java.vm.compressedOopsMode = Zero based
+line.separator =
+
+java.specification.name = Java Platform API Specification
+java.vm.specification.vendor = Oracle Corporation
+twslaunch.autoupdate.serviceImpl = com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService
+jdk.vendor.version = Zulu11.52+13-CA
+install4jType = standalone
+java.awt.graphicsenv = sun.awt.CGraphicsEnvironment
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+ftp.nonProxyHosts = local|*.local|169.254/16|*.169.254/16
+exe4j.isInstall4j = true
+java.runtime.version = 11.0.13+8-LTS
+user.name = ryantan
+path.separator = :
+os.version = 14.5
+java.runtime.name = OpenJDK Runtime Environment
+file.encoding = UTF-8
+java.vm.name = OpenJDK 64-Bit Server VM
+java.vendor.version = Zulu11.52+13-CA
+java.vendor.url.bug = http://www.azul.com/support/
+java.io.tmpdir = /var/folders/xg/5rkvcq9n79jgm1bb8vc6mj6w0000gn/T/
+java.version = 11.0.13
+user.dir = /Users/ryantan/Jts
+os.arch = aarch64
+java.vm.specification.name = Java Virtual Machine Specification
+java.awt.printerjob = sun.lwawt.macosx.CPrinterJob
+sun.os.patch.level = unknown
+java.library.path = /Users/ryantan/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:.
+java.vm.info = mixed mode
+java.vendor = Azul Systems, Inc.
+java.vm.version = 11.0.13+8-LTS
+sun.io.unicode.encoding = UnicodeBig
+java.class.version = 55.0
+socksNonProxyHosts = local|*.local|169.254/16|*.169.254/16
+------------------------------------------------------------
+2025-02-08 12:46:07:509 IBC: using default settings provider: ini file is /Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/IBCMacos-3.20.0/config.ini
+2025-02-08 12:46:07:509 IBC: using default login manager: will get username and password from settings; FIX username and password (if required) from settings
+2025-02-08 12:46:07:509 IBC: using default main window manager
+2025-02-08 12:46:07:509 IBC: using default trading mode manager: constructor parameter args: tradingMode=paper
+2025-02-08 12:46:07:510 IBC: using default config dialog manager
+2025-02-08 12:46:07:513 IBC: CommandServer is starting with port 7462
+2025-02-08 12:46:07:523 IBC: CommandServer listening on addresses: fe80:0:0:0:ce81:b1c:bd2c:69e%utun3,fe80:0:0:0:b614:d05a:225f:9b0f%utun2,fe80:0:0:0:3976:8f22:6cf9:56d6%utun1,fe80:0:0:0:9966:2b07:fd87:6daa%utun0,fe80:0:0:0:3440:65ff:fef6:5ffa%llw0,fe80:0:0:0:3440:65ff:fef6:5ffa%awdl0,fe80:0:0:0:10b2:4ff8:7a9d:516b%en0,192.168.230.119,fe80:0:0:0:0:0:0:1%lo0,0:0:0:0:0:0:0:1%lo0,127.0.0.1; port: 7462
+2025-02-08 12:46:07:523 IBC: CommandServer started and is ready to accept commands
+2025-02-08 12:46:07:798 IBC: TWS Settings directory is: /Users/ryantan/Jts
+2025-02-08 12:46:07:799 IBC: Starting session: will exit if login dialog is not displayed within 60 seconds
+2025-02-08 12:46:07:828 IBC: Ensuring /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-08 12:46:07:828 IBC: Found setting: [Logon]/s3store=true
+2025-02-08 12:46:07:828 IBC: Found setting: [Logon]/Locale=en
+2025-02-08 12:46:07:828 IBC: Found setting: [Logon]/displayedproxymsg=1
+2025-02-08 12:46:07:829 IBC: Found setting: [Logon]/UseSSL=true
+2025-02-08 12:46:07:829 IBC: Found setting: [IBGateway]/ApiOnly=true
+2025-02-08 12:46:07:829 IBC: Confirmed /Users/ryantan/Jts/jts.ini contains required minimal lines
+2025-02-08 12:46:07:829 IBC: Starting TWS
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by feature.search.recorder.JtsMultiLookAndFeel (file:/Applications/Trader%20Workstation%2010.30/jars/twslaunch-1030.jar) to method javax.swing.UIManager.getLAFState()
+WARNING: Please consider reporting this to the maintainers of feature.search.recorder.JtsMultiLookAndFeel
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+2025-02-08 12:46:10:084 IBC: Getting config dialog
+2025-02-08 12:46:10:084 IBC: Creating config dialog future
+2025-02-08 12:46:10:084 IBC: Getting config dialog
+2025-02-08 12:46:10:085 IBC: Getting main window
+2025-02-08 12:46:10:085 IBC: Creating main window future
+2025-02-08 12:46:10:085 IBC: Waiting for config dialog future to complete
+2025-02-08 12:46:11:009 IBC: detected frame entitled: Login; event=Activated
+2025-02-08 12:46:11:012 IBC: detected frame entitled: Login; event=Focused
+2025-02-08 12:46:11:012 IBC: detected frame entitled: Login; event=Opened
+2025-02-08 12:46:11:012 IBC: Login dialog WINDOW_OPENED: LoginState is LOGGED_OUT
+2025-02-08 12:46:11:012 IBC: Setting Trading mode = paper
+2025-02-08 12:46:11:088 IBC: Setting user name
+2025-02-08 12:46:11:089 IBC: Setting password
+2025-02-08 12:46:11:089 IBC: Login attempt: 1
+2025-02-08 12:46:11:121 IBC: Click button: Paper Log In
+2025-02-08 12:46:11:566 IBC: Button now disabled: Paper Log In
+2025-02-08 12:46:14:358 IBC: detected frame entitled: Login; event=Lost focus
+2025-02-08 12:46:14:378 IBC: detected frame entitled: Login; event=Deactivated
+Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 30, in run
+    return loop.run_until_complete(task)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 92, in run_until_complete
+    self._run_once()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 115, in _run_once
+    event_list = self._selector.select(timeout)
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/selectors.py", line 562, in select
+    kev_list = self._selector.control(None, max_ev, timeout)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 31, in <module>
+    asyncio.run(run())
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 35, in run
+    loop.run_until_complete(task)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/venv/lib/python3.10/site-packages/nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/asyncio/futures.py", line 201, in result
+    raise self._exception
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/asyncio/tasks.py", line 234, in __step
+    result = coro.throw(exc)
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 27, in run
+    send_command_to_ibc('STOP\r\n')
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/services/IBC.py", line 20, in send_command_to_ibc
+    response = sock.recv(1024)
+ConnectionResetError: [Errno 54] Connection reset by peer
+2025-02-08 14:55:16,155 - run.py - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 45, in init_app
+    init_db()
+TypeError: init_db() missing 1 required positional argument: 'log_file'
+
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-08 14:55:49,615 - run.py - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 45, in init_app
+    init_db('logs/sqlalchemy/app.log')
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/utils/db.py", line 38, in init_db
+    logging.FileHandler(log_file)
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/logging/__init__.py", line 1167, in __init__
+    StreamHandler.__init__(self, self._open())
+  File "/Users/ryantan/.pyenv/versions/3.10.0/lib/python3.10/logging/__init__.py", line 1197, in _open
+    return open_func(self.baseFilename, self.mode,
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/logs/sqlalchemy/app.log'
+
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-08 14:56:38,753 - init_db() - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+Database initialization complete.
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-08 14:56:38,757 - IBC - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+IBC LOGS START
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-08 14:57:01,920 - send_command_to_ibc() - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+Response: OK Shutting down: STOP command
+
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:26:50,349 - run.py - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+Failed, Disconnecting from brokers now: Traceback (most recent call last):
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/run.py", line 15, in run
+    atomic_strategies = await init_app()
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/create_app.py", line 45, in init_app
+    init_db('logs/sqlalchemy/app.log')
+  File "/Users/ryantan/Downloads/Personal Projects/auto ibkr/py_book/backend/app/utils/db.py", line 39, in init_db
+    sql_logger.addHandler(sql_logger.FileHandler(log_file))
+AttributeError: 'Logger' object has no attribute 'FileHandler'
+
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:04,729 - init_db() - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+Database initialization complete.
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:04,733 - IBC - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+IBC LOGS START
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:30,024 - IBC - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+IBC LOGS END - IBKR started
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:30,709 - IBAsyncBroker - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+connect(): Successfully connected to IBKR.
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:38,832 - IBAsyncBroker - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+reqMktData() in get_current_price() timed out - no data for ticker: SPY
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:44,537 - IBAsyncBroker - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+reqMktData() in get_current_price() timed out - no data for ticker: SPY
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:50,045 - IBAsyncBroker - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+reqMktData() in get_current_price() timed out - no data for ticker: SPY
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:50,256 - IBAsyncBroker - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+New order placed: 257
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 09:27:50,425 - IBAsyncBroker - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+Order submitted: 257 for SPY
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 11:05:11,586 - run.py - ERROR - 
+[31m------------------------------------------------------------------------------------------------------------------------------------
+Keyboard Interrupted: Disconnecting now
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 11:05:11,589 - IBAsyncBroker - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+disconnect(): Successfully disconnected from IBKR.
+------------------------------------------------------------------------------------------------------------------------------------[0m
+2025-02-09 11:05:11,597 - send_command_to_ibc() - INFO - 
+[32m------------------------------------------------------------------------------------------------------------------------------------
+Response: OK Shutting down: STOP command
+
+------------------------------------------------------------------------------------------------------------------------------------[0m

@@ -1,0 +1,39 @@
+[project]
+name = "trading-app"
+version = "0.1.0"
+description = "Trading App built with Python"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.12.12",
+    "apscheduler>=3.11.0",
+    "asyncpg>=0.30.0",
+    "cachetools>=5.5.2",
+    "colorama>=0.4.6",
+    "fastapi[standard]>=0.115.12",
+    "ib-async>=1.0.3",
+    "lxml>=6.0.0",
+    "numpy>=2.2.6",
+    "pandas-market-calendars>=5.1.0",
+    "psycopg2-binary>=2.9.10",
+    "pytz>=2025.2",
+    "requests>=2.32.3",
+    "scipy>=1.15.3",
+    "sortedcontainers>=2.4.0",
+    "sqlalchemy>=2.0.41",
+]
+
+[dependency-groups]
+dev = [
+    "lxml-stubs>=0.5.1",
+    "mypy>=1.15.0",
+    "pandas>=2.2.3",
+    "pandas-stubs>=2.2.3.250308",
+    "pytest-asyncio>=1.0.0",
+    "scipy-stubs>=1.15.3.0",
+    "sortedcontainers-stubs>=2.4.3",
+    "types-cachetools>=5.5.0.20240820",
+    "types-colorama>=0.4.15.20240311",
+    "types-pytz>=2025.2.0.20250516",
+    "types-requests>=2.32.0.20250515",
+]
