@@ -1,46 +1,123 @@
 # rusty_trader
-
-A rust implementation of a trading bot based on the IBKR API (with rust ibapi) with fully automated executions and a frontend to track strategy performance
-Check [this](https://ryantyt.github.io/RTYT/journal/summer_trading_bot_3) out for a more personal post on the building of this.
-Note: If you actually want to try it out, you need the environment file in the root folder following the .env.example file and also add the stable distribution of IB gateway to the IB folder.
-
+ 
+A self-hosted live algorithmic trading system written in Rust, interfacing with Interactive Brokers (IBKR) via TWS through the `rust-ibapi` crate.
+ 
+The public repository contains the system skeleton — architecture, database schema, order engine, and broker abstraction — without the specific strategies currently under live testing.
+ 
+## Repositories
+ 
+| Repo | Description |
+|------|-------------|
+| [`rusty_trader`](https://github.com/RyanTYT/rusty_trader) | Rust backend: OMS, strategies, DB, broker layer |
+| [`rusty_trader_front`](https://github.com/RyanTYT/rusty_trader_front) | Tauri frontend: performance dashboard, position viewer |
+ 
 ---
-
-## Overview
-
-This repository showcases the **public interface** of the trading system.  
-The full implementation connects to **Interactive Brokers (IBKR)** via their API (with the help of rust ibapi), manages portfolio positions, executes trades, and supports research/backtesting.  
-
-The goal of this repo is to showcase the:
-- [**Backend architecture**](/trading-app/README.md) used for the strategies; the older Python implementation is left in for posterity.
-- A separate [**Backend**](/backend/README.md) used for easy user interface built in rust as well.
-- **Containerized development setup** with Docker for portability.
-- The frontend architecture can be found [here](https://github.com/RyanTYT/rusty_trader_front).
-- For a look at some trading strategies I backtested that have found their way into my personal implementations, have a look [here](https://github.com/RyanTYT/TradingResearch)
-
+ 
+## Architecture
+ 
+```
+Strategies (per Tokio task)
+    └── Consolidator          — unified market data subscriptions, auto-resubscribe
+    └── OrderEngine           — SELL → FX → BUY chains, unified OMS event loop
+        └── IBKR / TWS        — rust-ibapi (primary price + order execution)
+        └── yfinance fallback — TSE (.T), LSE (.L), KRX suffix mapping
+    └── PostgreSQL (sqlx)     — positions, orders, fills, CASH:{currency} ledger rows
+```
+ 
+**Threading model:** Each strategy runs as a dedicated Tokio task. Shared state is guarded with `std::sync::Mutex` or `tokio::sync::Mutex` depending on whether the critical section crosses an `.await` point.
+ 
 ---
+ 
+## Key Components
+ 
+### OrderEngine
+Handles the full order lifecycle. Multi-currency rebalancing uses SELL→FX→BUY attachment chains: each leg is spawned only after the prior leg is confirmed filled. FX orders are tagged via `orderRef` for attribution back to the originating position. A unified OMS event loop processes all open order events across every active strategy.
+ 
+### Consolidator
+Abstracts IBKR market data subscriptions. Multiple strategies interested in the same contract share a single active subscription. Handles re-subscription automatically when data goes stale, and emits a unified trigger per contract regardless of how many strategies are listening.
+ 
+### Dynamic CRUD (Proc Macros)
+Models are declared once as structs. Two proc macros handle the rest:
+- `#[derive(CrudKeys)]` — generates primary key and composite key types at compile time
+- A second proc macro generates `sqlx` query trait implementations with compile-time
+  type checking via the `sqlx::query!` macro
 
-## ⚙️ Features
-
-- **IBKR Integration**  
-  - Connects to Interactive Brokers’ Trader Workstation / IB Gateway.  
-  - Handles positions, orders, and execution callbacks, updating the local DB accordingly.
-
-- **Systematic Trading Interface**  
-  - Unified API for positions, target allocations, transactions, and historical data.
-  - Hybrid architecture: as far as rust is a hybrid between OOP and functional programming.
-
-- **Containerized Setup**  
-  - `docker-compose.yml` to run the trading-bot with IBKR Gateway in a GUI-enabled container (enabled with Xvfb).
-  - Simple tests in the tests folder to test order management and bar consolidation.
-
+### Price Fetching
+IBKR TWS is the primary source. Fallback to yfinance on failure, with Yahoo Finance exchange-suffix mapping:
+ 
+| Exchange | Yahoo Suffix |
+|----------|-------------|
+| TSE (Tokyo) | `.T` |
+| LSE (London) | `.L` |
+| KRX (Korea) | handled separately |
+ 
+### Database Schema (abbreviated)
+ 
+```sql
+-- Positions (multi-currency, including cash rows)
+positions (id, ticker, exchange, currency, quantity, avg_cost, updated_at)
+-- CASH:{currency} rows (e.g. CASH:SGD) track per-currency cash balances
+ 
+-- Orders
+orders (id, order_ref, ticker, action, quantity, order_type, status, strategy, created_at)
+ 
+-- Fills
+fills (id, order_id, fill_price, fill_quantity, commission, filled_at)
+```
+ 
 ---
+ 
+## Getting Started
+ 
+### Prerequisites
+- Rust (stable toolchain)
+- Docker + Docker Compose
+- Interactive Brokers TWS or IB Gateway running locally, with API enabled on port 7497
+- `.env` file with database credentials and IBKR connection config
 
-## 📂 Repo Structure
-
-- IB: Builds the Docker Image to host the installed IB Gateway Instance
-- Backtester: Contains a backtester module built in Rust that mirrors the execution model of the Strategy in `trading-app` - to backtest a lot more accurately taking into account commissions, bids and asks, and next bar execution - as well as additional rudimentary code related to optuna tuning of hyperparameters of certain indicator functions.
-- backend: The backend to communicate with the local trading database and the frontend - for analytics and tracking of strategy performance
-- postgres-data: To host the data of the timescaledb/postgresdb Database for persistence.
-- trading-app: The rust trading application that is the main program to run the strategies on
-- trading-app-old: The older Python implementation of the trading application for posterity (can be taken a look at for very blatant issues and problems with building such an application in Python - Loss of static typing, Bad event management system, 0 multithreading for strategies, ...)
+### Running
+ 
+```bash
+# Start PostgreSQL and any auxiliary services
+docker compose up -d
+ 
+# Run the backend
+cargo run --release
+```
+ 
+Strategies are loaded at startup. Each registered strategy is spawned onto a dedicated
+OS thread and begins subscribing to its required contracts via the Consolidator.
+ 
+### Running the Frontend
+ 
+See [`rusty_trader_front`](https://github.com/RyanTYT/rusty_trader_front) for the Tauri
+desktop/mobile dashboard.
+ 
+---
+ 
+## Tech Stack
+ 
+| Component | Technology |
+|-----------|-----------|
+| Language | Rust (stable) |
+| Async runtime | tokio |
+| IBKR interface | rust-ibapi |
+| Database | PostgreSQL |
+| DB query layer | sqlx (compile-time checked) |
+| Price fallback | yfinance (via subprocess) |
+| Deployment | Docker Compose |
+| Frontend | React + TypeScript + Tauri |
+ 
+---
+ 
+## Notes
+ 
+- The public repository is a **skeleton**. Strategies under active live testing are not
+  committed to the public repo.
+- Base currency: SGD (IBKR account). All multi-currency positions go through FX legs
+  managed by the OrderEngine.
+- The system is designed to be broker-agnostic at the trait level — the `Broker` trait
+  exposes `get_current_price`, `start_live_strategy`, and order placement methods, making
+  a future port to a different broker a matter of implementing the trait rather than
+  rewriting core logic.
+---
