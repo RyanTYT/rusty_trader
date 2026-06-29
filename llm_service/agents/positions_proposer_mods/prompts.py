@@ -198,30 +198,90 @@ You have:
 3. Current positions being considered for replacement (if any)
 4. Precise transaction cost data
 
+════════════════════════════════════════════════════════════
+ENUM CONSTRAINTS — HARD RULES — VIOLATIONS CAUSE REJECTION
+════════════════════════════════════════════════════════════
+
+You MUST use ONLY the exact string values listed below.
+Any other value — including synonyms, abbreviations, or
+variations — will cause a hard 422 validation failure.
+
+  direction:
+    ALLOWED:   "long" | "short"
+
+  asset_type:
+    ALLOWED:   "stock" | "call_option" | "put_option"
+
+  position_state:
+    ALLOWED:   "new" | "increase" | "decrease" | "replace" | "hold"
+
+  conviction:
+    ALLOWED:   1 | 2 | 3  (integer, NOT a string)
+
+  Driver.type:
+    ALLOWED:   "fundamental" | "technical" | "macro"
+               | "supply_chain" | "sentiment" | "regulatory"
+    FORBIDDEN: "macroeconomic" → use "macro" instead
+    FORBIDDEN: "geopolitical"  → use "macro" instead
+    FORBIDDEN: "thematic"      → use "macro" instead
+    FORBIDDEN: "quantitative"  → use "technical" instead
+    FORBIDDEN: "earnings"      → use "fundamental" instead
+    FORBIDDEN: "valuation"     → use "fundamental" instead
+
+  PriceThreshold.action:
+    ALLOWED:   "buy" | "sell" | "trim" | "add" | "close"
+
+  PriceThreshold.signal_type:
+    ALLOWED:   "technical" | "fundamental" | "volatility_stop"
+    FORBIDDEN: "macro"        → use "fundamental" instead
+    FORBIDDEN: "momentum"     → use "technical" instead
+    FORBIDDEN: "quantitative" → use "technical" instead
+    FORBIDDEN: "sentiment"    → use "technical" instead
+
+  FrictionEstimate.spread_tier:
+    ALLOWED:   "large_cap" | "mid_cap" | "small_cap"
+    FORBIDDEN: "mega_cap"    → use "large_cap" instead
+    FORBIDDEN: "micro_cap"   → use "small_cap" instead
+    FORBIDDEN: "nano_cap"    → use "small_cap" instead
+
+════════════════════════════════════════════════════════════
 DISPLACEMENT HURDLE — a new idea must clear ALL of the following:
-1. TRANSACTION COST HURDLE: expected edge must EXCEED round-trip cost by ≥ 3× coverage.
-2. SUPERIOR OPPORTUNITY: better upside %, tighter invalidation, clearer catalyst, equal/higher conviction.
-3. FRICTION JUSTIFICATION: state RT cost, expected gain, and coverage ratio (target ≥ 3×).
+1. TRANSACTION COST HURDLE: expected edge must EXCEED round-trip
+   cost by ≥ 3× coverage.
+2. SUPERIOR OPPORTUNITY: better upside %, tighter invalidation,
+   clearer catalyst, equal/higher conviction.
+3. FRICTION JUSTIFICATION: state RT cost, expected gain, and
+   coverage ratio (target ≥ 3×).
 
 CONVICTION CAPS:
 - Conviction 1 (speculative): max {max_c1}%
 - Conviction 2 (moderate):    max {max_c2}%
 - Conviction 3 (high):        max {max_c3}%
 
-ENUM CONSTRAINTS:
-  direction:       "long" | "short"
-  asset_type:      "stock" | "call_option" | "put_option"
-  position_state:  "new" | "increase" | "decrease" | "replace" | "hold"
-  conviction:      1 | 2 | 3  (integer)
-  Driver.type:     "fundamental" | "technical" | "macro" | "supply_chain" | "sentiment" | "regulatory"
-  PriceThreshold.action:      "buy" | "sell" | "trim" | "add" | "close"
-  PriceThreshold.signal_type: "technical" | "fundamental" | "volatility_stop"
-
-Each proposed trade MUST include the exchange routing fields needed to fetch live prices
-and place orders. Take these from the idea data — do NOT invent or guess:
+════════════════════════════════════════════════════════════
+EXCHANGE ROUTING FIELDS
+════════════════════════════════════════════════════════════
+Each trade MUST include exchange routing fields taken directly
+from the idea data — do NOT invent or guess:
   - primary_exchange: IBKR primary_exchange code (e.g. "NYSE", "TSEJ", "XKRX")
-  - currency:         ISO-4217 code for the listing currency (e.g. "USD", "JPY", "KRW")
+  - currency:         ISO-4217 listing currency (e.g. "USD", "JPY", "KRW", "GBP")
 
+════════════════════════════════════════════════════════════
+SELF-CHECK — before emitting JSON, verify every field:
+════════════════════════════════════════════════════════════
+For each proposed trade, confirm:
+  [ ] Driver.type       is one of the 6 ALLOWED values above
+  [ ] signal_type       is one of the 3 ALLOWED values above
+  [ ] spread_tier       is one of the 3 ALLOWED values above
+  [ ] conviction        is an integer (1, 2, or 3), not a string
+  [ ] proposed_weight   does not exceed the conviction cap
+  [ ] friction_justification references RT cost, gain, and coverage ratio
+
+If any check fails, correct it before outputting.
+
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+════════════════════════════════════════════════════════════
 Output ONLY valid JSON matching this schema exactly:
 {{
   "proposed_trades": [

@@ -11,9 +11,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from fastapi.exceptions import RequestValidationError
 import httpx
 from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agents import (
@@ -271,6 +272,11 @@ async def patch_options_mode(body: dict):
     updated = await update_settings(options_mode=mode)
     return {"options_mode": updated.options_mode}
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print("422 body:", await request.body())
+    print("422 errors:", exc.errors())
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 # ── Notify Rust backend (→ WebSocket → Tauri frontend) ───────────────────────
 

@@ -58,6 +58,8 @@ services:
         condition: service_started
       db:
         condition: service_healthy
+      autoheal:
+        condition: service_started
 
   backend:
     build:
@@ -145,6 +147,7 @@ services:
       - DATABASE_HOST=test-db
       # - HOST=127.0.0.1
       # - SERVER_HOST=127.0.0.1
+      # - PORT=8000
       - DISPLAY=:99
       - SQLX_OFFLINE=true
       # - DISPLAY=192.168.1.90:0
@@ -208,6 +211,20 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
+
+  autoheal:
+    deploy:
+      replicas: 1
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=20
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=20
+    image: willfarrell/autoheal:latest
+    network_mode: none
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   ib-volume:

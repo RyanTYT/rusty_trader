@@ -74,7 +74,7 @@ struct AppState {
     // alpaca_secret: String, // pub notification_tx: broadcast::Sender<String>,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(e) = tracing_subscriber::fmt()
         .with_env_filter(

@@ -1,13 +1,15 @@
 use crate::{
     helpers::{contract::get_contract_from_local_symbol, sync_timeout::timeout},
     init_app::ApplicationState,
-    market_data::consolidator_strategy::GetStrategyValue,
+    market_data::{consolidator_strategy::GetStrategyValue, strategy_scheduler::StrategyScheduler},
+    schedule::broker_scheduler::IbkrRegion,
 };
 use axum::{
     Json, Router,
     extract::{Query, State},
     response::IntoResponse,
 };
+use chrono::{DateTime, Utc};
 use ibapi::prelude::{Contract, Symbol};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -309,11 +311,26 @@ async fn get_strategy_value(
     // });
 }
 
-async fn check_health() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        axum::Json(serde_json::json!({ "status": "ok" })),
-    )
+async fn check_health(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let trading_app_state = extract_application_state(state).await?;
+    let is_ibkr_up = !IbkrRegion::Apac.is_in_maintenance(Utc::now());
+    match trading_app_state.as_ref() {
+        ApplicationState::IbkrState(application_state) => {
+            if (is_ibkr_up && application_state.master_client.is_connected()) || !is_ibkr_up {
+                Ok((
+                    StatusCode::OK,
+                    axum::Json(serde_json::json!({ "status": "ok" })),
+                ))
+            } else {
+                Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({ "status": "not connected to IBKR" })),
+                ))
+            }
+        }
+    }
 }
 
 pub fn init_server(mut app_state_rcx: Receiver<Weak<ApplicationState>>) {

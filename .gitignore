@@ -15,6 +15,7 @@ output.log
 *.zip
 target
 gen
+.venv
 
 tws-stable-standalone-linux-x64.sh
 ibgateway-stable-standalone-linux-x64.sh

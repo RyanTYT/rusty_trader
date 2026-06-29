@@ -1129,6 +1129,7 @@ impl OrderEngine {
                             let (sell_to_fx, fx_to_buys, chained_buys) = if !strategy
                                 .is_fx_strategy()
                             {
+                                tracing::info!("Strat is FX Strat");
                                 let mut funds = HashMap::new();
                                 let mut funds_from_selling =
                                     HashMap::<HashContract, Vec<f64>>::new();
@@ -1162,6 +1163,8 @@ impl OrderEngine {
                                         pos_to_open.push(pos_diff);
                                     }
                                 }
+
+                                tracing::info!("Constructed hashmaps for FX strat");
                                 {
                                     let strong_consolidator = {
                                         let upgraded_consolidator_opt = consolidator.upgrade();
@@ -1182,6 +1185,8 @@ impl OrderEngine {
                                         let hash_contract = HashContract {
                                             contract: contract.clone(),
                                         };
+
+                                        tracing::info!("Fetching price for {}", contract.symbol);
                                         let required_currency = pos_diff.qty_diff
                                         * strong_consolidator.get_current_price(
                                             &contract,
@@ -1191,10 +1196,15 @@ impl OrderEngine {
                                             tracing::warn!("Could not get current price of contract in order_engine!");
                                             0.0
                                         });
+                                        tracing::info!("Fetched price for {}", contract.symbol);
 
                                         let available_funds =
                                             funds.get(&pos_diff.currency).unwrap_or(&0.0);
                                         if available_funds >= &required_currency {
+                                            funds.insert(
+                                                pos_diff.currency.clone(),
+                                                available_funds - required_currency,
+                                            );
                                             continue;
                                         }
 
@@ -1207,6 +1217,7 @@ impl OrderEngine {
                                 }
 
                                 // Collect all buy contracts that are handled via FX attachment chains
+                                tracing::info!("getting required attached FX");
                                 // so we can skip them in the main placement loop.
                                 let (sell_to_fx, fx_to_buys) =
                                     OrderEngine::get_required_fx_attachments(
