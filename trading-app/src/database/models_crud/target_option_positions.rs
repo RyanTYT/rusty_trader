@@ -20,6 +20,21 @@ pub struct TargetOptionPositionsCRUD {
     >,
 }
 
+impl
+    CRUDTrait<
+        TargetOptionPositionsFullKeys,
+        TargetOptionPositionsPrimaryKeys,
+        TargetOptionPositionsUpdateKeys,
+    > for TargetOptionPositionsCRUD
+{
+    delegate_all_crud_methods!(
+        crud,
+        TargetOptionPositionsFullKeys,
+        TargetOptionPositionsPrimaryKeys,
+        TargetOptionPositionsUpdateKeys
+    );
+}
+
 struct OptionalQtyDiff {
     stock: Option<String>,
     primary_exchange: Option<String>,
@@ -57,13 +72,6 @@ impl TargetOptionPositionsCRUD {
             >::new(pool, String::from("trading.target_option_positions")),
         }
     }
-
-    delegate_all_crud_methods!(
-        crud,
-        TargetOptionPositionsFullKeys,
-        TargetOptionPositionsPrimaryKeys,
-        TargetOptionPositionsUpdateKeys
-    );
 
     pub async fn get_target_pos_diff(
         &self,

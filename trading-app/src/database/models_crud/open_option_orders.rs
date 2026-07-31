@@ -34,6 +34,18 @@ pub struct OpenOptionOrdersFullKeysRes {
 pub struct OpenOptionOrdersCRUD {
     crud: CRUD<OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys>,
 }
+
+impl CRUDTrait<OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys>
+    for OpenOptionOrdersCRUD
+{
+    delegate_all_crud_methods!(
+        crud,
+        OpenOptionOrdersFullKeys,
+        OpenOptionOrdersPrimaryKeys,
+        OpenOptionOrdersUpdateKeys
+    );
+}
+
 impl OpenOptionOrdersCRUD {
     fn new(pool: PgPool) -> Self {
         Self {
@@ -44,13 +56,6 @@ impl OpenOptionOrdersCRUD {
             >::new(pool, String::from("trading.open_option_orders")),
         }
     }
-
-    delegate_all_crud_methods!(
-        crud,
-        OpenOptionOrdersFullKeys,
-        OpenOptionOrdersPrimaryKeys,
-        OpenOptionOrdersUpdateKeys
-    );
 
     pub async fn get_orders_for_strat(
         &self,

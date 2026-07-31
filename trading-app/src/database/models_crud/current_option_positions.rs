@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use sqlx::{PgPool, prelude::FromRow};
 
 use crate::{
@@ -43,6 +44,22 @@ pub struct CurrentOptionPositionsCRUD {
         CurrentOptionPositionsUpdateKeys,
     >,
 }
+
+impl
+    CRUDTrait<
+        CurrentOptionPositionsFullKeys,
+        CurrentOptionPositionsPrimaryKeys,
+        CurrentOptionPositionsUpdateKeys,
+    > for CurrentOptionPositionsCRUD
+{
+    delegate_all_crud_methods!(
+        crud,
+        CurrentOptionPositionsFullKeys,
+        CurrentOptionPositionsPrimaryKeys,
+        CurrentOptionPositionsUpdateKeys
+    );
+}
+
 impl CurrentOptionPositionsCRUD {
     fn new(pool: PgPool) -> Self {
         Self {
@@ -53,13 +70,6 @@ impl CurrentOptionPositionsCRUD {
             >::new(pool, String::from("trading.current_option_positions")),
         }
     }
-
-    delegate_all_crud_methods!(
-        crud,
-        CurrentOptionPositionsFullKeys,
-        CurrentOptionPositionsPrimaryKeys,
-        CurrentOptionPositionsUpdateKeys
-    );
 
     pub async fn get_all_positions_by_contract(&self) -> Result<Vec<GroupedByContract>, String> {
         let rows = sqlx::query_as!(

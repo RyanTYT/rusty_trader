@@ -25,6 +25,18 @@ pub struct StockTransactionsCRUD {
     crud:
         CRUD<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>,
 }
+
+impl CRUDTrait<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>
+    for StockTransactionsCRUD
+{
+    delegate_all_crud_methods!(
+        crud,
+        StockTransactionsFullKeys,
+        StockTransactionsPrimaryKeys,
+        StockTransactionsUpdateKeys
+    );
+}
+
 impl StockTransactionsCRUD {
     fn new(pool: PgPool) -> Self {
         Self {
@@ -35,13 +47,6 @@ impl StockTransactionsCRUD {
             >::new(pool, String::from("trading.stock_transactions")),
         }
     }
-
-    delegate_all_crud_methods!(
-        crud,
-        StockTransactionsFullKeys,
-        StockTransactionsPrimaryKeys,
-        StockTransactionsUpdateKeys
-    );
 
     pub async fn read_last_transaction_of(
         &self,

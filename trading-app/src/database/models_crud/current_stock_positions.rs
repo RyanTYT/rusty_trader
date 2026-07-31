@@ -48,6 +48,22 @@ pub struct CurrentStockPositionsCRUD {
         CurrentStockPositionsUpdateKeys,
     >,
 }
+
+impl
+    CRUDTrait<
+        CurrentStockPositionsFullKeys,
+        CurrentStockPositionsPrimaryKeys,
+        CurrentStockPositionsUpdateKeys,
+    > for CurrentStockPositionsCRUD
+{
+    delegate_all_crud_methods!(
+        crud,
+        CurrentStockPositionsFullKeys,
+        CurrentStockPositionsPrimaryKeys,
+        CurrentStockPositionsUpdateKeys
+    );
+}
+
 impl CurrentStockPositionsCRUD {
     fn new(pool: PgPool) -> Self {
         Self {
@@ -58,13 +74,6 @@ impl CurrentStockPositionsCRUD {
             >::new(pool, String::from("trading.current_stock_positions")),
         }
     }
-
-    delegate_all_crud_methods!(
-        crud,
-        CurrentStockPositionsFullKeys,
-        CurrentStockPositionsPrimaryKeys,
-        CurrentStockPositionsUpdateKeys
-    );
 
     pub async fn get_pos_by_strat_and_stock(
         &self,
