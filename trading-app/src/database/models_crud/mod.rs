@@ -1,10 +1,11 @@
 pub mod current_option_positions;
 pub mod current_stock_positions;
 pub mod daily_historical_data;
-pub mod frac_mom_weekly_pos;
+// pub mod frac_mom_weekly_pos;
 pub mod historical_data;
 pub mod historical_forex_data;
 pub mod historical_options_data;
+pub mod historical_stock_data;
 pub mod logs;
 pub mod notification;
 pub mod open_option_orders;
