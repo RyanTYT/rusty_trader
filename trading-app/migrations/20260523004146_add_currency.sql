@@ -16,8 +16,8 @@ ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD';
 ALTER TABLE trading.open_option_orders
 ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD';
 
-ALTER TABLE market_data.historical_data
-ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD';
+-- ALTER TABLE market_data.historical_data
+-- ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD';
 
 ALTER TABLE market_data.historical_options_data
 ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD';
@@ -75,13 +75,13 @@ ALTER TABLE trading.open_option_orders
     PRIMARY KEY (order_perm_id);
 -- NOTE: same as above, currency is Optional<String>, unsuitable as PK
 
--- historical_data
--- existing PK likely (stock, primary_exchange, time)
-ALTER TABLE market_data.historical_data
-    DROP CONSTRAINT historical_data_pkey;
-ALTER TABLE market_data.historical_data
-    ADD CONSTRAINT historical_data_pkey
-    PRIMARY KEY (stock, primary_exchange, currency, time);
+-- -- historical_data
+-- -- existing PK likely (stock, primary_exchange, time)
+-- ALTER TABLE market_data.historical_data
+--     DROP CONSTRAINT historical_data_pkey;
+-- ALTER TABLE market_data.historical_data
+--     ADD CONSTRAINT historical_data_pkey
+--     PRIMARY KEY (stock, primary_exchange, currency, time);
 
 -- historical_options_data
 -- existing PK likely (stock, primary_exchange, expiry, strike, multiplier, option_type, time)

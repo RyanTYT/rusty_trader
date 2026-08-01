@@ -183,6 +183,7 @@ CREATE TABLE trading.staged_commissions (
 CREATE TABLE market_data.historical_data (
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL,
     time TIMESTAMPTZ NOT NULL,
 
     open DOUBLE PRECISION NOT NULL,
@@ -190,25 +191,25 @@ CREATE TABLE market_data.historical_data (
     low DOUBLE PRECISION NOT NULL,
     close DOUBLE PRECISION NOT NULL,
     volume NUMERIC(30, 6) NOT NULL,
-    PRIMARY KEY (stock, primary_exchange, time)
+    PRIMARY KEY (stock, primary_exchange, currency, time)
 );
 CREATE INDEX historical_data_stock ON market_data.historical_data(stock);
 CREATE INDEX historical_data_stock_time ON market_data.historical_data(stock, time);
 
 -- 1 Day
-CREATE TABLE market_data.daily_historical_data (
-    stock VARCHAR(50) NOT NULL,
-    time TIMESTAMPTZ NOT NULL,
-
-    open NUMERIC(30, 15) NOT NULL,
-    high NUMERIC(30, 15) NOT NULL,
-    low NUMERIC(30, 15) NOT NULL,
-    close NUMERIC(30, 15) NOT NULL,
-    volume NUMERIC(30, 6) NOT NULL,
-    PRIMARY KEY (stock, time)
-);
-CREATE INDEX daily_historical_data_stock ON market_data.daily_historical_data(stock);
-CREATE INDEX daily_historical_data_stock_time ON market_data.daily_historical_data(stock, time);
+-- CREATE TABLE market_data.daily_historical_data (
+--     stock VARCHAR(50) NOT NULL,
+--     time TIMESTAMPTZ NOT NULL,
+--
+--     open NUMERIC(30, 15) NOT NULL,
+--     high NUMERIC(30, 15) NOT NULL,
+--     low NUMERIC(30, 15) NOT NULL,
+--     close NUMERIC(30, 15) NOT NULL,
+--     volume NUMERIC(30, 6) NOT NULL,
+--     PRIMARY KEY (stock, time)
+-- );
+-- CREATE INDEX daily_historical_data_stock ON market_data.daily_historical_data(stock);
+-- CREATE INDEX daily_historical_data_stock_time ON market_data.daily_historical_data(stock, time);
 
 CREATE TABLE market_data.historical_options_data (
     stock VARCHAR(50) NOT NULL,
@@ -293,6 +294,7 @@ WITH (timescaledb.continuous) AS
 SELECT
     stock,
     primary_exchange,
+    currency,
     time_bucket('1 day', time) AS day,
     first(open, time) AS open,
     max(high) AS high,
@@ -300,16 +302,17 @@ SELECT
     last(close, time) AS close,
     sum(volume) AS volume
 FROM market_data.historical_data
-GROUP BY stock, primary_exchange, day
+GROUP BY stock, primary_exchange, currency, day
 WITH NO DATA;
 
 CREATE OR REPLACE VIEW market_data.daily_volatility AS
 SELECT
     stock,
     primary_exchange,
+    currency,
     day,
     stddev_samp(close / open) OVER (
-        PARTITION BY stock
+        PARTITION BY stock, primary_exchange, currency
         ORDER BY day
         ROWS BETWEEN 14 PRECEDING AND CURRENT ROW
     ) AS rolling_volatility
