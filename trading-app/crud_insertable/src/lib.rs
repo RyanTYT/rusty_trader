@@ -3,7 +3,6 @@ use sqlx::{Postgres, postgres::PgArguments, query::Query, query::QueryAs};
 pub trait Insertable {
     fn table_name() -> &'static str;
     fn pri_column_names(&self) -> Vec<&'static str>;
-    fn pri_column_names_wo_time(&self) -> Vec<&'static str>;
     fn opt_column_names(&self) -> Vec<&'static str>;
     fn bind_pri<'q>(&'q self, sql: &'q str) -> Query<'q, Postgres, PgArguments>;
     fn bind_pri_to_query<'q>(

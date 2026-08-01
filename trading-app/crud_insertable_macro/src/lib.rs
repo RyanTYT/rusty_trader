@@ -32,25 +32,6 @@ pub fn derive_insertable(input: TokenStream) -> TokenStream {
             None
         })
         .collect();
-    let pri_field_names_wo_time: Vec<_> = fields
-        .iter()
-        .filter_map(|field| {
-            if let syn::Type::Path(type_path) = &field.ty {
-                if type_path
-                    .path
-                    .segments
-                    .iter()
-                    .any(|seg| seg.ident == "Option")
-                {
-                    return None;
-                }
-                if field.ident.as_ref().is_some_and(|field_name| field_name != "time") {
-                    return Some(field.ident.as_ref().unwrap());
-                }
-            }
-            None
-        })
-        .collect();
     let opt_field_names: Vec<_> = fields
         .iter()
         .filter_map(|field| {
@@ -72,10 +53,6 @@ pub fn derive_insertable(input: TokenStream) -> TokenStream {
         .iter()
         .map(|field| field.to_string())
         .collect();
-    let pri_field_wo_time_str: Vec<_> = pri_field_names_wo_time
-        .iter()
-        .map(|field| field.to_string())
-        .collect();
 
     let expanded = quote! {
         #[async_trait::async_trait]
@@ -86,10 +63,6 @@ pub fn derive_insertable(input: TokenStream) -> TokenStream {
 
             fn pri_column_names(&self) -> Vec<&'static str> {
                 vec![#(#pri_field_str),*]
-            }
-
-            fn pri_column_names_wo_time(&self) -> Vec<&'static str> {
-                vec![#(#pri_field_wo_time_str),*]
             }
 
             fn opt_column_names(&self) -> Vec<&'static str> {
