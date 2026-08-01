@@ -1,9 +1,8 @@
-use anyhow::Result;
-use async_trait::async_trait;
+// use anyhow::Result;
+// use async_trait::async_trait;
+use crud_insertable::Insertable;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-
-use crate::Insertable;
 
 fn map_to_placeholder(key: usize, column_name: &str) -> String {
     match column_name {
@@ -21,48 +20,54 @@ pub struct CRUD<FK, PK, UK> {
     pub _marker: std::marker::PhantomData<(FK, PK, UK)>, // Just to "use" the generics
 }
 
-#[async_trait]
-pub trait CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys>
-where
-    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
-    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
-    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
-{
-    fn new(pool: PgPool, table: String) -> Self;
-    async fn create(&self, raw_item: &FullKeys) -> Result<()>;
-    async fn create_or_ignore(&self, raw_item: &FullKeys) -> Result<()>;
-    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<()>;
-    async fn read(&self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>>
-    where
-        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
-    async fn read_all(&self) -> Result<Vec<FullKeys>>
-    where
-        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
-    async fn update(
-        &self,
-        raw_pk: &PrimaryKeys,
-        raw_update: &UpdateKeys,
-    ) -> Result<u64, anyhow::Error>;
-    async fn delete(&self, raw_pk: &PrimaryKeys) -> Result<()>;
-}
-
-#[async_trait]
-impl<
-    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
-    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
-    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
-> CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys> for CRUD<FullKeys, PrimaryKeys, UpdateKeys>
-{
-    fn new(pool: PgPool, table: String) -> Self {
+impl<FK, PK, UK> CRUD<FK, PK, UK> {
+    pub fn new(pool: PgPool, table: String) -> Self {
         Self {
             pool,
             table,
             _marker: std::marker::PhantomData,
         }
     }
+}
+
+// #[async_trait]
+pub trait CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys>
+where
+    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
+    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
+    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
+{
+    // fn new(pool: PgPool, table: String) -> Self;
+    async fn create(&self, raw_item: &FullKeys) -> Result<(), String>;
+    async fn create_or_ignore(&self, raw_item: &FullKeys) -> Result<(), String>;
+    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), String>;
+    async fn read(&self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, String>
+    where
+        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
+    async fn read_all(&self) -> Result<Vec<FullKeys>, String>
+    where
+        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
+    async fn update(&self, raw_pk: &PrimaryKeys, raw_update: &UpdateKeys) -> Result<u64, String>;
+    async fn delete(&self, raw_pk: &PrimaryKeys) -> Result<(), String>;
+}
+
+// #[async_trait]
+impl<
+    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
+    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
+    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
+> CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys> for CRUD<FullKeys, PrimaryKeys, UpdateKeys>
+{
+    // fn new(pool: PgPool, table: String) -> Self {
+    //     Self {
+    //         pool,
+    //         table,
+    //         _marker: std::marker::PhantomData,
+    //     }
+    // }
 
     /// A typical create function - pass in all FullKeys without Option<>
-    async fn create(&self, full_keys: &FullKeys) -> Result<()> {
+    async fn create(&self, full_keys: &FullKeys) -> Result<(), String> {
         let all_cols = full_keys.pri_column_names();
         let all_placeholders = all_cols
             .iter()
@@ -79,14 +84,17 @@ impl<
 
         let query = full_keys.bind_pri(&sql);
 
-        query.execute(&self.pool).await?;
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general create: {e:?}"))?;
         Ok(())
     }
 
     /// A create_or_ignore function - ignores if conflicts
     /// - NOTE: the query uses inbuilt conflict in the table. i.e. if the conflict doesn't exist on
     /// any unique_index or primary key, it may raise an error with insertion
-    async fn create_or_ignore(&self, full_keys: &FullKeys) -> Result<()> {
+    async fn create_or_ignore(&self, full_keys: &FullKeys) -> Result<(), String> {
         let all_cols = full_keys.pri_column_names();
         let all_placeholders = all_cols
             .iter()
@@ -103,13 +111,16 @@ impl<
 
         let query = full_keys.bind_pri(&sql);
 
-        query.execute(&self.pool).await?;
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general create_or_ignore: {e:?}"))?;
         Ok(())
     }
 
     /// A create_or_update function - upsert basically
     /// - function is split into 2 parameters for ease of processing for function
-    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<()> {
+    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), String> {
         let mut all_cols = pk.pri_column_names();
         all_cols.extend(uk.opt_column_names());
         let all_placeholders = all_cols
@@ -136,12 +147,15 @@ impl<
         let mut query = pk.bind_pri(&sql);
         query = uk.bind_opt_to_query(query);
 
-        query.execute(&self.pool).await?;
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general create_or_update: {e:?}"))?;
         Ok(())
     }
 
     /// A typical read function for a table - give primary keys without Option<>
-    async fn read(&self, pk: &PrimaryKeys) -> Result<Option<FullKeys>>
+    async fn read(&self, pk: &PrimaryKeys) -> Result<Option<FullKeys>, String>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>,
     {
@@ -157,26 +171,32 @@ impl<
         let mut query = sqlx::query_as::<_, FullKeys>(&sql);
         query = pk.bind_pri_to_query_as(query);
 
-        let result = query.fetch_optional(&self.pool).await?;
+        let result = query
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general read: {e:?}"))?;
         Ok(result)
     }
 
     /// Typical read_all function that returns all rows in DB
     /// - thus, could be a potentially taxing query
-    async fn read_all(&self) -> Result<Vec<FullKeys>>
+    async fn read_all(&self) -> Result<Vec<FullKeys>, String>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>,
     {
         let sql = format!("SELECT * FROM {};", &self.table);
         let query = sqlx::query_as::<_, FullKeys>(&sql);
-        let result = query.fetch_all(&self.pool).await?;
+        let result = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general read_all: {e:?}"))?;
         Ok(result)
     }
 
     /// Typical update function that updates the matching row in table
     /// - Primary keys should be passed without Option
     /// - Update keys should be passed as Option<>: If a key should not be updated, pass None
-    async fn update(&self, pk: &PrimaryKeys, update: &UpdateKeys) -> Result<u64, anyhow::Error> {
+    async fn update(&self, pk: &PrimaryKeys, update: &UpdateKeys) -> Result<u64, String> {
         // Make Set clauses
         let set_placeholders: Vec<String> = update
             .opt_column_names()
@@ -212,12 +232,15 @@ impl<
         query = update.bind_opt_to_query(query);
         query = pk.bind_pri_to_query(query);
 
-        let res = query.execute(&self.pool).await?;
+        let res = query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general update: {e:?}"))?;
         Ok(res.rows_affected())
     }
 
     /// Typical delete function that deletes the matching row in the table
-    async fn delete(&self, pk: &PrimaryKeys) -> Result<()> {
+    async fn delete(&self, pk: &PrimaryKeys) -> Result<(), String> {
         let conditions = pk
             .pri_column_names()
             .iter()
@@ -229,7 +252,10 @@ impl<
         let sql = format!("DELETE FROM {} WHERE {};", &self.table, conditions);
         let mut query = sqlx::query(&sql);
         query = pk.bind_pri_to_query(query);
-        query.execute(&self.pool).await?;
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to perform general delete: {e:?}"))?;
 
         Ok(())
     }
@@ -238,39 +264,39 @@ impl<
 #[macro_export]
 macro_rules! delegate_all_crud_methods {
     ($delegator:ident, $FullKeys:ty, $PrimaryKeys:ty, $UpdateKeys:ty) => {
-        pub async fn create(&self, raw_item: &$FullKeys) -> anyhow::Result<()> {
+        async fn create(&self, raw_item: &$FullKeys) -> Result<(), String> {
             self.$delegator.create(raw_item).await
         }
-        pub async fn create_or_ignore(&self, raw_item: &$FullKeys) -> anyhow::Result<()> {
+        async fn create_or_ignore(&self, raw_item: &$FullKeys) -> Result<(), String> {
             self.$delegator.create_or_ignore(raw_item).await
         }
-        pub async fn read(&self, raw_pk: &$PrimaryKeys) -> anyhow::Result<Option<$FullKeys>>
+        async fn read(&self, raw_pk: &$PrimaryKeys) -> Result<Option<$FullKeys>, String>
         where
             $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
         {
             self.$delegator.read(raw_pk).await
         }
-        pub async fn create_or_update(
+        async fn create_or_update(
             &self,
             pk: &$PrimaryKeys,
             uk: &$UpdateKeys,
-        ) -> anyhow::Result<()> {
+        ) -> anyhow::Result<(), String> {
             self.$delegator.create_or_update(pk, uk).await
         }
-        pub async fn read_all(&self) -> anyhow::Result<Vec<$FullKeys>>
+        async fn read_all(&self) -> Result<Vec<$FullKeys>, String>
         where
             $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
         {
             self.$delegator.read_all().await
         }
-        pub async fn update(
+        async fn update(
             &self,
             raw_pk: &$PrimaryKeys,
             raw_update: &$UpdateKeys,
-        ) -> anyhow::Result<u64, anyhow::Error> {
+        ) -> Result<u64, String> {
             self.$delegator.update(raw_pk, raw_update).await
         }
-        pub async fn delete(&self, raw_pk: &$PrimaryKeys) -> anyhow::Result<()> {
+        async fn delete(&self, raw_pk: &$PrimaryKeys) -> Result<(), String> {
             self.$delegator.delete(raw_pk).await
         }
     };

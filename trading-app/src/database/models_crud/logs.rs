@@ -1,10 +1,29 @@
 use sqlx::PgPool;
 
-use crate::database::{
-    crud::{CRUD, CRUDTrait},
-    models::{LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys},
+use crate::{
+    database::{
+        crud::{CRUD, CRUDTrait},
+        models::{LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys},
+    },
+    delegate_all_crud_methods,
 };
 
-pub fn get_logs_crud(pool: PgPool) -> CRUD<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys> {
-    CRUD::<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>::new(pool, String::from("logs.logs"))
+#[derive(Clone, Debug)]
+pub struct LogsCRUD {
+    pub(super) crud: CRUD<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>,
+}
+
+impl CRUDTrait<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys> for LogsCRUD {
+    delegate_all_crud_methods!(crud, LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys);
+}
+
+impl LogsCRUD {
+    fn new(pool: PgPool) -> Self {
+        Self {
+            crud: CRUD::<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>::new(
+                pool,
+                String::from("logs.logs"),
+            ),
+        }
+    }
 }

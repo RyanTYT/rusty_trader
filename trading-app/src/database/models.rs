@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 // required for ExtractPrimaryKeys, ExtractUpdateKeys, ExtractFullKeys
 use crud_insertable::Insertable;
 use crud_insertable_macro::DeriveInsertable;
-use crud_models::{ExtractFullKeys, ExtractPrimaryKeys, ExtractUpdateKeys};
+use crud_models::{
+    ExtractFullKeys, ExtractPrimaryKeys, ExtractPrimaryKeysWoTime, ExtractUpdateKeys,
+};
 use ibapi::prelude::SecurityType;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -404,6 +406,7 @@ pub struct StagedCommissions {
     Deserialize,
     ExtractFullKeys,
     ExtractPrimaryKeys,
+    ExtractPrimaryKeysWoTime,
     ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
@@ -427,12 +430,15 @@ pub struct HistoricalStockData {
     Deserialize,
     ExtractFullKeys,
     ExtractPrimaryKeys,
+    ExtractPrimaryKeysWoTime,
     ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
 )]
 pub struct DailyHistoricalStockData {
     pub stock: String,
+    pub primary_exchange: String,
+    pub currency: String,
     pub time: DateTime<Utc>,
     pub open: Option<Decimal>,
     pub high: Option<Decimal>,
@@ -447,6 +453,7 @@ pub struct DailyHistoricalStockData {
     Serialize,
     Deserialize,
     ExtractPrimaryKeys,
+    ExtractPrimaryKeysWoTime,
     ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
@@ -507,6 +514,7 @@ pub struct HistoricalVolatilityData {
     Deserialize,
     ExtractFullKeys,
     ExtractPrimaryKeys,
+    ExtractPrimaryKeysWoTime,
     ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
