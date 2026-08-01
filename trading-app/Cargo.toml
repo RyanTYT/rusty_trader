@@ -10,6 +10,7 @@ serde = "1.0.219"
 sqlx = { version = "0.8.6", features = [ "postgres", "chrono", "runtime-tokio", "macros", "rust_decimal" ] }
 crud_models = { path = "crud_models" }
 crud_insertable = { path = "crud_insertable" }
+crud_insertable_macro = { path = "crud_insertable_macro" }
 serde_json = "1.0.141"
 async-trait = "0.1.88"
 anyhow = "1.0.98"
