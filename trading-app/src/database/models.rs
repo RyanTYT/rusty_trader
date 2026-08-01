@@ -1,7 +1,7 @@
-use crate::Insertable;
 use chrono::{DateTime, Utc};
 // required for ExtractPrimaryKeys, ExtractUpdateKeys, ExtractFullKeys
-use crud_insertable::DeriveInsertable;
+use crud_insertable::Insertable;
+use crud_insertable_macro::DeriveInsertable;
 use crud_models::{ExtractFullKeys, ExtractPrimaryKeys, ExtractUpdateKeys};
 use ibapi::prelude::SecurityType;
 use rust_decimal::Decimal;
@@ -10,6 +10,9 @@ use sqlx::FromRow;
 use sqlx::query::Query;
 use sqlx::{Postgres, postgres::PgArguments, query::QueryAs};
 use std::fmt::{self, Display};
+use std::hash::Hash;
+use tokio_postgres::types::private::BytesMut;
+use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 
 // Enums
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
@@ -39,6 +42,28 @@ pub enum OptionType {
     Call,
     #[sqlx(rename = "P")]
     Put,
+}
+
+impl ToSql for OptionType {
+    fn to_sql(
+        &self,
+        ty: &Type,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        let val = match self {
+            OptionType::Call => "C",
+            OptionType::Put => "P",
+        };
+        // Delegate binary encoding to standard &str implementation
+        val.to_sql(ty, out)
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        // Accept standard text/varchar/char Postgres types, or custom enum type if defined
+        matches!(ty.kind(), tokio_postgres::types::Kind::Simple)
+    }
+
+    to_sql_checked!();
 }
 
 #[derive(Debug, Clone)]
@@ -383,7 +408,7 @@ pub struct StagedCommissions {
     DeriveInsertable,
     FromRow,
 )]
-pub struct HistoricalData {
+pub struct HistoricalStockData {
     pub stock: String,
     pub primary_exchange: String,
     pub currency: String,
@@ -406,7 +431,7 @@ pub struct HistoricalData {
     DeriveInsertable,
     FromRow,
 )]
-pub struct DailyHistoricalData {
+pub struct DailyHistoricalStockData {
     pub stock: String,
     pub time: DateTime<Utc>,
     pub open: Option<Decimal>,
