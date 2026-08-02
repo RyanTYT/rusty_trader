@@ -33,10 +33,10 @@ pub enum CurrentPositionsUpdateKeys {
 }
 
 impl CurrentPositionsCRUD {
-    fn get_pg_pool(&self) -> PgPool {
+    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
-            Self::Options(opt) => opt.crud.pool.clone(),
-            Self::Stock(stk) => stk.crud.pool.clone(),
+            Self::Options(opt) => &opt.crud.pool,
+            Self::Stock(stk) => &stk.crud.pool,
         }
     }
 }
@@ -85,7 +85,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     "#,
                 &strategy
             )
-            .fetch_all(&self.get_pg_pool())
+            .fetch_all(self.get_pg_pool())
             .await
             .map(|positions| {
                 positions
@@ -113,7 +113,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     "#,
                 &strategy
             )
-            .fetch_all(&self.get_pg_pool())
+            .fetch_all(self.get_pg_pool())
             .await
             .map(|positions| {
                 positions
@@ -163,7 +163,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 primary_exchange,
                 currency
             )
-            .fetch_optional(&self.get_pg_pool())
+            .fetch_optional(self.get_pg_pool())
             .await
             .map(|ok_res| ok_res.map(CurrentPositionsFullKeys::Stock)),
             CurrentPositionsPrimaryKeys::Options(CurrentOptionPositionsPrimaryKeys {
@@ -209,7 +209,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 multiplier,
                 option_type as OptionType
             )
-            .fetch_optional(&self.get_pg_pool())
+            .fetch_optional(self.get_pg_pool())
             .await
             .map(|ok_res| ok_res.map(CurrentPositionsFullKeys::Options)),
         };
@@ -239,7 +239,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY stock, primary_exchange, currency;
                     "#,
             )
-            .fetch_all(&self.get_pg_pool())
+            .fetch_all(self.get_pg_pool())
             .await
             .map(|positions| {
                 positions
@@ -266,7 +266,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
                     "#,
             )
-            .fetch_all(&self.get_pg_pool())
+            .fetch_all(self.get_pg_pool())
             .await
             .map(|positions| {
                 positions
@@ -328,7 +328,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     quantity,
                     avg_price.unwrap_or(0.0)
                 )
-                .execute(&self.get_pg_pool())
+                .execute(self.get_pg_pool())
                 .await
                 .map_err(|e| {
                     format!(
@@ -393,7 +393,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     quantity,
                     avg_price.unwrap_or(0.0)
                 )
-                .execute(&self.get_pg_pool())
+                .execute(self.get_pg_pool())
                 .await
                 .map_err(|e| {
                     format!(

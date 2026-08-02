@@ -1,11 +1,11 @@
-use sqlx::{PgPool, prelude::FromRow};
+use sqlx::PgPool;
 
 use crate::{
     database::{
         crud::{CRUD, CRUDTrait},
         models::{
             CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
-            CurrentOptionPositionsUpdateKeys, OptionType,
+            CurrentOptionPositionsUpdateKeys,
         },
     },
     delegate_all_crud_methods,
@@ -135,15 +135,15 @@ impl CurrentOptionPositionsCRUD {
     //     sqlx::query!(
     //         "
     //         INSERT INTO trading.current_option_positions (
-    //             stock, 
+    //             stock,
     //             primary_exchange,
     //             currency,
-    //             strategy, 
-    //             expiry, 
-    //             strike, 
-    //             multiplier, 
-    //             option_type, 
-    //             quantity, 
+    //             strategy,
+    //             expiry,
+    //             strike,
+    //             multiplier,
+    //             option_type,
+    //             quantity,
     //             avg_price
     //         )
     //         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

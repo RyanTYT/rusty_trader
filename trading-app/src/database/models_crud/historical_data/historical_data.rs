@@ -131,12 +131,12 @@ pub trait TimescaleDbOps {
 }
 
 impl HistoricalDataCRUD {
-    fn get_pg_pool(&self) -> PgPool {
+    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
-            Self::Stock(stk) => stk.crud.pool.clone(),
-            Self::Forex(fx) => fx.crud.pool.clone(),
-            Self::Options(opt) => opt.crud.pool.clone(),
-            Self::DailyStock(daily_stk) => daily_stk.crud.pool.clone(),
+            Self::Stock(stk) => &stk.crud.pool,
+            Self::Forex(fx) => &fx.crud.pool,
+            Self::Options(opt) => &opt.crud.pool,
+            Self::DailyStock(daily_stk) => &daily_stk.crud.pool,
         }
     }
 }
@@ -190,7 +190,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     timestep_minutes as i32,
                     limit as i32,
                 )
-                .fetch_all(&self.get_pg_pool())
+                .fetch_all(self.get_pg_pool())
                 .await
                 .map_err(|e| format!("Error reading stock bars in read_last_n: {}", e))?;
 
@@ -247,7 +247,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     timestep_minutes as i32,
                     limit as i32,
                 )
-                .fetch_all(&self.get_pg_pool())
+                .fetch_all(self.get_pg_pool())
                 .await
                 .map_err(|e| format!("Error reading forex bars in read_last_n: {}", e))?;
 
@@ -324,7 +324,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     timestep_minutes as i32,
                     limit as i32,
                 )
-                .fetch_all(&self.get_pg_pool())
+                .fetch_all(self.get_pg_pool())
                 .await
                 .map_err(|e| format!("Error reading option bars in read_last_n: {}", e))?;
 
@@ -387,7 +387,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                     limit as i32,
                 )
-                .fetch_all(&self.get_pg_pool())
+                .fetch_all(self.get_pg_pool())
                 .await
                 .map_err(|e| {
                     format!("Error reading daily historical bars in read_last_n: {}", e)
@@ -476,7 +476,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     .bind(stock)
                     .bind(primary_exchange)
                     .bind(currency)
-                    .fetch_optional(&self.get_pg_pool())
+                    .fetch_optional(self.get_pg_pool())
                     .await
                     .map_err(|e| {
                         format!(
@@ -500,7 +500,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     timezone.unwrap_or("US/Eastern".to_string())
                 ).as_str())
                     .bind(pair)
-                    .fetch_optional(&self.get_pg_pool())
+                    .fetch_optional(self.get_pg_pool())
                     .await
                     .map_err(|e| {
                         format!(
@@ -544,7 +544,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     .bind(strike)
                     .bind(multiplier)
                     .bind(option_type)
-                    .fetch_optional(&self.get_pg_pool())
+                    .fetch_optional(self.get_pg_pool())
                     .await
                     .map_err(|e| {
                         format!(
@@ -585,7 +585,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                     datetime
                 )
-                .fetch_one(&self.get_pg_pool())
+                .fetch_one(self.get_pg_pool())
                 .await
             }
             HistoricalDataPrimaryKeysWoTime::Options(HistoricalOptionsDataPrimaryKeysWoTime {
@@ -620,7 +620,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     option_type as OptionType,
                     datetime
                 )
-                .fetch_one(&self.get_pg_pool())
+                .fetch_one(self.get_pg_pool())
                 .await
             }
             HistoricalDataPrimaryKeysWoTime::Forex(HistoricalForexDataPrimaryKeysWoTime {
@@ -636,7 +636,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     pair,
                     datetime
                 )
-                .fetch_one(&self.get_pg_pool())
+                .fetch_one(self.get_pg_pool())
                 .await
             }
             HistoricalDataPrimaryKeysWoTime::DailyStock(
@@ -658,7 +658,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                     datetime
                 )
-                .fetch_one(&self.get_pg_pool())
+                .fetch_one(self.get_pg_pool())
                 .await
             }
         };
@@ -727,7 +727,7 @@ impl NoiseOps for HistoricalDataCRUD {
             pk.primary_exchange,
             pk.currency
         )
-        .fetch_all(&self.get_pg_pool())
+        .fetch_all(self.get_pg_pool())
         .await
         {
             Ok(moves_since_open) =>  {
@@ -770,7 +770,7 @@ impl NoiseOps for HistoricalDataCRUD {
             pk.currency,
             Utc::now()
         )
-        .fetch_one(&self.get_pg_pool())
+        .fetch_one(self.get_pg_pool())
         .await
         .map(|most_recent_daily_open_option| DailyOpenClose {
             day: most_recent_daily_open_option.day,
@@ -807,7 +807,7 @@ impl NoiseOps for HistoricalDataCRUD {
                 .with_nanosecond(0)
                 .unwrap(),
         )
-        .fetch_one(&self.get_pg_pool())
+        .fetch_one(self.get_pg_pool())
         .await
         .map_err(|e| format!("Error when getting most recent daily open of stock: {}", e))?;
 
@@ -834,7 +834,7 @@ impl NoiseOps for HistoricalDataCRUD {
             pk.primary_exchange,
             pk.currency
         )
-        .fetch_one(&self.get_pg_pool())
+        .fetch_one(self.get_pg_pool())
         .await
         .map_err(|e| {
             format!(
@@ -860,7 +860,7 @@ impl TimescaleDbOps for HistoricalDataCRUD {
             );
             "#,
         )
-        .execute(&self.get_pg_pool())
+        .execute(self.get_pg_pool())
         .await
         .map_err(|e| format!("Failed to refresh_continuous_aggregate for daily_ohlcv: {e:?}"))?;
         Ok(())

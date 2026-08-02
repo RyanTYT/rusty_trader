@@ -1,5 +1,4 @@
-use chrono::Utc;
-use sqlx::{PgPool, prelude::FromRow};
+use sqlx::PgPool;
 
 use crate::{
     database::{
@@ -246,21 +245,21 @@ impl CurrentStockPositionsCRUD {
     //     sqlx::query!(
     //         r#"
     //         INSERT INTO trading.current_stock_positions (
-    //             strategy, 
-    //             stock, 
+    //             strategy,
+    //             stock,
     //             primary_exchange,
     //             currency,
-    //             quantity, 
+    //             quantity,
     //             avg_price
     //         )
     //         VALUES ($1, $2, $3, $4, $5, $6)
     //         ON CONFLICT (stock, primary_exchange, currency, strategy)
-    //         DO UPDATE SET 
-    //         avg_price = CASE 
+    //         DO UPDATE SET
+    //         avg_price = CASE
     //             -- Avoid division by zero if total quantity becomes 0
     //             WHEN (current_stock_positions.quantity + EXCLUDED.quantity) = 0 THEN 0
     //             ELSE (
-    //                 (current_stock_positions.quantity * current_stock_positions.avg_price) + 
+    //                 (current_stock_positions.quantity * current_stock_positions.avg_price) +
     //                 (EXCLUDED.quantity * EXCLUDED.avg_price)
     //             ) / (current_stock_positions.quantity + EXCLUDED.quantity)
     //         END,
