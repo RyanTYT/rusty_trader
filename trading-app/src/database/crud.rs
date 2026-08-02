@@ -1,7 +1,6 @@
 // use anyhow::Result;
 // use async_trait::async_trait;
 use crud_insertable::Insertable;
-use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 fn map_to_placeholder(key: usize, column_name: &str) -> String {

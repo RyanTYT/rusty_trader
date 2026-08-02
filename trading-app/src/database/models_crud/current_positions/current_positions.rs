@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, postgres::PgRow, prelude::FromRow};
 
 use crate::{
     database::{
@@ -25,6 +25,16 @@ pub enum CurrentPositionsCRUD {
 pub enum CurrentPositionsFullKeys {
     Options(CurrentOptionPositionsFullKeys),
     Stock(CurrentStockPositionsFullKeys),
+}
+
+impl<'r> FromRow<'r, PgRow> for CurrentPositionsFullKeys {
+    fn from_row(_: &'r PgRow) -> Result<Self, sqlx::Error> {
+        // This will never be executed because the inner CRUD<FK,PK,UK>
+        // decodes the inner concrete struct before wrapping it into this enum.
+        Err(sqlx::Error::Decode(
+            "CurrentPositionsFullKeys cannot be decoded directly from a raw SQL row".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]

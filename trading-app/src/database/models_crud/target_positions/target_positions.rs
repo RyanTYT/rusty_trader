@@ -12,21 +12,35 @@ use crate::database::{
     },
 };
 
+#[derive(Debug, Clone)]
 pub enum TargetPositionsCRUD {
     Stock(TargetStockPositionsCRUD),
     Options(TargetOptionPositionsCRUD),
 }
 
+#[derive(Debug, Clone)]
 pub enum TargetPositionsFullKeys {
     Stock(TargetStockPositionsFullKeys),
     Options(TargetOptionPositionsFullKeys),
 }
 
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TargetPositionsFullKeys {
+    fn from_row(_: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        // This will never be executed because the inner CRUD<FK,PK,UK>
+        // decodes the inner concrete struct before wrapping it into this enum.
+        Err(sqlx::Error::Decode(
+            "TargetPositionsFullKeys cannot be decoded directly from a raw SQL row".into(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum TargetPositionsPrimaryKeys {
     Stock(TargetStockPositionsPrimaryKeys),
     Options(TargetOptionPositionsPrimaryKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum TargetPositionsUpdateKeys {
     Stock(TargetStockPositionsUpdateKeys),
     Options(TargetOptionPositionsUpdateKeys),

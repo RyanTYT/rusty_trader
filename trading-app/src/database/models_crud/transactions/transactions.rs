@@ -17,26 +17,41 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
+#[derive(Debug, Clone)]
 pub enum TransactionsCRUD {
     Stock(StockTransactionsCRUD),
     Options(OptionTransactionsCRUD),
 }
 
+#[derive(Debug, Clone)]
 pub enum TransactionsFullKeys {
     Stock(StockTransactionsFullKeys),
     Options(OptionTransactionsFullKeys),
 }
 
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TransactionsFullKeys {
+    fn from_row(_: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        // This will never be executed because the inner CRUD<FK,PK,UK>
+        // decodes the inner concrete struct before wrapping it into this enum.
+        Err(sqlx::Error::Decode(
+            "TransactionsFullKeys cannot be decoded directly from a raw SQL row".into(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum TransactionsPrimaryKeys {
     Stock(StockTransactionsPrimaryKeys),
     Options(OptionTransactionsPrimaryKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum TransactionsUpdateKeys {
     Stock(StockTransactionsUpdateKeys),
     Options(OptionTransactionsUpdateKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum TransactionsUnderlyingPrimaryKeys {
     Stock(StockTransactionsUnderlyingPrimaryKeys),
     Options(OptionTransactionsUnderlyingPrimaryKeys),

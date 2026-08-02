@@ -26,6 +26,7 @@ pub struct StockTransactionsCRUD {
         CRUD<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>,
 }
 
+#[derive(Debug, Clone)]
 pub struct StockTransactionsUnderlyingPrimaryKeys {
     pub stock: String,
     pub primary_exchange: String,

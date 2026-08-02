@@ -20,6 +20,7 @@ pub struct OptionTransactionsCRUD {
     >,
 }
 
+#[derive(Debug, Clone)]
 pub struct OptionTransactionsUnderlyingPrimaryKeys {
     pub stock: String,
     pub primary_exchange: String,

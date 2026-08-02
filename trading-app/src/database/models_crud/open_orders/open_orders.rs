@@ -1,30 +1,48 @@
 use sqlx::PgPool;
 
-use crate::{database::{
-    models::{
-        OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys,
-        OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys, OptionType,
+use crate::{
+    database::{
+        models::{
+            OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys,
+            OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys,
+            OptionType,
+        },
+        models_crud::open_orders::{
+            open_option_orders::OpenOptionOrdersCRUD, open_stock_orders::OpenStockOrdersCRUD,
+        },
     },
-    models_crud::open_orders::{
-        open_option_orders::OpenOptionOrdersCRUD, open_stock_orders::OpenStockOrdersCRUD,
-    },
-}, implement_crud_trait_for_interface};
+    implement_crud_trait_for_interface,
+};
 
+#[derive(Debug, Clone)]
 pub enum OpenOrdersCRUD {
     Stock(OpenStockOrdersCRUD),
     Options(OpenOptionOrdersCRUD),
 }
 
+#[derive(Debug, Clone)]
 pub enum OpenOrdersFullKeys {
     Stock(OpenStockOrdersFullKeys),
     Options(OpenOptionOrdersFullKeys),
 }
 
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OpenOrdersFullKeys {
+    fn from_row(_: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        // This will never be executed because the inner CRUD<FK,PK,UK>
+        // decodes the inner concrete struct before wrapping it into this enum.
+        Err(sqlx::Error::Decode(
+            "OpenOrdersFullKeys cannot be decoded directly from a raw SQL row".into(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum OpenOrdersPrimaryKeys {
     Stock(OpenStockOrdersPrimaryKeys),
     Options(OpenOptionOrdersPrimaryKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum OpenOrdersUpdateKeys {
     Stock(OpenStockOrdersUpdateKeys),
     Options(OpenOptionOrdersUpdateKeys),
