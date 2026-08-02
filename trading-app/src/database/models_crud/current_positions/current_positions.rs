@@ -56,6 +56,14 @@ impl CurrentPositionsCRUD {
             Self::Stock(stk) => &stk.crud.pool,
         }
     }
+
+    pub fn stock(pool: PgPool) -> Self {
+        Self::Stock(CurrentStockPositionsCRUD::new(pool))
+    }
+
+    pub fn option(pool: PgPool) -> Self {
+        Self::Options(CurrentOptionPositionsCRUD::new(pool))
+    }
 }
 
 implement_crud_trait_for_interface!(

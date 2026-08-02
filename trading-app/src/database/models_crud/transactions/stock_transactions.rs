@@ -45,7 +45,7 @@ impl CRUDTrait<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTra
 }
 
 impl StockTransactionsCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub(super) fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<
                 StockTransactionsFullKeys,
@@ -54,35 +54,4 @@ impl StockTransactionsCRUD {
             >::new(pool, String::from("trading.stock_transactions")),
         }
     }
-
-    // pub async fn read_last_transaction_of(
-    //     &self,
-    //     stock: &str,
-    //     primary_exchange: &str,
-    //     currency: &str,
-    // ) -> Result<Option<StockTransactionsFullKeys>, String> {
-    //     sqlx::query_as!(
-    //         StockTransactionsFullKeys,
-    //         r#"
-    //         SELECT *
-    //         FROM trading.stock_transactions
-    //         WHERE stock = $1
-    //             AND primary_exchange = $2
-    //             AND currency = $3
-    //         ORDER BY time DESC
-    //         LIMIT 1;
-    //         "#,
-    //         stock,
-    //         primary_exchange,
-    //         currency
-    //     )
-    //     .fetch_optional(&self.crud.pool)
-    //     .await
-    //     .map_err(|e| {
-    //         format!(
-    //             "Error when updating unknown strategy in stock positions: {}",
-    //             e
-    //         )
-    //     })
-    // }
 }

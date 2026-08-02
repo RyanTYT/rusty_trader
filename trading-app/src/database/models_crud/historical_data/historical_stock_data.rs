@@ -36,7 +36,7 @@ impl
 }
 
 impl HistoricalStockDataCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub(super) fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<
                 HistoricalStockDataFullKeys,

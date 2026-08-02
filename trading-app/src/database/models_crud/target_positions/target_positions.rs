@@ -53,6 +53,14 @@ impl TargetPositionsCRUD {
             Self::Options(opt) => &opt.crud.pool,
         }
     }
+
+    pub fn stock(pool: PgPool) -> Self {
+        Self::Stock(TargetStockPositionsCRUD::new(pool))
+    }
+
+    pub fn option(pool: PgPool) -> Self {
+        Self::Options(TargetOptionPositionsCRUD::new(pool))
+    }
 }
 
 pub trait TargetPositionsOps {

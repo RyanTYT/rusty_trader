@@ -64,6 +64,14 @@ impl TransactionsCRUD {
             Self::Options(opt) => &opt.crud.pool,
         }
     }
+
+    pub fn stock(pool: PgPool) -> Self {
+        Self::Stock(StockTransactionsCRUD::new(pool))
+    }
+
+    pub fn option(pool: PgPool) -> Self {
+        Self::Options(OptionTransactionsCRUD::new(pool))
+    }
 }
 
 implement_crud_trait_for_interface!(

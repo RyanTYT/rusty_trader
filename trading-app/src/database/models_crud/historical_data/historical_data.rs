@@ -82,6 +82,22 @@ impl HistoricalDataCRUD {
             Self::DailyStock(daily_stk) => &daily_stk.crud.pool,
         }
     }
+
+    pub fn stock(pool:PgPool) -> Self {
+        Self::Stock(HistoricalStockDataCRUD::new(pool))
+    }
+
+    pub fn daily_stock(pool:PgPool) -> Self {
+        Self::DailyStock(DailyHistoricalStockDataCRUD::new(pool))
+    }
+
+    pub fn option(pool:PgPool) -> Self {
+        Self::Options(HistoricalOptionsDataCRUD::new(pool))
+    }
+
+    pub fn forex(pool:PgPool) -> Self {
+        Self::Forex(HistoricalForexDataCRUD::new(pool))
+    }
 }
 
 implement_crud_trait_for_interface!(

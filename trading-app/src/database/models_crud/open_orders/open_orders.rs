@@ -55,6 +55,14 @@ impl OpenOrdersCRUD {
             Self::Options(opt) => &opt.crud.pool,
         }
     }
+
+    pub fn stock(pool: PgPool) -> Self {
+        Self::Stock(OpenStockOrdersCRUD::new(pool))
+    }
+
+    pub fn option(pool: PgPool) -> Self {
+        Self::Options(OpenOptionOrdersCRUD::new(pool))
+    }
 }
 
 implement_crud_trait_for_interface!(
