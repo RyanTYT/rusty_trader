@@ -6,16 +6,8 @@ use sqlx::{PgPool, prelude::FromRow};
 
 use crate::{database::{
     models::{
-        DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys,
-        DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys,
-        HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys,
-        HistoricalForexDataPrimaryKeysWoTime, HistoricalForexDataUpdateKeys,
-        HistoricalOptionsDataFullKeys, HistoricalOptionsDataPrimaryKeys,
-        HistoricalOptionsDataPrimaryKeysWoTime, HistoricalOptionsDataUpdateKeys,
-        HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
-        HistoricalStockDataPrimaryKeysWoTime, HistoricalStockDataUpdateKeys, OptionType,
-    },
-    models_crud::historical_data::{
+        AssetType, DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys, DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys, HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys, HistoricalForexDataPrimaryKeysWoTime, HistoricalForexDataUpdateKeys, HistoricalOptionsDataFullKeys, HistoricalOptionsDataPrimaryKeys, HistoricalOptionsDataPrimaryKeysWoTime, HistoricalOptionsDataUpdateKeys, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys, HistoricalStockDataPrimaryKeysWoTime, HistoricalStockDataUpdateKeys, OptionType,
+    }, models_crud::historical_data::{
         daily_historical_data::DailyHistoricalStockDataCRUD,
         historical_forex_data::HistoricalForexDataCRUD,
         historical_options_data::HistoricalOptionsDataCRUD,
@@ -97,6 +89,18 @@ impl HistoricalDataCRUD {
 
     pub fn forex(pool:PgPool) -> Self {
         Self::Forex(HistoricalForexDataCRUD::new(pool))
+    }
+
+    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+        match asset_type {
+            AssetType::Stock 
+            | AssetType::Future
+            | AssetType::CFD
+            | AssetType::CASH => Self::stock(pool),
+            AssetType::ForexPair => Self::forex(pool),
+            AssetType::Option => Self::option(pool),
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+        }
     }
 }
 

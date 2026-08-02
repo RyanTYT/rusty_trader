@@ -2,11 +2,8 @@ use sqlx::PgPool;
 
 use crate::database::{
     models::{
-        OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
-        TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys,
-        TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
-    },
-    models_crud::target_positions::{
+        AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys, TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys, TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
+    }, models_crud::target_positions::{
         target_option_positions::TargetOptionPositionsCRUD,
         target_stock_positions::TargetStockPositionsCRUD,
     },
@@ -60,6 +57,18 @@ impl TargetPositionsCRUD {
 
     pub fn option(pool: PgPool) -> Self {
         Self::Options(TargetOptionPositionsCRUD::new(pool))
+    }
+
+    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+        match asset_type {
+            AssetType::Stock
+            | AssetType::Future
+            | AssetType::CFD
+            | AssetType::ForexPair
+            | AssetType::CASH => Self::stock(pool),
+            AssetType::Option => Self::option(pool),
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+        }
     }
 }
 
