@@ -4,7 +4,7 @@ use ordered_float::OrderedFloat;
 use rust_decimal::{Decimal, prelude::{FromPrimitive, ToPrimitive}};
 use sqlx::{PgPool, prelude::FromRow};
 
-use crate::database::{
+use crate::{database::{
     models::{
         DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys,
         DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys,
@@ -21,7 +21,7 @@ use crate::database::{
         historical_options_data::HistoricalOptionsDataCRUD,
         historical_stock_data::HistoricalStockDataCRUD,
     },
-};
+}, implement_crud_trait_for_interface};
 
 #[derive(Debug, Clone)]
 pub enum HistoricalDataCRUD {
@@ -62,6 +62,25 @@ pub enum HistoricalDataUpdateKeys {
     Options(HistoricalOptionsDataUpdateKeys),
     Forex(HistoricalForexDataUpdateKeys),
 }
+
+impl HistoricalDataCRUD {
+    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+        match self {
+            Self::Stock(stk) => &stk.crud.pool,
+            Self::Forex(fx) => &fx.crud.pool,
+            Self::Options(opt) => &opt.crud.pool,
+            Self::DailyStock(daily_stk) => &daily_stk.crud.pool,
+        }
+    }
+}
+
+implement_crud_trait_for_interface!(
+    HistoricalDataCRUD,
+    HistoricalDataFullKeys,
+    HistoricalDataPrimaryKeys,
+    HistoricalDataUpdateKeys,
+    [Stock, DailyStock, Options, Forex]
+);
 
 pub enum VwapBarValue {
     Close,
@@ -128,17 +147,6 @@ pub trait NoiseOps {
 
 pub trait TimescaleDbOps {
     async fn refresh_daily_data(&self) -> Result<(), String>;
-}
-
-impl HistoricalDataCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
-        match self {
-            Self::Stock(stk) => &stk.crud.pool,
-            Self::Forex(fx) => &fx.crud.pool,
-            Self::Options(opt) => &opt.crud.pool,
-            Self::DailyStock(daily_stk) => &daily_stk.crud.pool,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

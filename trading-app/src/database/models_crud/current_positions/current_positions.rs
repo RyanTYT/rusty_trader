@@ -1,32 +1,39 @@
 use sqlx::PgPool;
 
-use crate::database::{
-    models::{
-        CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
-        CurrentOptionPositionsUpdateKeys, CurrentStockPositionsFullKeys,
-        CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, OptionType,
+use crate::{
+    database::{
+        models::{
+            CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
+            CurrentOptionPositionsUpdateKeys, CurrentStockPositionsFullKeys,
+            CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, OptionType,
+        },
+        models_crud::current_positions::{
+            current_option_positions::CurrentOptionPositionsCRUD,
+            current_stock_positions::CurrentStockPositionsCRUD,
+        },
     },
-    models_crud::current_positions::{
-        current_option_positions::CurrentOptionPositionsCRUD,
-        current_stock_positions::CurrentStockPositionsCRUD,
-    },
+    implement_crud_trait_for_interface,
 };
 
+#[derive(Debug, Clone)]
 pub enum CurrentPositionsCRUD {
     Options(CurrentOptionPositionsCRUD),
     Stock(CurrentStockPositionsCRUD),
 }
 
+#[derive(Debug, Clone)]
 pub enum CurrentPositionsFullKeys {
     Options(CurrentOptionPositionsFullKeys),
     Stock(CurrentStockPositionsFullKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum CurrentPositionsPrimaryKeys {
     Options(CurrentOptionPositionsPrimaryKeys),
     Stock(CurrentStockPositionsPrimaryKeys),
 }
 
+#[derive(Debug, Clone)]
 pub enum CurrentPositionsUpdateKeys {
     Options(CurrentOptionPositionsUpdateKeys),
     Stock(CurrentStockPositionsUpdateKeys),
@@ -40,6 +47,14 @@ impl CurrentPositionsCRUD {
         }
     }
 }
+
+implement_crud_trait_for_interface!(
+    CurrentPositionsCRUD,
+    CurrentPositionsFullKeys,
+    CurrentPositionsPrimaryKeys,
+    CurrentPositionsUpdateKeys,
+    [Stock, Options]
+);
 
 pub trait CurrentPositionsOps {
     async fn get_pos_by_strat(

@@ -33,9 +33,9 @@ impl<FK, PK, UK> CRUD<FK, PK, UK> {
 // #[async_trait]
 pub trait CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys>
 where
-    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
-    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
-    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de>,
+    FullKeys: Sized + Send + Sync,
+    PrimaryKeys: Sized + Send + Sync,
+    UpdateKeys: Sized + Send + Sync,
 {
     // fn new(pool: PgPool, table: String) -> Self;
     async fn create(&self, raw_item: &FullKeys) -> Result<(), String>;
@@ -53,9 +53,9 @@ where
 
 // #[async_trait]
 impl<
-    FullKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
-    PrimaryKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
-    UpdateKeys: Sized + Send + Sync + Serialize + for<'de> Deserialize<'de> + Insertable,
+    FullKeys: Sized + Send + Sync + Insertable,
+    PrimaryKeys: Sized + Send + Sync + Insertable,
+    UpdateKeys: Sized + Send + Sync + Insertable,
 > CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys> for CRUD<FullKeys, PrimaryKeys, UpdateKeys>
 {
     // fn new(pool: PgPool, table: String) -> Self {
@@ -298,6 +298,101 @@ macro_rules! delegate_all_crud_methods {
         }
         async fn delete(&self, raw_pk: &$PrimaryKeys) -> Result<(), String> {
             self.$delegator.delete(raw_pk).await
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! implement_crud_trait_for_interface {
+    ($crud:ty, $fk:ident, $pk:ident, $uk:ident, [$($variant:ident),* $(,)?]) => {
+        impl crate::database::crud::CRUDTrait<$fk,$pk,$uk> for $crud
+        {
+            async fn read(
+                &self,
+                raw_pk: &$pk,
+            ) -> Result<Option<$fk>, String>
+            where
+                $fk: Unpin + for<'r> sqlx::prelude::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                match (self, raw_pk) {
+                    $(
+                        (Self::$variant(s), $pk::$variant(actual_pk)) => {
+                            s.read(actual_pk).await.map(|ok_res| ok_res.map($fk::$variant))
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD read".to_string()),
+                }
+            }
+            async fn create(&self, raw_item: &$fk) -> Result<(), String> {
+                match (self, raw_item) {
+                    $(
+                        (Self::$variant(s), $fk::$variant(actual_fk)) => {
+                            s.create(actual_fk).await
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD create".to_string()),
+                }
+            }
+            async fn update(
+                &self,
+                raw_pk: &$pk,
+                raw_uk: &$uk,
+            ) -> Result<u64, String> {
+                match (self, raw_pk, raw_uk) {
+                    $(
+                        (Self::$variant(s), $pk::$variant(actual_pk), $uk::$variant(actual_uk)) => {
+                            s.update(actual_pk, actual_uk).await
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD update".to_string()),
+                }
+            }
+            async fn delete(&self, raw_pk: &$pk) -> Result<(), String> {
+                match (self, raw_pk) {
+                    $(
+                        (Self::$variant(s), $pk::$variant(actual_pk)) => {
+                            s.delete(actual_pk).await
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD delete".to_string()),
+                }
+            }
+            async fn read_all(&self) -> Result<Vec<$fk>, String>
+            where
+                $fk:
+                    Unpin + for<'r> sqlx::prelude::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                match self {
+                    $(Self::$variant(s) => s.read_all().await.map(|vec| vec.into_iter().map($fk::$variant).collect())),*
+                }
+            }
+            async fn create_or_ignore(
+                &self,
+                raw_item: &$fk,
+            ) -> Result<(), String> {
+                match (self, raw_item) {
+                    $(
+                        (Self::$variant(s), $fk::$variant(actual_fk)) => {
+                            s.create_or_ignore(actual_fk).await
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD create_or_ignore".to_string()),
+                }
+            }
+            async fn create_or_update(
+                &self,
+                raw_pk: &$pk,
+                raw_uk: &$uk,
+            ) -> Result<(), String> {
+                match (self, raw_pk, raw_uk) {
+                    $(
+                        (Self::$variant(s), $pk::$variant(actual_pk), $uk::$variant(actual_uk)) => {
+                            s.create_or_update(actual_pk, actual_uk).await
+                        }
+                    ),*
+                    _ => Err("Invalid key variant combination for Interface CRUD update".to_string()),
+                }
+            }
         }
     };
 }

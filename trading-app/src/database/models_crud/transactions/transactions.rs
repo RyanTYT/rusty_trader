@@ -1,15 +1,20 @@
 use sqlx::PgPool;
 
-use crate::database::{
-    models::{
-        OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys, OptionTransactionsUpdateKeys,
-        OptionType, StockTransactionsFullKeys, StockTransactionsPrimaryKeys,
-        StockTransactionsUpdateKeys,
+use crate::{
+    database::{
+        models::{
+            OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys,
+            OptionTransactionsUpdateKeys, OptionType, StockTransactionsFullKeys,
+            StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys,
+        },
+        models_crud::transactions::{
+            option_transactions::{
+                OptionTransactionsCRUD, OptionTransactionsUnderlyingPrimaryKeys,
+            },
+            stock_transactions::{StockTransactionsCRUD, StockTransactionsUnderlyingPrimaryKeys},
+        },
     },
-    models_crud::transactions::{
-        option_transactions::{OptionTransactionsCRUD, OptionTransactionsUnderlyingPrimaryKeys},
-        stock_transactions::{StockTransactionsCRUD, StockTransactionsUnderlyingPrimaryKeys},
-    },
+    implement_crud_trait_for_interface,
 };
 
 pub enum TransactionsCRUD {
@@ -45,6 +50,14 @@ impl TransactionsCRUD {
         }
     }
 }
+
+implement_crud_trait_for_interface!(
+    TransactionsCRUD,
+    TransactionsFullKeys,
+    TransactionsPrimaryKeys,
+    TransactionsUpdateKeys,
+    [Stock, Options]
+);
 
 pub trait TransactionsOps {
     /// Returns an Err(...) when sql query fails

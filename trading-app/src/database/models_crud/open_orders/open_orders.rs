@@ -1,6 +1,6 @@
 use sqlx::PgPool;
 
-use crate::database::{
+use crate::{database::{
     models::{
         OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys,
         OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys, OptionType,
@@ -8,7 +8,7 @@ use crate::database::{
     models_crud::open_orders::{
         open_option_orders::OpenOptionOrdersCRUD, open_stock_orders::OpenStockOrdersCRUD,
     },
-};
+}, implement_crud_trait_for_interface};
 
 pub enum OpenOrdersCRUD {
     Stock(OpenStockOrdersCRUD),
@@ -38,6 +38,14 @@ impl OpenOrdersCRUD {
         }
     }
 }
+
+implement_crud_trait_for_interface!(
+    OpenOrdersCRUD,
+    OpenOrdersFullKeys,
+    OpenOrdersPrimaryKeys,
+    OpenOrdersUpdateKeys,
+    [Stock, Options]
+);
 
 pub trait OpenOrdersOps {
     async fn get_orders_for_strat(&self, strategy: &str)
