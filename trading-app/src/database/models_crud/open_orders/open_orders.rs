@@ -1,13 +1,18 @@
+use ibapi::orders::ExecutionData;
 use sqlx::PgPool;
 
 use crate::{
     database::{
         models::{
-            AssetType, OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys, OpenOptionOrdersUpdateKeys, OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys, OptionType,
-        }, models_crud::open_orders::{
+            AssetType, OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys,
+            OpenOptionOrdersUpdateKeys, OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys,
+            OpenStockOrdersUpdateKeys, OptionType,
+        },
+        models_crud::open_orders::{
             open_option_orders::OpenOptionOrdersCRUD, open_stock_orders::OpenStockOrdersCRUD,
         },
-    }, implement_crud_trait_for_interface,
+    },
+    implement_crud_trait_for_interface,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +26,13 @@ pub enum OpenOrdersFullKeys {
     Stock(OpenStockOrdersFullKeys),
     Options(OpenOptionOrdersFullKeys),
 }
+
+// #[macro_export]
+// macro_rules! extract_common_attr {
+//     ($var:expr, $, $($variant:ident),* $(,)?) => {
+//
+//     };
+// }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OpenOrdersFullKeys {
     fn from_row(_: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
@@ -36,6 +48,71 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OpenOrdersFullKeys {
 pub enum OpenOrdersPrimaryKeys {
     Stock(OpenStockOrdersPrimaryKeys),
     Options(OpenOptionOrdersPrimaryKeys),
+}
+
+impl OpenOrdersPrimaryKeys {
+    pub fn new(asset_type: &AssetType, order_perm_id: i32, order_id: i32) -> Self {
+        match asset_type {
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(OpenStockOrdersPrimaryKeys {
+                    order_perm_id: order_perm_id,
+                    order_id: order_id,
+                })
+            }
+            AssetType::Option => Self::Options(OpenOptionOrdersPrimaryKeys {
+                order_perm_id: order_perm_id,
+                order_id: order_id,
+            }),
+            AssetType::CASH => {
+                panic!("Tried to construct OpenOrdersPrimaryKeys from CASH asset_type")
+            }
+            AssetType::Unknown => {
+                panic!("Tried to construct OpenOrdersPrimaryKeys from unknown asset_type")
+            }
+        }
+    }
+
+    pub fn from_execution(execution_data: &ExecutionData) -> Self {
+        match AssetType::from_str(&execution_data.contract.security_type) {
+            AssetType::Option => Self::Options(OpenOptionOrdersPrimaryKeys {
+                order_perm_id: execution_data.execution.perm_id,
+                order_id: execution_data.execution.order_id,
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(OpenStockOrdersPrimaryKeys {
+                    order_perm_id: execution_data.execution.perm_id,
+                    order_id: execution_data.execution.order_id,
+                })
+            }
+            AssetType::Unknown => panic!(
+                "Tried to construct OpenOrdersPrimaryKeys from unknown asset_type: {execution_data:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct OpenOrdersPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
+
+    pub fn from_open_order(open_order: &OpenOrdersFullKeys) -> Self {
+        match open_order {
+            OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                order_perm_id,
+                order_id,
+                ..
+            }) => OpenOrdersPrimaryKeys::Stock(OpenStockOrdersPrimaryKeys {
+                order_perm_id: *order_perm_id,
+                order_id: *order_id,
+            }),
+            OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
+                order_perm_id,
+                order_id,
+                ..
+            }) => OpenOrdersPrimaryKeys::Options(OpenOptionOrdersPrimaryKeys {
+                order_perm_id: *order_perm_id,
+                order_id: *order_id,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +145,7 @@ impl OpenOrdersCRUD {
             | AssetType::ForexPair
             | AssetType::CASH => Self::stock(pool),
             AssetType::Option => Self::option(pool),
-            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
 }

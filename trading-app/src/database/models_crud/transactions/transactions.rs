@@ -1,16 +1,24 @@
+use chrono::{NaiveDateTime, TimeZone, Utc};
+use ibapi::orders::ExecutionData;
+use rust_decimal::dec;
 use sqlx::PgPool;
 
 use crate::{
     database::{
         models::{
-            AssetType, OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys, OptionTransactionsUpdateKeys, OptionType, StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys,
-        }, models_crud::transactions::{
+            AssetType, OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys,
+            OptionTransactionsUpdateKeys, OptionType, StockTransactionsFullKeys,
+            StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys,
+        },
+        models_crud::transactions::{
             option_transactions::{
                 OptionTransactionsCRUD, OptionTransactionsUnderlyingPrimaryKeys,
             },
             stock_transactions::{StockTransactionsCRUD, StockTransactionsUnderlyingPrimaryKeys},
         },
-    }, implement_crud_trait_for_interface,
+    },
+    helpers::contract::get_local_symbol,
+    implement_crud_trait_for_interface,
 };
 
 #[derive(Debug, Clone)]
@@ -23,6 +31,78 @@ pub enum TransactionsCRUD {
 pub enum TransactionsFullKeys {
     Stock(StockTransactionsFullKeys),
     Options(OptionTransactionsFullKeys),
+}
+
+impl TransactionsFullKeys {
+    pub fn from_strat_and_exec(strategy: &str, execution_data: &ExecutionData) -> Self {
+        let naive_dt =
+            NaiveDateTime::parse_from_str(&execution_data.execution.time, "%Y%m%d  %H:%M:%S")
+                .expect(&format!(
+                    "Failed to parse execution time: {}",
+                    &execution_data.execution.time
+                ));
+        let execution_time = Utc
+            .from_local_datetime(&naive_dt)
+            .single()
+            .expect("Ambiguous or invalid datetime in New York timezone");
+        match AssetType::from_str(&execution_data.contract.security_type) {
+            AssetType::Option => Self::Options(OptionTransactionsFullKeys {
+                strategy: strategy.to_string(),
+                execution_id: execution_data.execution.execution_id.to_string(),
+                order_perm_id: execution_data.execution.perm_id,
+                stock: execution_data.contract.symbol.as_str().to_string(),
+                primary_exchange: execution_data.contract.primary_exchange.to_string(),
+                currency: execution_data.contract.currency.to_string(),
+                expiry: execution_data
+                    .contract
+                    .last_trade_date_or_contract_month
+                    .clone(),
+                strike: execution_data.contract.strike.clone(),
+                multiplier: execution_data.contract.multiplier.clone(),
+                option_type: OptionType::from_str(&execution_data.contract.right).expect(
+                    "Error parsing OptionType from contract right in update_option_execution",
+                ),
+                time: execution_time.to_utc(),
+
+                price: execution_data.execution.average_price,
+                quantity: if execution_data.execution.side == "BOT" {
+                    execution_data.execution.shares.clone()
+                } else {
+                    -execution_data.execution.shares.clone()
+                },
+                fees: dec!(0),
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                let stock = get_local_symbol(&execution_data.contract);
+                Self::Stock(StockTransactionsFullKeys {
+                    strategy: strategy.to_string(),
+                    execution_id: execution_data.execution.execution_id.to_string(),
+                    order_perm_id: execution_data.execution.perm_id,
+                    stock: stock,
+                    primary_exchange: execution_data.contract.primary_exchange.to_string(),
+                    currency: execution_data.contract.currency.to_string(),
+                    time: Utc
+                        .from_local_datetime(&naive_dt)
+                        .single()
+                        .expect("Ambiguous or invalid datetime in New York timezone")
+                        .to_utc(),
+                    price: execution_data.execution.price,
+                    quantity: if execution_data.execution.side == "BOT" {
+                        execution_data.execution.shares
+                    } else {
+                        -execution_data.execution.shares
+                    },
+                    fees: dec!(0),
+                })
+            }
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TransactionsFullKeys {
@@ -39,6 +119,27 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TransactionsFullKeys {
 pub enum TransactionsPrimaryKeys {
     Stock(StockTransactionsPrimaryKeys),
     Options(OptionTransactionsPrimaryKeys),
+}
+
+impl TransactionsPrimaryKeys {
+    pub fn from(execution_data: &ExecutionData) -> Self {
+        match AssetType::from_str(&execution_data.contract.security_type) {
+            AssetType::Option => Self::Options(OptionTransactionsPrimaryKeys {
+                execution_id: execution_data.execution.execution_id.to_string(),
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(StockTransactionsPrimaryKeys {
+                    execution_id: execution_data.execution.execution_id.to_string(),
+                })
+            }
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +178,7 @@ impl TransactionsCRUD {
             | AssetType::ForexPair
             | AssetType::CASH => Self::stock(pool),
             AssetType::Option => Self::option(pool),
-            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
 }

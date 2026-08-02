@@ -28,7 +28,7 @@ impl CRUDTrait<StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCo
 }
 
 impl StagedCommissionsCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<
                 StagedCommissionsFullKeys,

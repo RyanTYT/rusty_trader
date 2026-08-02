@@ -1,3 +1,4 @@
+use ibapi::orders::ExecutionData;
 use sqlx::{PgPool, postgres::PgRow, prelude::FromRow};
 
 use crate::{
@@ -5,13 +6,18 @@ use crate::{
         models::{
             AssetType, CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
             CurrentOptionPositionsUpdateKeys, CurrentStockPositionsFullKeys,
-            CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, OptionType,
+            CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, ExecutionSide,
+            OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys, OptionType,
         },
-        models_crud::current_positions::{
-            current_option_positions::CurrentOptionPositionsCRUD,
-            current_stock_positions::CurrentStockPositionsCRUD,
+        models_crud::{
+            current_positions::{
+                current_option_positions::CurrentOptionPositionsCRUD,
+                current_stock_positions::CurrentStockPositionsCRUD,
+            },
+            open_orders::open_orders::OpenOrdersFullKeys,
         },
     },
+    helpers::contract::get_local_symbol,
     implement_crud_trait_for_interface,
 };
 
@@ -43,10 +49,132 @@ pub enum CurrentPositionsPrimaryKeys {
     Stock(CurrentStockPositionsPrimaryKeys),
 }
 
+impl CurrentPositionsPrimaryKeys {
+    pub fn from_strat_and_exec(strategy: &str, execution_data: &ExecutionData) -> Self {
+        match AssetType::from_str(&execution_data.contract.security_type) {
+            AssetType::Option => Self::Options(CurrentOptionPositionsPrimaryKeys {
+                strategy: strategy.to_string(),
+                stock: execution_data.contract.symbol.as_str().to_string(),
+                primary_exchange: execution_data.contract.primary_exchange.to_string(),
+                currency: execution_data.contract.currency.to_string(),
+                expiry: execution_data
+                    .contract
+                    .last_trade_date_or_contract_month
+                    .clone(),
+                strike: execution_data.contract.strike.clone(),
+                multiplier: execution_data.contract.multiplier.clone(),
+                option_type: OptionType::from_str(&execution_data.contract.right).expect(
+                    "Error parsing OptionType from contract right in update_option_execution",
+                ),
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                let stock = get_local_symbol(&execution_data.contract);
+                Self::Stock(CurrentStockPositionsPrimaryKeys {
+                    strategy: strategy.to_string(),
+                    stock: stock,
+                    primary_exchange: execution_data.contract.primary_exchange.to_string(),
+                    currency: execution_data.contract.currency.to_string(),
+                })
+            }
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
+
+    /// Modifies the underlying struct
+    pub fn with_stock(&mut self, stock: &str) {
+        match self {
+            Self::Stock(pk) => pk.stock = stock.to_string(),
+            Self::Options(pk) => pk.stock = stock.to_string(),
+        }
+    }
+
+    pub fn from_open_order(open_order: &OpenOrdersFullKeys) -> Self {
+        match open_order {
+            OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                stock,
+                primary_exchange,
+                strategy,
+                currency,
+                ..
+            }) => Self::Stock(CurrentStockPositionsPrimaryKeys {
+                stock: stock.clone(),
+                primary_exchange: primary_exchange.clone(),
+                currency: currency.clone(),
+                strategy: strategy.clone(),
+            }),
+            OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
+                strategy,
+                stock,
+                primary_exchange,
+                currency,
+                expiry,
+                strike,
+                multiplier,
+                option_type,
+                ..
+            }) => Self::Options(CurrentOptionPositionsPrimaryKeys {
+                stock: stock.clone(),
+                primary_exchange: primary_exchange.clone(),
+                currency: currency.clone(),
+                strategy: strategy.clone(),
+                expiry: expiry.clone(),
+                strike: *strike,
+                multiplier: multiplier.clone(),
+                option_type: option_type.clone(),
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CurrentPositionsUpdateKeys {
     Options(CurrentOptionPositionsUpdateKeys),
     Stock(CurrentStockPositionsUpdateKeys),
+}
+
+impl CurrentPositionsUpdateKeys {
+    pub fn from(execution_data: &ExecutionData) -> Self {
+        match AssetType::from_str(&execution_data.contract.security_type) {
+            AssetType::Option => Self::Options(CurrentOptionPositionsUpdateKeys {
+                quantity: Some(
+                    execution_data.execution.shares
+                        * if execution_data.execution.side == "SLD" {
+                            -1.0
+                        } else {
+                            1.0
+                        },
+                ),
+                avg_price: Some(execution_data.execution.price),
+                last_updated: None,
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(CurrentStockPositionsUpdateKeys {
+                    quantity: Some(
+                        execution_data.execution.shares
+                            * if execution_data.execution.side == "SLD" {
+                                -1.0
+                            } else {
+                                1.0
+                            },
+                    ),
+                    avg_price: Some(execution_data.execution.price),
+                    last_updated: None,
+                })
+            }
+
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
 }
 
 impl CurrentPositionsCRUD {
@@ -73,7 +201,7 @@ impl CurrentPositionsCRUD {
             | AssetType::ForexPair
             | AssetType::CASH => Self::stock(pool),
             AssetType::Option => Self::option(pool),
-            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
 }
@@ -101,6 +229,8 @@ pub trait CurrentPositionsOps {
     async fn get_all_pos_grouped(&self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
     /// Should insert into DB, and on conflict, add the position to the row
     /// - i.e. quantity is added + avg_price is updated accordingly
+    ///     - if quantity is in opp direction of current position
+    ///       -> no change to avg_price
     async fn update_positions_additive(
         &self,
         pk: CurrentPositionsPrimaryKeys,
@@ -359,6 +489,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     avg_price = CASE 
                         -- Avoid division by zero if total quantity becomes 0
                         WHEN (current_stock_positions.quantity + EXCLUDED.quantity) = 0 THEN 0
+                        WHEN SIGN(current_stock_positions.quantity) != SIGN(EXCLUDED.quantity) THEN current_stock_positions.avg_price
                         ELSE (
                             (current_stock_positions.quantity * current_stock_positions.avg_price) + 
                             (EXCLUDED.quantity * EXCLUDED.avg_price)
