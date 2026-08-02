@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct TargetOptionPositionsCRUD {
-    crud: CRUD<
+    pub(super) crud: CRUD<
         TargetOptionPositionsFullKeys,
         TargetOptionPositionsPrimaryKeys,
         TargetOptionPositionsUpdateKeys,
