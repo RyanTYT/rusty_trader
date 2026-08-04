@@ -1,11 +1,19 @@
 use std::collections::HashMap;
 
-use ibapi::orders::{Order, order_builder::market_order};
+use ibapi::orders::order_builder::market_order;
 
 use crate::{
-    execution::order_engine::OrderEngine,
+    execution::order_engine::{OrderEngine, OrderIBKR},
     helpers::contract::{HashContract, get_contract_from_local_symbol},
 };
+
+pub struct FxAttachments {
+    // Contract to be sold -> FX orders:
+    // - FX to be attached as child orders directly to Contract
+    pub contracts_sold_to_fx_orders: HashMap<HashContract, Vec<OrderIBKR>>,
+    // Backed up orders that are blocked by the FX shortfall
+    pub backed_up_orders: Vec<OrderIBKR>,
+}
 
 impl OrderEngine {
     /// Returns two maps that together describe the SELL → FX → BUY attachment chains:
@@ -18,17 +26,15 @@ impl OrderEngine {
         funds: HashMap<String, f64>,
         funds_from_selling: HashMap<HashContract, Vec<f64>>,
         insufficient_funds: HashMap<HashContract, f64>,
-    ) -> (
-        HashMap<HashContract, Vec<(HashContract, Order)>>, // sell -> [(fx_contract, fx_order)]
-        HashMap<HashContract, Vec<(HashContract, Order)>>, // fx -> [(buy_contract, buy_order)]
-    ) {
+        strategy: String,
+    ) -> FxAttachments {
         let mut remaining_proceeds: HashMap<HashContract, f64> = funds_from_selling
             .into_iter()
             .map(|(contract, amounts)| (contract, amounts.iter().sum()))
             .collect();
 
-        let mut sell_to_fx: HashMap<HashContract, Vec<(HashContract, Order)>> = HashMap::new();
-        let mut fx_to_buys: HashMap<HashContract, Vec<(HashContract, Order)>> = HashMap::new();
+        let mut sell_to_fx: HashMap<HashContract, Vec<OrderIBKR>> = HashMap::new();
+        let mut backed_up_orders: Vec<OrderIBKR> = Vec::new();
         let mut available_funds = funds.clone();
 
         for (buy_contract, shortfall) in &insufficient_funds {
@@ -58,28 +64,37 @@ impl OrderEngine {
                 *entry = (*entry - consumed).max(0.0);
 
                 // FX order: buy `consumed` units of buy_currency (e.g. buy USD)
-                let fx_order = market_order(ibapi::orders::Action::Buy, consumed);
+                let mut fx_order = market_order(ibapi::orders::Action::Buy, consumed);
+                fx_order.order_ref = strategy.clone();
 
                 sell_to_fx
                     .entry(sell_contract.clone())
                     .or_insert_with(Vec::new)
-                    .push((fx_contract.clone(), fx_order));
-
-                // Buy order: the actual equity buy, full shortfall qty
-                // We carry the buy_contract's order here so place_order can submit it as a child
-                let buy_order = market_order(ibapi::orders::Action::Buy, *shortfall);
-                fx_to_buys
-                    .entry(fx_contract)
-                    .or_insert_with(Vec::new)
-                    .push((buy_contract.clone(), buy_order));
+                    .push(OrderIBKR::new(fx_contract.contract.clone(), fx_order, -1));
 
                 if remaining_shortfall <= 0.0 {
                     break;
                 }
             }
+
+            if remaining_shortfall > 0.0 {
+                tracing::error!(
+                    "Order for ({}, {}) cannot be fulfilled for Strategy ({strategy})",
+                    buy_contract.contract.symbol,
+                    buy_contract.contract.security_type
+                );
+                continue;
+            }
+            // Buy order: the actual equity buy, full shortfall qty
+            // We carry the buy_contract's order here so place_order can submit it as a child
+            let mut buy_order = market_order(ibapi::orders::Action::Buy, *shortfall);
+            buy_order.order_ref = strategy.clone();
+            backed_up_orders.push(OrderIBKR::new(buy_contract.contract.clone(), buy_order, -1));
         }
 
-        (sell_to_fx, fx_to_buys)
+        FxAttachments {
+            contracts_sold_to_fx_orders: sell_to_fx,
+            backed_up_orders,
+        }
     }
 }
-

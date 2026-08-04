@@ -1,3 +1,4 @@
+pub mod cancelled_orders;
 pub mod current_positions;
 pub mod historical_data;
 pub mod logs;

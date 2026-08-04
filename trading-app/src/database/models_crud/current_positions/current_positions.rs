@@ -1,4 +1,4 @@
-use ibapi::orders::ExecutionData;
+use ibapi::{contracts::Contract, orders::ExecutionData};
 use sqlx::{PgPool, postgres::PgRow, prelude::FromRow};
 
 use crate::{
@@ -50,40 +50,40 @@ pub enum CurrentPositionsPrimaryKeys {
 }
 
 impl CurrentPositionsPrimaryKeys {
-    pub fn from_strat_and_exec(strategy: &str, execution_data: &ExecutionData) -> Self {
-        match AssetType::from_str(&execution_data.contract.security_type) {
-            AssetType::Option => Self::Options(CurrentOptionPositionsPrimaryKeys {
-                strategy: strategy.to_string(),
-                stock: execution_data.contract.symbol.as_str().to_string(),
-                primary_exchange: execution_data.contract.primary_exchange.to_string(),
-                currency: execution_data.contract.currency.to_string(),
-                expiry: execution_data
-                    .contract
-                    .last_trade_date_or_contract_month
-                    .clone(),
-                strike: execution_data.contract.strike.clone(),
-                multiplier: execution_data.contract.multiplier.clone(),
-                option_type: OptionType::from_str(&execution_data.contract.right).expect(
-                    "Error parsing OptionType from contract right in update_option_execution",
-                ),
-            }),
-            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
-                let stock = get_local_symbol(&execution_data.contract);
-                Self::Stock(CurrentStockPositionsPrimaryKeys {
-                    strategy: strategy.to_string(),
-                    stock: stock,
-                    primary_exchange: execution_data.contract.primary_exchange.to_string(),
-                    currency: execution_data.contract.currency.to_string(),
-                })
-            }
-            AssetType::Unknown => panic!(
-                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
-            ),
-            AssetType::CASH => panic!(
-                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
-            ),
-        }
-    }
+    //     pub fn from_strat_and_exec(strategy: &str, execution_data: &ExecutionData) -> Self {
+    //         match AssetType::from_str(&execution_data.contract.security_type) {
+    //             AssetType::Option => Self::Options(CurrentOptionPositionsPrimaryKeys {
+    //                 strategy: strategy.to_string(),
+    //                 stock: execution_data.contract.symbol.as_str().to_string(),
+    //                 primary_exchange: execution_data.contract.primary_exchange.to_string(),
+    //                 currency: execution_data.contract.currency.to_string(),
+    //                 expiry: execution_data
+    //                     .contract
+    //                     .last_trade_date_or_contract_month
+    //                     .clone(),
+    //                 strike: execution_data.contract.strike.clone(),
+    //                 multiplier: execution_data.contract.multiplier.clone(),
+    //                 option_type: OptionType::from_str(&execution_data.contract.right).expect(
+    //                     "Error parsing OptionType from contract right in update_option_execution",
+    //                 ),
+    //             }),
+    //             AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+    //                 let stock = get_local_symbol(&execution_data.contract);
+    //                 Self::Stock(CurrentStockPositionsPrimaryKeys {
+    //                     strategy: strategy.to_string(),
+    //                     stock: stock,
+    //                     primary_exchange: execution_data.contract.primary_exchange.to_string(),
+    //                     currency: execution_data.contract.currency.to_string(),
+    //                 })
+    //             }
+    //             AssetType::Unknown => panic!(
+    //                 "Tried to construct TransactionPrimaryKeys from unknown asset_type: {execution_data:?}"
+    //             ),
+    //             AssetType::CASH => panic!(
+    //                 "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+    //             ),
+    //         }
+    //     }
 
     /// Modifies the underlying struct
     pub fn with_stock(&mut self, stock: &str) {
@@ -129,6 +129,38 @@ impl CurrentPositionsPrimaryKeys {
             }),
         }
     }
+
+    pub fn from_strat_and_contract(strategy: &str, contract: &Contract) -> Self {
+        match AssetType::from_str(&contract.security_type) {
+            AssetType::Option => Self::Options(CurrentOptionPositionsPrimaryKeys {
+                strategy: strategy.to_string(),
+                stock: contract.symbol.as_str().to_string(),
+                primary_exchange: contract.primary_exchange.to_string(),
+                currency: contract.currency.to_string(),
+                expiry: contract.last_trade_date_or_contract_month.to_string(),
+                strike: contract.strike,
+                multiplier: contract.multiplier.to_string(),
+                option_type: OptionType::from_str(&contract.right).expect(
+                    "Error parsing OptionType from contract right in from_strat_and_contract",
+                ),
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                let stock = get_local_symbol(&contract);
+                Self::Stock(CurrentStockPositionsPrimaryKeys {
+                    strategy: strategy.to_string(),
+                    stock: stock,
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                })
+            }
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type: {contract:?}"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {contract:?}"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +170,7 @@ pub enum CurrentPositionsUpdateKeys {
 }
 
 impl CurrentPositionsUpdateKeys {
-    pub fn from(execution_data: &ExecutionData) -> Self {
+    pub fn from_execution(execution_data: &ExecutionData) -> Self {
         match AssetType::from_str(&execution_data.contract.security_type) {
             AssetType::Option => Self::Options(CurrentOptionPositionsUpdateKeys {
                 quantity: Some(
@@ -172,6 +204,30 @@ impl CurrentPositionsUpdateKeys {
             ),
             AssetType::CASH => panic!(
                 "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
+            ),
+        }
+    }
+
+    pub fn from(asset_type: &AssetType, quantity: Option<f64>, avg_price: Option<f64>) -> Self {
+        match asset_type {
+            AssetType::Option => Self::Options(CurrentOptionPositionsUpdateKeys {
+                quantity: quantity,
+                avg_price: avg_price,
+                last_updated: None,
+            }),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(CurrentStockPositionsUpdateKeys {
+                    quantity: quantity,
+                    avg_price: avg_price,
+                    last_updated: None,
+                })
+            }
+
+            AssetType::Unknown => panic!(
+                "Tried to construct TransactionPrimaryKeys from unknown asset_type in from()"
+            ),
+            AssetType::CASH => panic!(
+                "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract in from()"
             ),
         }
     }

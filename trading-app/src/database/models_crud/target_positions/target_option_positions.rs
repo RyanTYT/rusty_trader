@@ -4,7 +4,7 @@ use crate::{
     database::{
         crud::{CRUD, CRUDTrait},
         models::{
-            TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
+            OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
             TargetOptionPositionsUpdateKeys,
         },
     },
@@ -18,6 +18,21 @@ pub struct TargetOptionPositionsCRUD {
         TargetOptionPositionsPrimaryKeys,
         TargetOptionPositionsUpdateKeys,
     >,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetOptionPositionsQtyDiff {
+    pub strategy: String,
+    pub stock: String,
+    pub primary_exchange: String,
+    pub currency: String,
+    pub expiry: String,
+    pub strike: f64,
+    pub multiplier: String,
+    pub option_type: OptionType,
+    pub avg_price: f64,
+    pub qty_diff: f64,
+    pub current_qty: f64,
 }
 
 impl

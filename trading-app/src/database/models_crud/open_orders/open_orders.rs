@@ -1,4 +1,8 @@
-use ibapi::orders::ExecutionData;
+use chrono::Utc;
+use ibapi::{
+    contracts::Contract,
+    orders::{Action, ExecutionData, Order},
+};
 use sqlx::PgPool;
 
 use crate::{
@@ -12,6 +16,7 @@ use crate::{
             open_option_orders::OpenOptionOrdersCRUD, open_stock_orders::OpenStockOrdersCRUD,
         },
     },
+    helpers::contract::get_local_symbol,
     implement_crud_trait_for_interface,
 };
 
@@ -25,6 +30,80 @@ pub enum OpenOrdersCRUD {
 pub enum OpenOrdersFullKeys {
     Stock(OpenStockOrdersFullKeys),
     Options(OpenOptionOrdersFullKeys),
+}
+
+impl OpenOrdersFullKeys {
+    pub fn from_contract_and_order(contract: &Contract, order: &Order, filled: f64) -> Self {
+        let asset_type = AssetType::from_str(&contract.security_type);
+        match asset_type {
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                let qty = {
+                    if order.action == Action::Sell {
+                        -1.0
+                    } else {
+                        1.0
+                    }
+                } * order.total_quantity;
+
+                OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                    order_perm_id: order.perm_id,
+                    order_id: order.order_id,
+                    strategy: order.order_ref.clone(),
+                    stock: get_local_symbol(&contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                    time: Utc::now(),
+                    quantity: qty,
+                    filled: filled,
+                    executions: Vec::new(),
+                })
+            }
+            AssetType::Option => {
+                let qty = {
+                    if order.action == Action::Sell {
+                        -1.0
+                    } else {
+                        1.0
+                    }
+                } * order.total_quantity;
+
+                Self::Options(OpenOptionOrdersFullKeys {
+                    order_id: order.order_id,
+                    order_perm_id: order.perm_id,
+                    strategy: order.order_ref.clone(),
+                    stock: contract.symbol.as_str().to_string(),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                    expiry: contract.last_trade_date_or_contract_month.to_string(),
+                    strike: contract.strike,
+                    multiplier: contract.multiplier.to_string(),
+                    option_type: crate::database::models::OptionType::from_str(&contract.right)
+                        .unwrap_or_else(|e| panic!("{}", e)),
+                    time: Utc::now(),
+                    quantity: qty,
+                    filled: filled,
+                    executions: Vec::new(),
+                })
+            }
+            AssetType::CASH => {
+                tracing::error!(
+                    "Tried to create OpenOrdersFullKeys for CASH Asset Type: ({}, {})",
+                    contract.symbol,
+                    contract.security_type
+                );
+                panic!("Tried to create OpenOrdersFullKeys from AssetType::CASH".to_string());
+            }
+            AssetType::Unknown => {
+                tracing::error!(
+                    message=%format!("Tried to create OpenOrdersFullKeys for Unknown Asset Type: ({}, {})",
+                    contract.symbol,
+                    contract.security_type
+                    )
+                );
+                panic!("Tried to create OpenOrdersFullKeys from AssetType::Unknown".to_string());
+            }
+        }
+    }
 }
 
 // #[macro_export]

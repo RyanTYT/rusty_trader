@@ -564,6 +564,34 @@ pub struct Logs {
     DeriveInsertable,
     FromRow,
 )]
+pub struct CancelledOrders {
+    pub time: DateTime<Utc>,
+    pub order_perm_id: i32,
+    pub order_id: i32,
+
+    pub strategy: Option<String>,
+    pub stock: Option<String>,
+    pub primary_exchange: Option<String>,
+    pub currency: Option<String>,
+
+    pub quantity: Option<f64>,
+    pub executions: Option<Vec<String>>,
+    pub filled: Option<f64>,
+
+    pub reason: Option<String>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    ExtractFullKeys,
+    ExtractPrimaryKeys,
+    ExtractUpdateKeys,
+    DeriveInsertable,
+    FromRow,
+)]
 pub struct FractionalMomentumWeeklyPositions {
     pub stock: String,
     pub primary_exchange: String,

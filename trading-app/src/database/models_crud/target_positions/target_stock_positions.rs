@@ -20,6 +20,17 @@ pub struct TargetStockPositionsCRUD {
     >,
 }
 
+#[derive(Debug, Clone)]
+pub struct TargetStockPositionsQtyDiff {
+    pub strategy: String,
+    pub primary_exchange: String,
+    pub currency: String,
+    pub stock: String,
+    pub avg_price: f64,
+    pub qty_diff: f64,
+    pub current_qty: f64,
+}
+
 impl
     CRUDTrait<
         TargetStockPositionsFullKeys,

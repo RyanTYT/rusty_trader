@@ -2,10 +2,13 @@ use sqlx::PgPool;
 
 use crate::database::{
     models::{
-        AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys, TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys, TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
-    }, models_crud::target_positions::{
-        target_option_positions::TargetOptionPositionsCRUD,
-        target_stock_positions::TargetStockPositionsCRUD,
+        AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
+        TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys,
+        TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
+    },
+    models_crud::target_positions::{
+        target_option_positions::{TargetOptionPositionsCRUD, TargetOptionPositionsQtyDiff},
+        target_stock_positions::{TargetStockPositionsCRUD, TargetStockPositionsQtyDiff},
     },
 };
 
@@ -29,6 +32,12 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TargetPositionsFullKeys {
             "TargetPositionsFullKeys cannot be decoded directly from a raw SQL row".into(),
         ))
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum TargetPositionsQtyDiff {
+    Stock(TargetStockPositionsQtyDiff),
+    Options(TargetOptionPositionsQtyDiff),
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +76,7 @@ impl TargetPositionsCRUD {
             | AssetType::ForexPair
             | AssetType::CASH => Self::stock(pool),
             AssetType::Option => Self::option(pool),
-            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
 }
@@ -76,11 +85,11 @@ pub trait TargetPositionsOps {
     async fn get_target_pos_diff_by_pk(
         &self,
         pk: TargetPositionsPrimaryKeys,
-    ) -> Result<Vec<TargetPositionsFullKeys>, String>;
+    ) -> Result<Vec<TargetPositionsQtyDiff>, String>;
     async fn get_target_pos_diff_by_strat(
         &self,
         strategy: &str,
-    ) -> Result<Vec<TargetPositionsFullKeys>, String>;
+    ) -> Result<Vec<TargetPositionsQtyDiff>, String>;
     async fn clear_strat_pos(&self, strategy: &str) -> Result<(), String>;
 }
 
@@ -88,7 +97,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
     async fn get_target_pos_diff_by_pk(
         &self,
         pk: TargetPositionsPrimaryKeys,
-    ) -> Result<Vec<TargetPositionsFullKeys>, String> {
+    ) -> Result<Vec<TargetPositionsQtyDiff>, String> {
         let result = match pk {
             TargetPositionsPrimaryKeys::Stock(TargetStockPositionsPrimaryKeys {
                 strategy,
@@ -96,14 +105,15 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 currency,
                 stock,
             }) => sqlx::query_as!(
-                TargetStockPositionsFullKeys,
+                TargetStockPositionsQtyDiff,
                 r#"
                 SELECT
                     COALESCE(t.stock, c.stock) AS "stock!",
                     COALESCE(t.primary_exchange, c.primary_exchange) AS "primary_exchange!",
                     COALESCE(t.currency, c.currency) AS "currency!",
                     COALESCE(t.strategy, c.strategy) AS "strategy!",
-                    (COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0))::float8 AS "quantity!",
+                    (COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0))::float8 AS "qty_diff!",
+                    COALESCE(c.quantity, 0.0) AS "current_qty!",
                     COALESCE(t.avg_price, 0.0) AS "avg_price!"
                 FROM trading.target_stock_positions t
                 FULL OUTER JOIN trading.current_stock_positions  c
@@ -126,7 +136,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
             .map(|ok_res| {
                 ok_res
                     .into_iter()
-                    .map(TargetPositionsFullKeys::Stock)
+                    .map(TargetPositionsQtyDiff::Stock)
                     .collect()
             }),
 
@@ -140,7 +150,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 multiplier,
                 option_type,
             }) => sqlx::query_as!(
-                TargetOptionPositionsFullKeys,
+                TargetOptionPositionsQtyDiff,
                 r#"
                 SELECT
                     COALESCE(t.stock, c.stock) AS "stock!",
@@ -151,7 +161,8 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     COALESCE(t.multiplier, c.multiplier) AS "multiplier!",
                     COALESCE(t.option_type, c.option_type) AS "option_type!:OptionType",
                     COALESCE(t.strategy, c.strategy) AS "strategy!",
-                    COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0) AS "quantity!",
+                    (COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0))::float8 AS "qty_diff!",
+                    COALESCE(c.quantity, 0.0) AS "current_qty!",
                     COALESCE(t.avg_price, 0.0) AS "avg_price!"
                 FROM trading.target_option_positions t
                 FULL OUTER JOIN trading.current_option_positions  c
@@ -186,7 +197,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
             .map(|ok_res| {
                 ok_res
                     .into_iter()
-                    .map(TargetPositionsFullKeys::Options)
+                    .map(TargetPositionsQtyDiff::Options)
                     .collect()
             }),
         };
@@ -201,17 +212,18 @@ impl TargetPositionsOps for TargetPositionsCRUD {
     async fn get_target_pos_diff_by_strat(
         &self,
         strategy: &str,
-    ) -> Result<Vec<TargetPositionsFullKeys>, String> {
+    ) -> Result<Vec<TargetPositionsQtyDiff>, String> {
         let result = match self {
             Self::Stock(_) => sqlx::query_as!(
-                TargetStockPositionsFullKeys,
+                TargetStockPositionsQtyDiff,
                 r#"
                 SELECT
                     COALESCE(t.stock, c.stock) AS "stock!",
                     COALESCE(t.primary_exchange, c.primary_exchange) AS "primary_exchange!",
                     COALESCE(t.currency, c.currency) AS "currency!",
                     COALESCE(t.strategy, c.strategy) AS "strategy!",
-                    (COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0))::float8 AS "quantity!",
+                    (COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0))::float8 AS "qty_diff!",
+                    COALESCE(c.quantity, 0.0) AS "current_qty!",
                     COALESCE(t.avg_price, 0.0) AS "avg_price!"
                 FROM trading.target_stock_positions t
                 FULL OUTER JOIN trading.current_stock_positions  c
@@ -228,12 +240,12 @@ impl TargetPositionsOps for TargetPositionsCRUD {
             .map(|ok_res| {
                 ok_res
                     .into_iter()
-                    .map(TargetPositionsFullKeys::Stock)
+                    .map(TargetPositionsQtyDiff::Stock)
                     .collect()
             }),
 
             Self::Options(_) => sqlx::query_as!(
-                TargetOptionPositionsFullKeys,
+                TargetOptionPositionsQtyDiff,
                 r#"
                 SELECT
                     COALESCE(t.stock, c.stock) AS "stock!",
@@ -244,7 +256,8 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     COALESCE(t.multiplier, c.multiplier) AS "multiplier!",
                     COALESCE(t.option_type, c.option_type) AS "option_type!:OptionType",
                     COALESCE(t.strategy, c.strategy) AS "strategy!",
-                    COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0) AS "quantity!",
+                    COALESCE(t.quantity, 0) - COALESCE(c.quantity, 0) AS "qty_diff!",
+                    COALESCE(c.quantity, 0.0) AS "current_qty!",
                     COALESCE(t.avg_price, 0.0) AS "avg_price!"
                 FROM trading.target_option_positions t
                 FULL OUTER JOIN trading.current_option_positions  c
@@ -265,7 +278,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
             .map(|ok_res| {
                 ok_res
                     .into_iter()
-                    .map(TargetPositionsFullKeys::Options)
+                    .map(TargetPositionsQtyDiff::Options)
                     .collect()
             }),
         };
