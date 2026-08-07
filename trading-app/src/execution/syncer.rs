@@ -31,7 +31,7 @@ use crate::{
     execution::order_update_stream,
     helpers::contract::{HashContract, get_contract_from_local_symbol, get_local_symbol},
     init_app::StrategyParameters,
-    market_data::consolidator::Consolidator,
+    market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
     strategy::strategy::{StrategyEnum, StrategyExecutor},
 };
 
@@ -507,12 +507,12 @@ async fn sync_fx_positions(
                     } else {
                         consolidator
                             .get_current_price(
-                                &get_contract_from_local_symbol(
+                                get_contract_from_local_symbol(
                                     &format!("FX:{}/SGD", currency),
                                     "",
                                     "SGD",
                                 ),
-                                &false,
+                                false,
                                 &[],
                             )
                             .ok()
@@ -608,7 +608,7 @@ async fn sync_stock_and_option_positions(
             return;
         }
         let current_price = {
-            let val = consolidator.get_current_price(&contract, &false, &[]);
+            let val = consolidator.get_current_price(contract.clone(), false, &[]);
             if let Err(e) = val {
                 tracing::error!(
                     "Could not get current price for synced position: {e:?}! Falling back to 0.0!"

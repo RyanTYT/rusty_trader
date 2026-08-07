@@ -32,6 +32,7 @@ impl AccountTracker for Consolidator {
         let (sender, mut rcv) = channel::<f64>(10);
         let weak_client = Arc::downgrade(&self.client);
         let account = account_raw.to_string();
+
         std::thread::spawn(move || {
             let account_summary_subscription = {
                 let client_opt = weak_client.upgrade();
@@ -46,7 +47,6 @@ impl AccountTracker for Consolidator {
             };
             loop {
                 // for account_summary in account_summary_subscription {
-
                 match account_summary_subscription.next_timeout(Duration::from_secs(5)) {
                     Some(account_summary) => match account_summary {
                         AccountSummaryResult::Summary(summary) => {
@@ -79,7 +79,7 @@ impl AccountTracker for Consolidator {
                                         return;
                                     }
                                     let consolidator = consolidator_opt.unwrap();
-                                    consolidator.get_current_price(&sgd_contract, &false, &["2"])
+                                    consolidator.get_current_price(&sgd_contract, false, &["2"])
                                 };
                                 if let Err(e) = sgd_price {
                                     tracing::error!(

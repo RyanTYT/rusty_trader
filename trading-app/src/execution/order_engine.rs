@@ -48,7 +48,7 @@ use crate::{
     },
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxAttachments},
     helpers::contract::{HashContract, get_contract_from_local_symbol},
-    market_data::consolidator::Consolidator,
+    market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
     strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor},
 };
 
@@ -146,7 +146,7 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_order(weak_client: Weak<Client>, order_ibkr: OrderIBKR) -> i32 {
+    pub fn place_order(weak_client: &Weak<Client>, order_ibkr: OrderIBKR) -> i32 {
         let client_opt = weak_client.upgrade();
         if client_opt.is_none() {
             tracing::error!("Client is dead when trying to place order");
@@ -177,7 +177,7 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_orders(weak_client: Weak<Client>, orders: impl IntoIterator<Item = OrderIBKR>) {
+    pub fn place_orders(weak_client: &Weak<Client>, orders: impl IntoIterator<Item = OrderIBKR>) {
         let orders_iter = orders.into_iter();
         let (lower_bound, _) = orders_iter.size_hint();
         let mut order_ids = Vec::with_capacity(lower_bound);
@@ -186,15 +186,15 @@ impl OrderEngine {
             if order_ibkr.references_parent_order >= 0 {
                 order_ibkr.order.parent_id = order_ids[order_ibkr.references_parent_order as usize];
             }
-            let order_id = Self::place_order(weak_client.clone(), order_ibkr);
+            let order_id = Self::place_order(&weak_client, order_ibkr);
             order_ids[idx] = order_id;
         }
     }
 
     pub fn handle_bar_update_outcome(
         &self,
-        weak_client: Weak<Client>,
-        consolidator: Weak<Consolidator>,
+        weak_client: &Weak<Client>,
+        consolidator: &Weak<Consolidator>,
         bar_update_outcome: BarUpdateOutcome,
         strategy: &StrategyEnum,
         order_store: &OrderStore,
@@ -295,17 +295,18 @@ impl OrderEngine {
                                     contract: contract.clone(),
                                 };
 
-                                tracing::info!("Fetching price for {}", contract.symbol);
+                                let symbol = contract.symbol.clone();
+                                tracing::info!("Fetching price for {}", symbol);
                                 let required_currency = pos_diff.qty_diff
                                         * strong_consolidator.get_current_price(
-                                            &contract,
-                                            &false,
+                                            contract,
+                                            false,
                                             &[],
                                         ).unwrap_or_else(|_| {
                                             tracing::warn!("Could not get current price of contract in order_engine!");
                                             0.0
                                         });
-                                tracing::info!("Fetched price for {}", contract.symbol);
+                                tracing::info!("Fetched price for {}", symbol);
 
                                 let available_funds = funds.get(&pos_diff.currency).unwrap_or(&0.0);
                                 if available_funds >= &required_currency {
@@ -574,7 +575,7 @@ impl OrderEngine {
 
             let weak_client_cloned = weak_client;
             orders.push_front(OrderIBKR::new(contract, order, -1));
-            std::thread::spawn(move || Self::place_orders(weak_client_cloned, orders.into_iter()));
+            std::thread::spawn(move || Self::place_orders(&weak_client_cloned, orders.into_iter()));
 
             return Ok(());
         }
@@ -584,7 +585,7 @@ impl OrderEngine {
             let weak_client_cloned = weak_client.clone();
             order.total_quantity = (qty_diff - current_qty_diff).abs();
             orders.push_front(OrderIBKR::new(contract, order, -1));
-            std::thread::spawn(move || Self::place_orders(weak_client_cloned, orders.into_iter()));
+            std::thread::spawn(move || Self::place_orders(&weak_client_cloned, orders.into_iter()));
         }
 
         Ok(())

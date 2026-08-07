@@ -14,6 +14,7 @@ use crate::database::models::{
     DailyHistoricalStockDataFullKeys, HistoricalForexDataFullKeys, HistoricalOptionsDataFullKeys,
     HistoricalStockDataFullKeys, OptionType,
 };
+use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 
 /// Trait representing a bulk-insertable table model
 pub trait BulkInsertable {
@@ -26,6 +27,39 @@ pub trait BulkInsertable {
     fn types() -> &'static [Type];
     fn write_to_row<'a>(&'a self, row: &mut Vec<&'a (dyn tokio_postgres::types::ToSql + Sync)>);
     fn merge_sql(staging_table: &str) -> String;
+}
+
+// Impl BulkInsertable for all Borrowed types that alr impl BulkInsertable
+impl<'b, T: BulkInsertable> BulkInsertable for &'b T {
+    type PrimaryKey = T::PrimaryKey;
+
+    fn table_name() -> &'static str {
+        T::table_name()
+    }
+
+    fn primary_keys(&self) -> Self::PrimaryKey {
+        (*self).primary_keys()
+    }
+
+    fn create_temp_table_sql(staging_table: &str) -> String {
+        T::create_temp_table_sql(staging_table)
+    }
+
+    fn copy_in_sql(staging_table: &str) -> String {
+        T::copy_in_sql(staging_table)
+    }
+
+    fn types() -> &'static [Type] {
+        T::types()
+    }
+
+    fn write_to_row<'a>(&'a self, row: &mut Vec<&'a (dyn tokio_postgres::types::ToSql + Sync)>) {
+        (*self).write_to_row(row);
+    }
+
+    fn merge_sql(staging_table: &str) -> String {
+        T::merge_sql(staging_table)
+    }
 }
 
 macro_rules! impl_bulk_insertable {
@@ -41,7 +75,7 @@ macro_rules! impl_bulk_insertable {
             ]
         }
     ) => {
-        impl BulkInsertable for &$struct_name {
+        impl BulkInsertable for $struct_name {
             type PrimaryKey = $pk_type;
 
             fn table_name() -> &'static str {
@@ -276,6 +310,7 @@ impl_bulk_insertable! {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct BatchDbCreator<T>
 where
     T: BulkInsertable + Clone,
@@ -486,4 +521,28 @@ where
         Arc::new(Mutex::new(Some(shutdown_sender))),
         Arc::new(Mutex::new(Some(shutdown_resp_rx))),
     )
+}
+
+#[derive(Debug, Clone)]
+pub enum BatchDbCreatorEnum {
+    Stock(BatchDbCreator<HistoricalStockDataFullKeys>),
+    Options(BatchDbCreator<HistoricalOptionsDataFullKeys>),
+    Forex(BatchDbCreator<HistoricalForexDataFullKeys>),
+}
+
+impl BatchDbCreatorEnum {
+    pub async fn batch_create_or_update(&self, fk: &HistoricalDataFullKeys) -> Result<(), String> {
+        match (self, fk) {
+            (Self::Stock(creator), HistoricalDataFullKeys::Stock(data)) => {
+                creator.batch_create_or_update(data).await
+            }
+            (Self::Options(creator), HistoricalDataFullKeys::Options(data)) => {
+                creator.batch_create_or_update(data).await
+            }
+            (Self::Forex(creator), HistoricalDataFullKeys::Forex(data)) => {
+                creator.batch_create_or_update(data).await
+            }
+            _ => Err("BatchDbCreator Type doesn't match Historical Data Full Keys".to_string()),
+        }
+    }
 }

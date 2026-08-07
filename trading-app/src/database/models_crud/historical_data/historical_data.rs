@@ -1,19 +1,35 @@
 use chrono::{DateTime, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
+use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use ordered_float::OrderedFloat;
-use rust_decimal::{Decimal, prelude::{FromPrimitive, ToPrimitive}};
+use rust_decimal::{
+    Decimal,
+    prelude::{FromPrimitive, ToPrimitive},
+};
 use sqlx::{PgPool, prelude::FromRow};
 
-use crate::{database::{
-    models::{
-        AssetType, DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys, DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys, HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys, HistoricalForexDataPrimaryKeysWoTime, HistoricalForexDataUpdateKeys, HistoricalOptionsDataFullKeys, HistoricalOptionsDataPrimaryKeys, HistoricalOptionsDataPrimaryKeysWoTime, HistoricalOptionsDataUpdateKeys, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys, HistoricalStockDataPrimaryKeysWoTime, HistoricalStockDataUpdateKeys, OptionType,
-    }, models_crud::historical_data::{
-        daily_historical_data::DailyHistoricalStockDataCRUD,
-        historical_forex_data::HistoricalForexDataCRUD,
-        historical_options_data::HistoricalOptionsDataCRUD,
-        historical_stock_data::HistoricalStockDataCRUD,
+use crate::{
+    database::{
+        models::{
+            AssetType, DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys,
+            DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys,
+            HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys,
+            HistoricalForexDataPrimaryKeysWoTime, HistoricalForexDataUpdateKeys,
+            HistoricalOptionsDataFullKeys, HistoricalOptionsDataPrimaryKeys,
+            HistoricalOptionsDataPrimaryKeysWoTime, HistoricalOptionsDataUpdateKeys,
+            HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+            HistoricalStockDataPrimaryKeysWoTime, HistoricalStockDataUpdateKeys, OptionType,
+        },
+        models_crud::historical_data::{
+            daily_historical_data::DailyHistoricalStockDataCRUD,
+            historical_forex_data::HistoricalForexDataCRUD,
+            historical_options_data::HistoricalOptionsDataCRUD,
+            historical_stock_data::HistoricalStockDataCRUD,
+        },
     },
-}, implement_crud_trait_for_interface};
+    helpers::contract::get_local_symbol,
+    implement_crud_trait_for_interface,
+};
 
 #[derive(Debug, Clone)]
 pub enum HistoricalDataCRUD {
@@ -41,12 +57,203 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for HistoricalDataFullKeys {
     }
 }
 
+impl HistoricalDataFullKeys {
+    pub fn get_time(&self) -> DateTime<Utc> {
+        match self {
+            Self::Stock(v) => v.time,
+            Self::Forex(v) => v.time,
+            Self::Options(v) => v.time,
+            Self::DailyStock(v) => v.time,
+        }
+    }
+
+    pub fn get_price(&self) -> f64 {
+        match self {
+            Self::Stock(v) => v.close,
+            Self::Forex(v) => v.ask_close.unwrap_or(v.bid_close.unwrap_or(-1.0)),
+            Self::Options(v) => v.close,
+            Self::DailyStock(v) => v.close.to_f64().expect("Expected conversion to f64"),
+        }
+    }
+
+    pub fn from_inter_repr(
+        contract: &Contract,
+        bid_data_wrapped: &HistoricalDataFullKeys,
+        ask_data_wrapped: &HistoricalDataFullKeys,
+    ) -> Self {
+        let bid_data = match bid_data_wrapped {
+            HistoricalDataFullKeys::Forex(v) => v,
+            _ => panic!("Tried to call from_inter_repr for non-FX contract"),
+        };
+        let ask_data = match ask_data_wrapped {
+            HistoricalDataFullKeys::Forex(v) => v,
+            _ => panic!("Tried to call from_inter_repr for non-FX contract"),
+        };
+        Self::Forex(HistoricalForexDataFullKeys {
+            pair: get_local_symbol(contract),
+            time: bid_data.time,
+            bid_open: bid_data.bid_open,
+            bid_high: bid_data.bid_high,
+            bid_low: bid_data.bid_low,
+            bid_close: bid_data.bid_close,
+            ask_open: ask_data.ask_open,
+            ask_high: ask_data.ask_high,
+            ask_low: ask_data.ask_low,
+            ask_close: ask_data.ask_close,
+        })
+    }
+
+    pub fn from_data(
+        contract: &Contract,
+        what_to_show: &WhatToShow,
+        time: DateTime<Utc>,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
+    ) -> Self {
+        match AssetType::from_str(&contract.security_type) {
+            AssetType::Stock | AssetType::CFD | AssetType::Future => {
+                HistoricalDataFullKeys::Stock(HistoricalStockDataFullKeys {
+                    stock: get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                    time,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: Decimal::from_f64(volume).expect(""),
+                })
+            }
+            AssetType::Option => HistoricalDataFullKeys::Options(HistoricalOptionsDataFullKeys {
+                stock: get_local_symbol(contract),
+                primary_exchange: contract.primary_exchange.to_string(),
+                currency: contract.currency.to_string(),
+                expiry: contract.last_trade_date_or_contract_month.clone(),
+                strike: contract.strike,
+                multiplier: contract.multiplier.clone(),
+                option_type: OptionType::from_str(&contract.right)
+                    .expect("Expected to be able to decode contract right to OptionType"),
+                time,
+                open,
+                high,
+                low,
+                close,
+                volume: Decimal::from_f64(volume).expect(""),
+            }),
+            AssetType::ForexPair => match what_to_show {
+                WhatToShow::Bid => Self::Forex(HistoricalForexDataFullKeys {
+                    pair: get_local_symbol(contract),
+                    time: time,
+                    bid_open: Some(open),
+                    bid_high: Some(high),
+                    bid_low: Some(low),
+                    bid_close: Some(close),
+                    ask_open: None,
+                    ask_high: None,
+                    ask_low: None,
+                    ask_close: None,
+                }),
+                WhatToShow::Ask => Self::Forex(HistoricalForexDataFullKeys {
+                    pair: get_local_symbol(contract),
+                    time: time,
+                    bid_open: None,
+                    bid_high: None,
+                    bid_low: None,
+                    bid_close: None,
+                    ask_open: Some(open),
+                    ask_high: Some(high),
+                    ask_low: Some(low),
+                    ask_close: Some(close),
+                }),
+                _ => panic!("Tried to construct Forex from trades/midpoint"),
+            },
+            AssetType::Unknown => {
+                panic!("Unknown asset type when trying to create from_data")
+            }
+            AssetType::CASH => {
+                panic!("Should not have been able to get AssetType CASH from contract sec_type")
+            }
+        }
+    }
+
+    pub fn from_contract_and_bar(
+        contract: &Contract,
+        what_to_show: &ibapi::market_data::historical::WhatToShow,
+        bar: ibapi::market_data::historical::Bar,
+    ) -> Self {
+        Self::from_data(
+            contract,
+            match what_to_show {
+                ibapi::market_data::historical::WhatToShow::Bid => {
+                    &ibapi::market_data::realtime::WhatToShow::Bid
+                }
+                ibapi::market_data::historical::WhatToShow::Ask => {
+                    &ibapi::market_data::realtime::WhatToShow::Ask
+                }
+                ibapi::market_data::historical::WhatToShow::Trades => {
+                    &ibapi::market_data::realtime::WhatToShow::Trades
+                }
+                _ => panic!("Tried to get WhatToShow that is currently unsupported"),
+            },
+            DateTime::from_timestamp(bar.date.unix_timestamp(), bar.date.nanosecond() as u32)
+                .expect("Expected to be able to convert bar time to DateTime<Utc>"),
+            bar.open,
+            bar.high,
+            bar.low,
+            bar.close,
+            bar.volume,
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HistoricalDataPrimaryKeys {
     Stock(HistoricalStockDataPrimaryKeys),
     DailyStock(DailyHistoricalStockDataPrimaryKeys),
     Options(HistoricalOptionsDataPrimaryKeys),
     Forex(HistoricalForexDataPrimaryKeys),
+}
+
+impl HistoricalDataPrimaryKeys {
+    pub fn from_contract(contract: &Contract, time: DateTime<Utc>) -> Self {
+        match AssetType::from_str(&contract.security_type) {
+            AssetType::CASH | AssetType::Stock | AssetType::CFD | AssetType::Future => {
+                HistoricalDataPrimaryKeys::Stock(HistoricalStockDataPrimaryKeys {
+                    stock: get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                    time: time,
+                })
+            }
+            AssetType::Option => {
+                HistoricalDataPrimaryKeys::Options(HistoricalOptionsDataPrimaryKeys {
+                    stock: get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+
+                    expiry: contract.last_trade_date_or_contract_month.clone(),
+                    strike: contract.strike,
+                    multiplier: contract.multiplier.clone(),
+                    option_type: OptionType::from_str(&contract.right)
+                        .expect("Expected option_type to be derivable from contract right"),
+
+                    time: time,
+                })
+            }
+            AssetType::ForexPair => {
+                HistoricalDataPrimaryKeys::Forex(HistoricalForexDataPrimaryKeys {
+                    pair: get_local_symbol(contract),
+                    time: time,
+                })
+            }
+            AssetType::Unknown => {
+                panic!("Tried to construct HistoricalDataPrimaryKeys for unknown asset type")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -57,12 +264,140 @@ pub enum HistoricalDataPrimaryKeysWoTime {
     Forex(HistoricalForexDataPrimaryKeysWoTime),
 }
 
+impl HistoricalDataPrimaryKeysWoTime {
+    pub fn from_contract(contract: &Contract) -> Self {
+        match AssetType::from_str(&contract.security_type) {
+            AssetType::CASH | AssetType::Stock | AssetType::CFD | AssetType::Future => {
+                Self::Stock(HistoricalStockDataPrimaryKeysWoTime {
+                    stock: get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                })
+            }
+            AssetType::Option => Self::Options(HistoricalOptionsDataPrimaryKeysWoTime {
+                stock: get_local_symbol(contract),
+                primary_exchange: contract.primary_exchange.to_string(),
+                currency: contract.currency.to_string(),
+
+                expiry: contract.last_trade_date_or_contract_month.clone(),
+                strike: contract.strike,
+                multiplier: contract.multiplier.clone(),
+                option_type: OptionType::from_str(&contract.right)
+                    .expect("Expected option_type to be derivable from contract right"),
+            }),
+            AssetType::ForexPair => Self::Forex(HistoricalForexDataPrimaryKeysWoTime {
+                pair: get_local_symbol(contract),
+            }),
+            AssetType::Unknown => {
+                panic!("Tried to construct HistoricalDataPrimaryKeys for unknown asset type")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HistoricalDataUpdateKeys {
     Stock(HistoricalStockDataUpdateKeys),
     DailyStock(DailyHistoricalStockDataUpdateKeys),
     Options(HistoricalOptionsDataUpdateKeys),
     Forex(HistoricalForexDataUpdateKeys),
+}
+
+impl HistoricalDataUpdateKeys {
+    pub fn from_bar(
+        contract: &Contract,
+        what_to_show: &WhatToShow,
+        bar: &HistoricalDataFullKeys,
+    ) -> Self {
+        // Step 1: Extract OHLCV fields by destructuring `bar`
+        let (open, high, low, close, volume) = match bar {
+            HistoricalDataFullKeys::Stock(s) => (s.open, s.high, s.low, s.close, Some(s.volume)),
+            HistoricalDataFullKeys::DailyStock(s) => (
+                s.open.to_f64().unwrap(),
+                s.high.to_f64().unwrap(),
+                s.low.to_f64().unwrap(),
+                s.close.to_f64().unwrap(),
+                Some(s.volume),
+            ),
+            HistoricalDataFullKeys::Options(o) => (o.open, o.high, o.low, o.close, Some(o.volume)),
+            HistoricalDataFullKeys::Forex(f) => {
+                // If Forex holds bid/ask fields internally, handle fallback values appropriately:
+                let open = f.bid_open.or(f.ask_open).unwrap_or_default();
+                let high = f.bid_high.or(f.ask_high).unwrap_or_default();
+                let low = f.bid_low.or(f.ask_low).unwrap_or_default();
+                let close = f.bid_close.or(f.ask_close).unwrap_or_default();
+                (open, high, low, close, None)
+            }
+        };
+
+        // Step 2: Construct the update keys based on asset type
+        match AssetType::from_str(&contract.security_type) {
+            AssetType::CASH | AssetType::Stock | AssetType::CFD | AssetType::Future => {
+                HistoricalDataUpdateKeys::Stock(HistoricalStockDataUpdateKeys {
+                    open: Some(open),
+                    high: Some(high),
+                    low: Some(low),
+                    close: Some(close),
+                    volume: volume,
+                })
+            }
+            AssetType::Option => {
+                HistoricalDataUpdateKeys::Options(HistoricalOptionsDataUpdateKeys {
+                    open: Some(open),
+                    high: Some(high),
+                    low: Some(low),
+                    close: Some(close),
+                    volume: volume,
+                })
+            }
+            AssetType::ForexPair => match what_to_show {
+                WhatToShow::Bid => HistoricalDataUpdateKeys::Forex(HistoricalForexDataUpdateKeys {
+                    bid_open: Some(open),
+                    bid_high: Some(high),
+                    bid_low: Some(low),
+                    bid_close: Some(close),
+                    ask_open: None,
+                    ask_high: None,
+                    ask_low: None,
+                    ask_close: None,
+                }),
+                WhatToShow::Ask => HistoricalDataUpdateKeys::Forex(HistoricalForexDataUpdateKeys {
+                    bid_open: None,
+                    bid_high: None,
+                    bid_low: None,
+                    bid_close: None,
+                    ask_open: Some(open),
+                    ask_high: Some(high),
+                    ask_low: Some(low),
+                    ask_close: Some(close),
+                }),
+                _ => panic!("Requested WhatToShow that is not Bid/Ask for Forex Contract"),
+            },
+            AssetType::Unknown => {
+                panic!("Tried to construct HistoricalDataPrimaryKeys for unknown asset type")
+            }
+        }
+    }
+
+    pub fn from_historical_bar(
+        contract: &Contract,
+        what_to_show: &ibapi::market_data::historical::WhatToShow,
+        bar: &HistoricalDataFullKeys,
+    ) -> Self {
+        let what_to_show = match what_to_show {
+            ibapi::market_data::historical::WhatToShow::Bid => {
+                &ibapi::market_data::realtime::WhatToShow::Bid
+            }
+            ibapi::market_data::historical::WhatToShow::Ask => {
+                &ibapi::market_data::realtime::WhatToShow::Ask
+            }
+            ibapi::market_data::historical::WhatToShow::Trades => {
+                &ibapi::market_data::realtime::WhatToShow::Trades
+            }
+            _ => panic!("Tried to get WhatToShow that is currently unsupported"),
+        };
+        Self::from_bar(contract, what_to_show, bar)
+    }
 }
 
 impl HistoricalDataCRUD {
@@ -75,31 +410,30 @@ impl HistoricalDataCRUD {
         }
     }
 
-    pub fn stock(pool:PgPool) -> Self {
+    pub fn stock(pool: PgPool) -> Self {
         Self::Stock(HistoricalStockDataCRUD::new(pool))
     }
 
-    pub fn daily_stock(pool:PgPool) -> Self {
+    pub fn daily_stock(pool: PgPool) -> Self {
         Self::DailyStock(DailyHistoricalStockDataCRUD::new(pool))
     }
 
-    pub fn option(pool:PgPool) -> Self {
+    pub fn option(pool: PgPool) -> Self {
         Self::Options(HistoricalOptionsDataCRUD::new(pool))
     }
 
-    pub fn forex(pool:PgPool) -> Self {
+    pub fn forex(pool: PgPool) -> Self {
         Self::Forex(HistoricalForexDataCRUD::new(pool))
     }
 
     pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
         match asset_type {
-            AssetType::Stock 
-            | AssetType::Future
-            | AssetType::CFD
-            | AssetType::CASH => Self::stock(pool),
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::CASH => {
+                Self::stock(pool)
+            }
             AssetType::ForexPair => Self::forex(pool),
             AssetType::Option => Self::option(pool),
-            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!")
+            AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
 }
@@ -169,10 +503,7 @@ pub trait NoiseOps {
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
     ) -> Result<f64, String>;
-    async fn get_daily_vol(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-    ) -> Result<f64, String>;
+    async fn get_daily_vol(&self, pk: HistoricalStockDataPrimaryKeysWoTime) -> Result<f64, String>;
 }
 
 pub trait TimescaleDbOps {
@@ -348,7 +679,15 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                       AND multiplier = $5
                       AND strike = $6
                       AND option_type = $7::option_type
-                    GROUP BY bucket, stock, primary_exchange, currency, expiry, multiplier, strike, option_type
+                    GROUP BY 
+                        bucket, 
+                        stock, 
+                        primary_exchange, 
+                        currency,
+                        expiry,
+                        multiplier,
+                        strike,
+                        option_type
                     ORDER BY bucket DESC
                     LIMIT $9;
                     "#,
@@ -442,7 +781,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                             high: Decimal::from_f64(row.high).unwrap(),
                             low: Decimal::from_f64(row.low).unwrap(),
                             close: Decimal::from_f64(row.close).unwrap(),
-                            volume: row.volume
+                            volume: row.volume,
                         });
                     full.push(bar);
                 }
@@ -495,8 +834,8 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 stock,
                 primary_exchange,
                 currency,
-            }) => {
-                sqlx::query_as(format!(
+            }) => sqlx::query_as(
+                format!(
                     r#"
                         SELECT
                             SUM({} * volume) / NULLIF(SUM(volume), 0) AS vwap
@@ -504,59 +843,67 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         WHERE stock = $1
                           AND primary_exchange = $2
                           AND currency = $3
-                          -- Convert now() to Eastern, truncate to the day, then cast back to timestamptz
+                          -- Convert now() to Eastern, truncate to the day, 
+                          -- then cast back to timestamptz
                           AND time >= (now() AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
-                ).as_str())
-                    .bind(stock)
-                    .bind(primary_exchange)
-                    .bind(currency)
-                    .fetch_optional(self.get_pg_pool())
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Error when fetching most recent bar from HistoricalData for in read_vwap: {e:?}",
-                        )
-                    })?
-            }
+                )
+                .as_str(),
+            )
+            .bind(stock)
+            .bind(primary_exchange)
+            .bind(currency)
+            .fetch_optional(self.get_pg_pool())
+            .await
+            .map_err(|e| {
+                format!(
+                    "Error when fetching most recent bar from HistoricalData \
+                            for in read_vwap: {e:?}",
+                )
+            })?,
 
-            HistoricalDataPrimaryKeysWoTime::Forex(HistoricalForexDataPrimaryKeysWoTime { pair }) => {
-                sqlx::query_as(format!(
+            HistoricalDataPrimaryKeysWoTime::Forex(HistoricalForexDataPrimaryKeysWoTime {
+                pair,
+            }) => sqlx::query_as(
+                format!(
                     r#"
                         SELECT
                             SUM({} * volume) / NULLIF(SUM(volume), 0) AS vwap
                         FROM market_data.historical_forex_data
                         WHERE pair = $1
-                          -- Convert now() to Eastern, truncate to the day, then cast back to timestamptz
+                          -- Convert now() to Eastern, truncate to the day, 
+                          -- then cast back to timestamptz
                           AND time >= (now() AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
-                ).as_str())
-                    .bind(pair)
-                    .fetch_optional(self.get_pg_pool())
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Error when fetching most recent bar from HistoricalData for in read_vwap: {e:?}",
-                        )
-                    })?
-            }
+                )
+                .as_str(),
+            )
+            .bind(pair)
+            .fetch_optional(self.get_pg_pool())
+            .await
+            .map_err(|e| {
+                format!(
+                    "Error when fetching most recent bar from HistoricalData \
+                            for in read_vwap: {e:?}",
+                )
+            })?,
 
             HistoricalDataPrimaryKeysWoTime::Options(HistoricalOptionsDataPrimaryKeysWoTime {
-                stock, 
-                primary_exchange, 
-                currency, 
-                expiry, 
-                strike, 
-                multiplier, 
-                option_type 
-            }) => {
-                sqlx::query_as(format!(
+                stock,
+                primary_exchange,
+                currency,
+                expiry,
+                strike,
+                multiplier,
+                option_type,
+            }) => sqlx::query_as(
+                format!(
                     r#"
                         SELECT
                             SUM({} * volume) / NULLIF(SUM(volume), 0) AS vwap
@@ -568,35 +915,40 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                             AND strike = $5
                             AND multiplier = $6
                             AND option_type = $7
-                          -- Convert now() to Eastern, truncate to the day, then cast back to timestamptz
+                          -- Convert now() to Eastern, truncate to the day, 
+                          -- then cast back to timestamptz
                           AND time >= (now() AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
-                ).as_str())
-                    .bind(stock)
-                    .bind(primary_exchange)
-                    .bind(currency)
-                    .bind(expiry)
-                    .bind(strike)
-                    .bind(multiplier)
-                    .bind(option_type)
-                    .fetch_optional(self.get_pg_pool())
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Error when fetching most recent bar from HistoricalData for in read_vwap: {e:?}",
-                        )
-                    })?
-            }
+                )
+                .as_str(),
+            )
+            .bind(stock)
+            .bind(primary_exchange)
+            .bind(currency)
+            .bind(expiry)
+            .bind(strike)
+            .bind(multiplier)
+            .bind(option_type)
+            .fetch_optional(self.get_pg_pool())
+            .await
+            .map_err(|e| {
+                format!(
+                    "Error when fetching most recent bar from HistoricalData\
+                            for in read_vwap: {e:?}",
+                )
+            })?,
 
             HistoricalDataPrimaryKeysWoTime::DailyStock(_) => {
                 return Err("Tried to get vwap price using daily stock data: currently only works for daily".to_string());
             }
         };
 
-        vwap_opt.ok_or_else(|| "Failed to get vwap value".to_string()).map(|v| v.vwap)
+        vwap_opt
+            .ok_or_else(|| "Failed to get vwap value".to_string())
+            .map(|v| v.vwap)
     }
 
     async fn has_at_least_n_rows_since(
@@ -668,7 +1020,10 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     r#"
                     SELECT COUNT(*) > $1 
                     FROM market_data.historical_forex_data
-                    WHERE pair = $2 AND bid_open IS NOT NULL AND ask_open IS NOT NULL AND time > $3;
+                    WHERE pair = $2
+                        AND bid_open IS NOT NULL
+                        AND ask_open IS NOT NULL
+                        AND time > $3;
                     "#,
                     (n - 1) as i32,
                     pair,
@@ -688,7 +1043,10 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     r#"
                     SELECT COUNT(*) > $1 
                     FROM market_data.daily_ohlcv
-                    WHERE stock = $2 AND primary_exchange = $3 AND currency = $4 AND day > $5;
+                    WHERE stock = $2
+                        AND primary_exchange = $3
+                        AND currency = $4
+                        AND day > $5;
             "#,
                     (n - 1) as i32,
                     stock,
@@ -705,13 +1063,13 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 "Expected sql query to return a boolean at least in has_at_least_n_rows_since",
             )),
             Err(e) => Err(format!(
-                "Error when fetching most recent rows from HistoricalData in has_at_least_n_rows_since: {}",
+                "Error when fetching most recent rows from HistoricalData \
+                in has_at_least_n_rows_since: {}",
                 e
             )),
         }
     }
-} 
-
+}
 
 impl NoiseOps for HistoricalDataCRUD {
     async fn get_avg_move_since_open(
@@ -758,7 +1116,10 @@ impl NoiseOps for HistoricalDataCRUD {
             SELECT
                 hm.close / o.open_at_0930 AS movement_since_open
             FROM historical_matches hm
-            JOIN opens o ON hm.stock = o.stock AND hm.primary_exchange = o.primary_exchange AND hm.trading_day = o.trading_day
+            JOIN 
+                opens o ON hm.stock = o.stock
+                AND hm.primary_exchange = o.primary_exchange
+                AND hm.trading_day = o.trading_day
             ORDER BY hm.time DESC;
             "#,
             pk.stock,
@@ -768,17 +1129,18 @@ impl NoiseOps for HistoricalDataCRUD {
         .fetch_all(self.get_pg_pool())
         .await
         {
-            Ok(moves_since_open) =>  {
-                let abs_move_since_open = moves_since_open.iter().map(|move_since_open| (
-                    move_since_open.expect(
-                        "Expected avg_move_since_open to return at least 1 entry"
-                    ) - 1.0).abs()
-                );
+            Ok(moves_since_open) => {
+                let abs_move_since_open = moves_since_open.iter().map(|move_since_open| {
+                    (move_since_open
+                        .expect("Expected avg_move_since_open to return at least 1 entry")
+                        - 1.0)
+                        .abs()
+                });
                 Ok(abs_move_since_open.sum::<f64>() / moves_since_open.len() as f64)
             }
-            ,
             Err(e) => Err(format!(
-                "Error when fetching most recent rows from HistoricalData in read_last_n_of_stock: {}",
+                "Error when fetching most recent rows from \
+                HistoricalData in read_last_n_of_stock: {}",
                 e
             )),
         }
@@ -786,20 +1148,23 @@ impl NoiseOps for HistoricalDataCRUD {
 
     async fn get_most_recent_daily_open(
         &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime
+        pk: HistoricalStockDataPrimaryKeysWoTime,
     ) -> Result<f64, String> {
         #[derive(FromRow)]
         struct DailyOpenClose {
             day: DateTime<Utc>,
             open: f64,
-            close: f64
+            close: f64,
         }
         let most_recent_daily_close = sqlx::query_as!(
             DailyOpenClose,
             r#"
             SELECT day as "day!", open as "open!", close as "close!"
             FROM market_data.daily_ohlcv
-            WHERE stock = $1 AND primary_exchange = $2 AND currency = $3 AND day < $4
+            WHERE stock = $1
+                AND primary_exchange = $2
+                AND currency = $3
+                AND day < $4
             ORDER BY day DESC
             LIMIT 1;
             "#,
@@ -850,11 +1215,14 @@ impl NoiseOps for HistoricalDataCRUD {
         .map_err(|e| format!("Error when getting most recent daily open of stock: {}", e))?;
 
         Ok(std::cmp::max::<OrderedFloat<f64>>(
-                OrderedFloat::from(most_recent_daily_close.close),
-                OrderedFloat::from(most_recent_daily_open_option),
+            OrderedFloat::from(most_recent_daily_close.close),
+            OrderedFloat::from(most_recent_daily_open_option),
         )
-            .to_f64()
-            .expect("Expected close and open of the daily opens/close to be valid in get_most_recent_daily_open"))
+        .to_f64()
+        .expect(
+            "Expected close and open of the daily opens/close \
+                to be valid in get_most_recent_daily_open",
+        ))
     }
 
     async fn get_daily_vol(&self, pk: HistoricalStockDataPrimaryKeysWoTime) -> Result<f64, String> {
@@ -888,7 +1256,7 @@ impl NoiseOps for HistoricalDataCRUD {
 }
 
 impl TimescaleDbOps for HistoricalDataCRUD {
-     async fn refresh_daily_data(&self) -> Result<(), String> {
+    async fn refresh_daily_data(&self) -> Result<(), String> {
         sqlx::query!(
             r#"
             CALL refresh_continuous_aggregate(
@@ -904,4 +1272,3 @@ impl TimescaleDbOps for HistoricalDataCRUD {
         Ok(())
     }
 }
-
