@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::Duration,
 };
 
@@ -9,7 +9,7 @@ use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Tz;
 use ibapi::{Client, prelude::Contract};
 
-use crate::helpers::{contract::HashContract, sync_timeout::timeout};
+use crate::helpers::sync_timeout::timeout;
 
 #[derive(Debug, Clone)]
 pub struct TradingHours {
@@ -24,75 +24,63 @@ pub struct Schedule {
 }
 
 pub trait ContractScheduler {
-    fn add_schedule(&self, contract: &Contract) -> Result<(), String>;
-    fn add_all_schedules<I>(&self, contracts: I) -> Result<(), String>
+    fn add_schedule(&mut self, contract: &Contract) -> Result<(), String>;
+    fn add_all_schedules<I>(&mut self, contracts: I) -> Result<(), String>
     where
         I: IntoIterator<Item = Contract>;
     fn get_schedule(
         &self,
-        contract: &HashContract,
+        contract: &Contract,
         dt: &DateTime<Utc>,
     ) -> Result<(Tz, Option<TradingHours>), String>;
-    fn is_trading(&self, contract: &HashContract, dt: &DateTime<Utc>) -> Result<bool, String>;
+    fn is_trading(&self, contract: &Contract, dt: &DateTime<Utc>) -> Result<bool, String>;
 
     fn get_next_latest_unavailable_data(
         &self,
-        contracts: &[HashContract],
+        contracts: &[Contract],
         dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String>;
     fn get_next_earliest_available_data(
         &self,
-        contracts: &[HashContract],
+        contracts: &[Contract],
         dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String>;
 }
 
+#[derive(Debug, Clone)]
 pub struct IbkrContractScheduler {
     client: Arc<Client>,
-    schedules: Arc<RwLock<HashMap<HashContract, Schedule>>>,
+    // Contract id -> Schedule
+    schedules: Arc<HashMap<i32, Schedule>>,
 }
 
 impl IbkrContractScheduler {
     pub fn new(client: Arc<Client>) -> Self {
         Self {
             client,
-            schedules: Arc::new(RwLock::new(HashMap::new())),
+            schedules: Arc::new(HashMap::new()),
         }
     }
-}
 
-impl IbkrContractScheduler {
-    pub fn contains_contract(&self, contract: &HashContract) -> bool {
-        self.schedules
-            .read()
-            .expect("Expected schedules lock not to be poisoned")
-            .contains_key(&contract)
+    pub fn contains_contract(&self, contract: &Contract) -> bool {
+        self.schedules.contains_key(&contract.contract_id)
     }
 }
 
 /// must set option in global config api settings to return 1 month of trading hours
 /// option: 'Expose whole trading schedule to api ...'
 impl ContractScheduler for IbkrContractScheduler {
-    fn add_schedule(&self, contract: &Contract) -> Result<(), String> {
-        let hashed_contract = HashContract {
-            contract: contract.clone(),
-        };
+    fn add_schedule(&mut self, contract: &Contract) -> Result<(), String> {
         // =====================
         // skip if alr have data
         // =====================
-        {
-            if self
-                .schedules
-                .read()
-                .expect("Expected schedules lock not to be poisoned")
-                .contains_key(&hashed_contract)
-            {
-                return Ok(());
-            }
+        if self.schedules.contains_key(&contract.contract_id) {
+            return Ok(());
         }
 
         let client = self.client.clone();
         let cloned_contract = contract.clone();
+        let mut schedules = HashMap::new();
         match timeout(Duration::from_secs(1), move || {
             client.contract_details(&cloned_contract)
         }) {
@@ -214,25 +202,23 @@ impl ContractScheduler for IbkrContractScheduler {
                     schedule.insert(day, None);
                 }
 
-                {
-                    self.schedules
-                        .write()
-                        .expect("Expected write lock for schedules not to be poisoned")
-                        .insert(
-                            hashed_contract,
-                            Schedule {
-                                time_zone: tz,
-                                schedule,
-                            },
-                        );
-                }
+                schedules.insert(
+                    contract.contract_id,
+                    Schedule {
+                        time_zone: tz,
+                        schedule,
+                    },
+                );
+                schedules.extend((*self.schedules).clone());
+                self.schedules = Arc::new(schedules);
+
                 Ok(())
             }
             Err(_) => return Err("Request for contract details to IBKR timed out!".to_string()),
         }
     }
 
-    fn add_all_schedules<I>(&self, contracts: I) -> Result<(), String>
+    fn add_all_schedules<I>(&mut self, contracts: I) -> Result<(), String>
     where
         I: IntoIterator<Item = Contract>,
     {
@@ -250,25 +236,16 @@ impl ContractScheduler for IbkrContractScheduler {
 
     fn get_schedule(
         &self,
-        contract: &HashContract,
+        contract: &Contract,
         dt: &DateTime<Utc>,
     ) -> Result<(Tz, Option<TradingHours>), String> {
-        if !self
-            .schedules
-            .read()
-            .expect("Expected read lock for schedules not to be poisoned")
-            .contains_key(contract)
-        {
+        if !self.schedules.contains_key(&contract.contract_id) {
             return Err(format!(
                 "Schedule in Scheduler doesn't contain key for contract: {contract:?}"
             ));
         }
 
-        let schedules = self
-            .schedules
-            .read()
-            .expect("Expected read lock for schedules not to be poisoned");
-        let schedule = schedules.get(&contract).unwrap();
+        let schedule = self.schedules.get(&contract.contract_id).unwrap();
         let date_tdy = dt.with_timezone(&schedule.time_zone).date_naive();
         match schedule.schedule.get(&date_tdy) {
             Some(trading_hours) => Ok((schedule.time_zone, trading_hours.clone())),
@@ -276,7 +253,7 @@ impl ContractScheduler for IbkrContractScheduler {
         }
     }
 
-    fn is_trading(&self, contract: &HashContract, dt: &DateTime<Utc>) -> Result<bool, String> {
+    fn is_trading(&self, contract: &Contract, dt: &DateTime<Utc>) -> Result<bool, String> {
         let potential_res = match self.get_schedule(contract, &(*dt - TimeDelta::days(1))) {
             Ok(trading_hours_opt_w_tz) => {
                 let (tz, trading_hours_opt) = trading_hours_opt_w_tz;
@@ -312,18 +289,14 @@ impl ContractScheduler for IbkrContractScheduler {
 
     fn get_next_latest_unavailable_data(
         &self,
-        contracts: &[HashContract],
+        contracts: &[Contract],
         dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String> {
         // 1. Collect all intervals in UTC
         let mut intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = {
-            let schedules = self
-                .schedules
-                .read()
-                .expect("Expected read lock of schedules not to be poisoned");
             contracts
                 .iter()
-                .filter_map(|contract| schedules.get(contract))
+                .filter_map(|contract| self.schedules.get(&contract.contract_id))
                 .flat_map(|schedule| {
                     schedule.schedule.iter().filter_map(|(_, session)| {
                         let session = session.as_ref()?;
@@ -363,19 +336,16 @@ impl ContractScheduler for IbkrContractScheduler {
 
     fn get_next_earliest_available_data(
         &self,
-        contracts: &[HashContract],
+        contracts: &[Contract],
         dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String> {
         let earliest_dt = {
-            let schedules = self
-                .schedules
-                .read()
-                .expect("Expected read lock for schedules not to be poisoned");
             contracts
                 .iter()
                 .filter_map(|contract| {
-                    let schedule = schedules
-                        .get(contract)
+                    let schedule = self
+                        .schedules
+                        .get(&contract.contract_id)
                         .ok_or_else(|| format!("Couldn't find contract in schedules: {contract:?}"))
                         .ok()?;
 
