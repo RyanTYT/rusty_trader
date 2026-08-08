@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::{execution::order_update_stream, strategy::strategy::StrategyEnum};
 
-static mut ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
+static ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
 enum StatusOfOrderStatus {
@@ -66,24 +66,20 @@ impl OrderUpdateStreamController {
     ) -> Option<Self> {
         // https://ibridgepy.com/ib-api-knowledge-base/#step1-1-17
         // openOrder( ) is triggered twice automatically. When the order is initially accepted and when the order is fully executed. When the order is initially accepted, you would get an openOrder( ) and orderStatus( ) call back. Then if there are partial fills or any other status changes you would receive additional orderStatus( ) call back. Then if you receive additional orderStatus( ) call back, when the order fully executes you would get a final orderStatus( ) followed by an openOrder( ) and then receive the execDetails( ) and commissionReport( ). If you invoke reqOpenOrders( ), it will only relay the last orderStatus( ) of any current working order.
-        let is_init =
-            unsafe { ORDER_UPDATE_STREAM_NO.load(std::sync::atomic::Ordering::Acquire) > 0 };
+        let is_init = ORDER_UPDATE_STREAM_NO.load(std::sync::atomic::Ordering::Acquire) > 0;
         if is_init {
             tracing::error!("Not allowed to create more than one instance of OrderUpdateStream");
             return None;
         }
-        unsafe {
-            if let Err(_) = ORDER_UPDATE_STREAM_NO.compare_exchange(
-                0,
-                1,
-                std::sync::atomic::Ordering::Release,
-                std::sync::atomic::Ordering::Relaxed,
-            ) {
-                tracing::error!(
-                    "Not allowed to create more than one instance of OrderUpdateStream"
-                );
-                return None;
-            }
+
+        if let Err(_) = ORDER_UPDATE_STREAM_NO.compare_exchange(
+            0,
+            1,
+            std::sync::atomic::Ordering::Release,
+            std::sync::atomic::Ordering::Relaxed,
+        ) {
+            tracing::error!("Not allowed to create more than one instance of OrderUpdateStream");
+            return None;
         }
 
         let (sender, mut rx) = tokio::sync::mpsc::channel::<OrderUpdate>(1024);

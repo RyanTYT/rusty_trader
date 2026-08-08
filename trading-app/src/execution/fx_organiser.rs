@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use ibapi::orders::order_builder::market_order;
+use ibapi::{contracts::Contract, orders::order_builder::market_order};
 
 use crate::{
     execution::order_engine::{OrderEngine, OrderIBKR},
-    helpers::contract::{HashContract, get_contract_from_local_symbol},
+    helpers::contract::HashContract,
 };
 
 pub struct FxAttachments {
@@ -51,9 +51,15 @@ impl OrderEngine {
                 }
 
                 let sell_currency = &sell_contract.contract.currency.0;
-                let fx_symbol = format!("FX:{}/{}", sell_currency, buy_currency);
+                // let fx_symbol = format!("FX:{}/{}", sell_currency, buy_currency);
                 let fx_contract = HashContract {
-                    contract: get_contract_from_local_symbol(&fx_symbol, "", buy_currency),
+                    contract: Contract {
+                        symbol: ibapi::contracts::Symbol::new(sell_currency),
+                        security_type: ibapi::prelude::SecurityType::ForexPair,
+                        exchange: "IDEALPRO".into(),
+                        currency: ibapi::prelude::Currency(buy_currency.clone()),
+                        ..Default::default()
+                    },
                 };
 
                 let consumed = proceeds.min(remaining_shortfall);

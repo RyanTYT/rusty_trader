@@ -1,8 +1,17 @@
+use ibapi::prelude::{Contract, ContractMonth, SecurityType, Symbol};
 use std::hash::Hash;
 
-use ibapi::prelude::{Contract, ContractMonth, SecurityType, Symbol};
-
-use crate::database::models::AssetType;
+use crate::database::{
+    models::{AssetType, CurrentOptionPositionsFullKeys, CurrentStockPositionsFullKeys},
+    models_crud::{
+        current_positions::current_positions::CurrentPositionsFullKeys,
+        target_positions::{
+            target_option_positions::TargetOptionPositionsQtyDiff,
+            target_positions::TargetPositionsQtyDiff,
+            target_stock_positions::TargetStockPositionsQtyDiff,
+        },
+    },
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HashContract {
@@ -47,21 +56,19 @@ pub(crate) fn get_local_symbol(contract: &Contract) -> String {
     }
 }
 
-/// Function to get contract from symbol - but NOT for option contracts!
-pub(crate) fn get_contract_from_local_symbol(
-    symbol: &str,
-    primary_exchange: &str,
-    currency: &str,
-) -> Contract {
-    if currency == "" {
-        tracing::warn!(
-            "Currency field is empty for some reason: {symbol:?} ({primary_exchange:?}, {currency:?})"
-        )
-    }
+pub enum LocalContractTypes {
+    TargetPosQtyDiff(TargetPositionsQtyDiff),
+    CurrentPosFk(CurrentPositionsFullKeys),
+}
 
-    let prior = symbol.split(":").next();
+fn build_contract_from_stock(
+    stock: &String,
+    primary_exchange: &String,
+    currency: &String,
+) -> Contract {
+    let prior = stock.split(":").next();
     if prior == Some("CFD") {
-        let symbol = symbol.strip_prefix("CFD:").unwrap();
+        let symbol = stock.strip_prefix("CFD:").unwrap();
         Contract {
             symbol: symbol.into(),
             security_type: SecurityType::CFD,
@@ -70,7 +77,7 @@ pub(crate) fn get_contract_from_local_symbol(
             ..Default::default()
         }
     } else if prior == Some("FX") {
-        let mut currencies = symbol.strip_prefix("FX:").unwrap().split("/");
+        let mut currencies = stock.strip_prefix("FX:").unwrap().split("/");
         // Contract::forex(currencies.next().unwrap(), currencies.next().unwrap()).build()
         Contract {
             symbol: Symbol::new(currencies.next().unwrap()),
@@ -80,24 +87,76 @@ pub(crate) fn get_contract_from_local_symbol(
             ..Default::default()
         }
     } else if prior == Some("FUT") {
-        Contract::futures(symbol.strip_prefix("FUT:").unwrap())
+        Contract::futures(stock.strip_prefix("FUT:").unwrap())
             .in_currency(currency)
             .on_exchange("SMART")
             .expires_in(ContractMonth::next_quarter())
             .build()
     } else if prior == Some("CASH") {
         Contract {
-            symbol: Symbol::new(symbol.strip_prefix("CASH:").unwrap()),
+            symbol: Symbol::new(stock.strip_prefix("CASH:").unwrap()),
             security_type: ibapi::prelude::SecurityType::ForexPair,
             exchange: "IDEALPRO".into(),
             currency: "SGD".into(),
             ..Default::default()
         }
     } else {
-        Contract::stock(symbol.to_string())
+        Contract::stock(stock.to_string())
             .primary(primary_exchange)
             .on_exchange("SMART")
             .in_currency(currency)
             .build()
+    }
+}
+
+/// Function to get contract from symbol - but NOT for option contracts!
+pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
+    match pos_diff {
+        LocalContractTypes::TargetPosQtyDiff(v) => match v {
+            TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+                primary_exchange,
+                currency,
+                stock,
+                ..
+            }) => build_contract_from_stock(stock, primary_exchange, currency),
+            TargetPositionsQtyDiff::Options(TargetOptionPositionsQtyDiff {
+                stock,
+                expiry,
+                strike,
+                option_type,
+                ..
+            }) => Contract::option(
+                &stock,
+                &expiry,
+                *strike,
+                match option_type {
+                    crate::database::models::OptionType::Put => "P",
+                    crate::database::models::OptionType::Call => "C",
+                },
+            ),
+        },
+        LocalContractTypes::CurrentPosFk(v) => match v {
+            CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
+                stock,
+                primary_exchange,
+                currency,
+                ..
+            }) => build_contract_from_stock(stock, primary_exchange, currency),
+            CurrentPositionsFullKeys::Options(CurrentOptionPositionsFullKeys {
+                stock,
+                expiry,
+                strike,
+                option_type,
+                ..
+            }) => Contract::option(
+                &stock,
+                &expiry,
+                *strike,
+                match option_type {
+                    crate::database::models::OptionType::Put => "P",
+                    crate::database::models::OptionType::Call => "C",
+                },
+            ),
+        },
     }
 }

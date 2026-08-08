@@ -47,7 +47,7 @@ use crate::{
         },
     },
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxAttachments},
-    helpers::contract::{HashContract, get_contract_from_local_symbol},
+    helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
     strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor},
 };
@@ -58,6 +58,7 @@ use crate::{
 //     // pub(super) account: String,
 // }
 
+#[derive(Debug, Clone)]
 pub struct OrderEngine {
     pool: PgPool,
     tokio_handle: tokio::runtime::Handle,
@@ -213,33 +214,27 @@ impl OrderEngine {
                             .get_target_pos_diff_by_strat(&strategy.get_name())
                             .await
                     }) {
-                        Ok(v) => v
-                            .into_iter()
-                            .map(|target_pos| match target_pos {
-                                TargetPositionsQtyDiff::Stock(stock_pos) => stock_pos,
-                                _ => panic!("Expected Stock variant"),
-                            })
-                            .collect::<Vec<TargetStockPositionsQtyDiff>>(),
+                        Ok(v) => v,
                         Err(e) => {
                             tracing::error!("target_qty_diff error: {}", e);
                             continue;
                         }
                     };
-                    tracing::info!(
-                        message = %format!("Detected pos_diffs: \n{}",
-                            &target_pos_diffs
-                                .iter()
-                                .map(|pos_diff| format!(
-                                    "    {}, {}, {} ({})",
-                                    pos_diff.strategy,
-                                    pos_diff.stock,
-                                    pos_diff.primary_exchange,
-                                    pos_diff.qty_diff
-                                ))
-                                .collect::<Vec<String>>()
-                                .join(",\n")
-                        )
-                    );
+                    // tracing::info!(
+                    //     message = %format!("Detected pos_diffs: \n{}",
+                    //         &target_pos_diffs
+                    //             .iter()
+                    //             .map(|pos_diff| format!(
+                    //                 "    {}, {}, {} ({})",
+                    //                 pos_diff.strategy,
+                    //                 pos_diff.stock,
+                    //                 pos_diff.primary_exchange,
+                    //                 pos_diff.qty_diff
+                    //             ))
+                    //             .collect::<Vec<String>>()
+                    //             .join(",\n")
+                    //     )
+                    // );
                     let mut fx_attachments = if !strategy.is_fx_strategy() {
                         tracing::info!("Strat is not FX Strat");
                         let mut funds = HashMap::new();
@@ -248,18 +243,27 @@ impl OrderEngine {
 
                         let mut pos_to_open = Vec::new();
                         for pos_diff in target_pos_diffs.clone() {
-                            if let Some(quote) = pos_diff.stock.strip_prefix("CASH:") {
-                                funds.insert(quote.to_string(), -pos_diff.qty_diff);
-                                continue;
-                            }
-                            if pos_diff.current_qty != 0.0
-                                && pos_diff.qty_diff.signum() != pos_diff.current_qty.signum()
+                            if let TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+                                ref stock,
+                                qty_diff,
+                                ..
+                            }) = pos_diff
                             {
+                                if let Some(quote) = stock.strip_prefix("CASH:") {
+                                    funds.insert(quote.to_string(), -qty_diff);
+                                    continue;
+                                }
+                            }
+                            let (current_qty, qty_diff) = match pos_diff {
+                                TargetPositionsQtyDiff::Stock(ref v) => (v.current_qty, v.qty_diff),
+                                TargetPositionsQtyDiff::Options(ref v) => {
+                                    (v.current_qty, v.qty_diff)
+                                }
+                            };
+                            if current_qty != 0.0 && qty_diff.signum() != current_qty.signum() {
                                 let hash_contract = HashContract {
-                                    contract: get_contract_from_local_symbol(
-                                        &pos_diff.stock,
-                                        &pos_diff.primary_exchange,
-                                        &pos_diff.currency,
+                                    contract: get_contract_from(
+                                        &LocalContractTypes::TargetPosQtyDiff(pos_diff),
                                     ),
                                 };
                                 if !funds_from_selling.contains_key(&hash_contract) {
@@ -267,7 +271,7 @@ impl OrderEngine {
                                 };
                                 let funds_from_selling_currency =
                                     funds_from_selling.get_mut(&hash_contract).unwrap();
-                                funds_from_selling_currency.push(pos_diff.qty_diff.abs());
+                                funds_from_selling_currency.push(qty_diff.abs());
                             } else {
                                 pos_to_open.push(pos_diff);
                             }
@@ -286,10 +290,17 @@ impl OrderEngine {
                                 upgraded_consolidator_opt.unwrap()
                             };
                             for pos_diff in pos_to_open {
-                                let contract = get_contract_from_local_symbol(
-                                    &pos_diff.stock,
-                                    &pos_diff.primary_exchange,
-                                    &pos_diff.currency,
+                                let (qty_diff, currency) = match &pos_diff {
+                                    TargetPositionsQtyDiff::Stock(v) => {
+                                        (v.qty_diff, v.currency.clone())
+                                    }
+                                    TargetPositionsQtyDiff::Options(v) => {
+                                        (v.qty_diff, v.currency.clone())
+                                    }
+                                };
+
+                                let contract = get_contract_from(
+                                    &LocalContractTypes::TargetPosQtyDiff(pos_diff),
                                 );
                                 let hash_contract = HashContract {
                                     contract: contract.clone(),
@@ -297,7 +308,7 @@ impl OrderEngine {
 
                                 let symbol = contract.symbol.clone();
                                 tracing::info!("Fetching price for {}", symbol);
-                                let required_currency = pos_diff.qty_diff
+                                let required_currency = qty_diff
                                         * strong_consolidator.get_current_price(
                                             contract,
                                             false,
@@ -308,10 +319,10 @@ impl OrderEngine {
                                         });
                                 tracing::info!("Fetched price for {}", symbol);
 
-                                let available_funds = funds.get(&pos_diff.currency).unwrap_or(&0.0);
+                                let available_funds = funds.get(&currency).unwrap_or(&0.0);
                                 if available_funds >= &required_currency {
                                     funds.insert(
-                                        pos_diff.currency.clone(),
+                                        currency.clone(),
                                         available_funds - required_currency,
                                     );
                                     continue;
@@ -319,7 +330,7 @@ impl OrderEngine {
 
                                 insufficient_funds
                                     .insert(hash_contract, required_currency - available_funds);
-                                funds.insert(pos_diff.currency.clone(), 0.0);
+                                funds.insert(currency.clone(), 0.0);
                             }
                         }
 
@@ -339,16 +350,21 @@ impl OrderEngine {
                         }
                     };
 
-                    target_pos_diffs.iter().for_each(|pos_diff| {
-                        if pos_diff.stock.split(":").next() == Some("CASH") {
+                    target_pos_diffs.into_iter().for_each(|pos_diff| {
+                        let (stock, qty_diff, avg_price) = match &pos_diff {
+                            TargetPositionsQtyDiff::Stock(v) => {
+                                (v.stock.clone(), v.qty_diff, v.avg_price)
+                            }
+                            TargetPositionsQtyDiff::Options(v) => {
+                                (v.stock.clone(), v.qty_diff, v.avg_price)
+                            }
+                        };
+                        if stock.split(":").next() == Some("CASH") {
                             return;
                         }
 
-                        let contract = get_contract_from_local_symbol(
-                            &pos_diff.stock,
-                            &pos_diff.primary_exchange,
-                            &pos_diff.currency,
-                        );
+                        let contract =
+                            get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff));
                         let hash_contract = HashContract {
                             contract: contract.clone(),
                         };
@@ -362,24 +378,24 @@ impl OrderEngine {
                         //   - If it's an FX contract with buys:   attach the buy contract(s)
                         //   - Otherwise:                           no attachment
                         let mut orders = VecDeque::new();
-                        let mut order = if pos_diff.avg_price == 0.0 {
+                        let mut order = if avg_price == 0.0 {
                             market_order(
-                                if pos_diff.qty_diff > 0.0 {
+                                if qty_diff > 0.0 {
                                     ibapi::orders::Action::Buy
                                 } else {
                                     ibapi::orders::Action::Sell
                                 },
-                                pos_diff.qty_diff,
+                                qty_diff,
                             )
                         } else {
                             limit_order(
-                                if pos_diff.qty_diff > 0.0 {
+                                if qty_diff > 0.0 {
                                     ibapi::orders::Action::Buy
                                 } else {
                                     ibapi::orders::Action::Sell
                                 },
-                                pos_diff.qty_diff,
-                                pos_diff.avg_price,
+                                qty_diff,
+                                avg_price,
                             )
                         };
                         order.order_ref = strat;

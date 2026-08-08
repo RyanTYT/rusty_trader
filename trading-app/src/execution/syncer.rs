@@ -29,7 +29,7 @@ use crate::{
         },
     },
     execution::order_update_stream,
-    helpers::contract::{HashContract, get_contract_from_local_symbol, get_local_symbol},
+    helpers::contract::{HashContract, LocalContractTypes, get_contract_from, get_local_symbol},
     init_app::StrategyParameters,
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
     strategy::strategy::{StrategyEnum, StrategyExecutor},
@@ -100,13 +100,13 @@ pub trait SyncOps {
     fn sync_open_orders(
         &self,
         client: &Client,
-        consolidator: &Consolidator,
+        consolidator: &Arc<Consolidator>,
         default_strategy: Option<String>,
     );
     async fn sync_positions(
         &self,
         client: &Client,
-        consolidator: &Consolidator,
+        consolidator: &Arc<Consolidator>,
         default_strategy: Option<String>,
     );
 }
@@ -178,7 +178,7 @@ impl SyncOps for SyncerEngine {
     fn sync_open_orders(
         &self,
         client: &Client,
-        consolidator: &Consolidator,
+        consolidator: &Arc<Consolidator>,
         default_strategy: Option<String>,
     ) {
         // open_orders: for syncing between OrderData && OrderStatus
@@ -282,7 +282,7 @@ impl SyncOps for SyncerEngine {
     async fn sync_positions(
         &self,
         client: &Client,
-        consolidator: &Consolidator,
+        consolidator: &Arc<Consolidator>,
         default_strategy: Option<String>,
     ) {
         let current_stock_positions_crud =
@@ -301,24 +301,21 @@ impl SyncOps for SyncerEngine {
             Ok(current_stock_positions) => {
                 tracing::info!("Received local stock positions, inserting into stock_map now");
                 for position in current_stock_positions {
-                    let (stock, primary_exchange, currency, quantity, avg_price) = match position {
+                    let (currency, quantity, avg_price) = match position {
                         CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
-                            stock,
-                            primary_exchange,
+                            // stock,
+                            // primary_exchange,
                             currency,
                             quantity,
                             avg_price,
                             ..
-                        }) => (stock, primary_exchange, currency, quantity, avg_price),
+                        }) => (currency.clone(), quantity, avg_price),
                         _ => {
                             return;
                         }
                     };
-                    let built_contract = get_contract_from_local_symbol(
-                        stock.as_str(),
-                        primary_exchange.as_str(),
-                        currency.as_str(),
-                    );
+                    let built_contract =
+                        get_contract_from(&LocalContractTypes::CurrentPosFk(position.clone()));
                     if built_contract.security_type == SecurityType::ForexPair {
                         let currency = currency.to_string();
                         let currency_val = quantity * avg_price;
@@ -507,11 +504,13 @@ async fn sync_fx_positions(
                     } else {
                         consolidator
                             .get_current_price(
-                                get_contract_from_local_symbol(
-                                    &format!("FX:{}/SGD", currency),
-                                    "",
-                                    "SGD",
-                                ),
+                                Contract {
+                                    symbol: currency.into(),
+                                    security_type: ibapi::prelude::SecurityType::ForexPair,
+                                    exchange: "IDEALPRO".into(),
+                                    currency: "SGD".into(),
+                                    ..Default::default()
+                                },
                                 false,
                                 &[],
                             )
@@ -558,8 +557,8 @@ async fn sync_stock_and_option_positions(
         match position_response {
             PositionUpdateMulti::Position(position) => {
                 let contract = {
-                    let validated_contract =
-                        consolidator.validate_contract(&position.contract, Duration::from_secs(1));
+                    let validated_contract = consolidator
+                        .validate_contract(position.contract.clone(), Duration::from_secs(1));
                     validated_contract.unwrap_or(position.contract)
                 };
                 let asset_type = AssetType::from_str(&contract.security_type);
@@ -731,7 +730,7 @@ fn on_full_open_order_received(
     //    call - but low on priority list since this is performed before mkt open - non-critical
     //    path
     let contract = consolidator
-        .validate_contract(unvalidated_contract, Duration::from_secs(1))
+        .validate_contract(unvalidated_contract.clone(), Duration::from_secs(1))
         .unwrap_or(unvalidated_contract.clone());
 
     // 3. Begin a detached thread to update the DB accordingly
