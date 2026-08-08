@@ -2,12 +2,12 @@ use sqlx::PgPool;
 
 use crate::{
     database::{
-        crud::{CRUD, CRUDTrait},
+        crud::CRUD,
         models::{
             StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys,
         },
     },
-    delegate_all_crud_methods,
+    implement_all_crud_methods,
 };
 
 pub fn get_stock_transactions_crud(
@@ -33,16 +33,13 @@ pub struct StockTransactionsUnderlyingPrimaryKeys {
     pub currency: String,
 }
 
-impl CRUDTrait<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>
-    for StockTransactionsCRUD
-{
-    delegate_all_crud_methods!(
-        crud,
-        StockTransactionsFullKeys,
-        StockTransactionsPrimaryKeys,
-        StockTransactionsUpdateKeys
-    );
-}
+implement_all_crud_methods!(
+    crud,
+    StockTransactionsFullKeys,
+    StockTransactionsPrimaryKeys,
+    StockTransactionsUpdateKeys,
+    StockTransactionsCRUD
+);
 
 impl StockTransactionsCRUD {
     pub(super) fn new(pool: PgPool) -> Self {

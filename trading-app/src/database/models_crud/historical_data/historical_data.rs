@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
@@ -468,6 +469,7 @@ impl VwapBarValue {
     }
 }
 
+#[async_trait]
 pub trait HistoricalDataOps {
     async fn read_last_n(
         &self,
@@ -494,6 +496,7 @@ pub trait HistoricalDataOps {
     ) -> Result<bool, String>;
 }
 
+#[async_trait]
 pub trait NoiseOps {
     async fn get_avg_move_since_open(
         &self,
@@ -506,6 +509,7 @@ pub trait NoiseOps {
     async fn get_daily_vol(&self, pk: HistoricalStockDataPrimaryKeysWoTime) -> Result<f64, String>;
 }
 
+#[async_trait::async_trait]
 pub trait TimescaleDbOps {
     async fn refresh_daily_data(&self) -> Result<(), String>;
 }
@@ -516,6 +520,7 @@ pub struct AggregatedBars {
     pub incomplete: Vec<HistoricalDataFullKeys>,
 }
 
+#[async_trait]
 impl HistoricalDataOps for HistoricalDataCRUD {
     async fn read_last_n(
         &self,
@@ -1069,6 +1074,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
     }
 }
 
+#[async_trait]
 impl NoiseOps for HistoricalDataCRUD {
     async fn get_avg_move_since_open(
         &self,
@@ -1253,6 +1259,7 @@ impl NoiseOps for HistoricalDataCRUD {
     }
 }
 
+#[async_trait::async_trait]
 impl TimescaleDbOps for HistoricalDataCRUD {
     async fn refresh_daily_data(&self) -> Result<(), String> {
         sqlx::query!(

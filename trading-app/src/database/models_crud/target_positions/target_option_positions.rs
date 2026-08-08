@@ -2,13 +2,13 @@ use sqlx::PgPool;
 
 use crate::{
     database::{
-        crud::{CRUD, CRUDTrait},
+        crud::CRUD,
         models::{
             OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
             TargetOptionPositionsUpdateKeys,
         },
     },
-    delegate_all_crud_methods,
+    implement_all_crud_methods,
 };
 
 #[derive(Debug, Clone)]
@@ -35,20 +35,13 @@ pub struct TargetOptionPositionsQtyDiff {
     pub current_qty: f64,
 }
 
-impl
-    CRUDTrait<
-        TargetOptionPositionsFullKeys,
-        TargetOptionPositionsPrimaryKeys,
-        TargetOptionPositionsUpdateKeys,
-    > for TargetOptionPositionsCRUD
-{
-    delegate_all_crud_methods!(
-        crud,
-        TargetOptionPositionsFullKeys,
-        TargetOptionPositionsPrimaryKeys,
-        TargetOptionPositionsUpdateKeys
-    );
-}
+implement_all_crud_methods!(
+    crud,
+    TargetOptionPositionsFullKeys,
+    TargetOptionPositionsPrimaryKeys,
+    TargetOptionPositionsUpdateKeys,
+    TargetOptionPositionsCRUD
+);
 
 impl TargetOptionPositionsCRUD {
     pub(super) fn new(pool: PgPool) -> Self {

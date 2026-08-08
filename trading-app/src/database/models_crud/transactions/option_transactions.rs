@@ -2,13 +2,13 @@ use sqlx::PgPool;
 
 use crate::{
     database::{
-        crud::{CRUD, CRUDTrait},
+        crud::CRUD,
         models::{
             OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys,
             OptionTransactionsUpdateKeys, OptionType,
         },
     },
-    delegate_all_crud_methods,
+    implement_all_crud_methods,
 };
 
 #[derive(Debug, Clone)]
@@ -31,20 +31,13 @@ pub struct OptionTransactionsUnderlyingPrimaryKeys {
     pub option_type: OptionType,
 }
 
-impl
-    CRUDTrait<
-        OptionTransactionsFullKeys,
-        OptionTransactionsPrimaryKeys,
-        OptionTransactionsUpdateKeys,
-    > for OptionTransactionsCRUD
-{
-    delegate_all_crud_methods!(
-        crud,
-        OptionTransactionsFullKeys,
-        OptionTransactionsPrimaryKeys,
-        OptionTransactionsUpdateKeys
-    );
-}
+implement_all_crud_methods!(
+    crud,
+    OptionTransactionsFullKeys,
+    OptionTransactionsPrimaryKeys,
+    OptionTransactionsUpdateKeys,
+    OptionTransactionsCRUD
+);
 
 impl OptionTransactionsCRUD {
     pub(super) fn new(pool: PgPool) -> Self {

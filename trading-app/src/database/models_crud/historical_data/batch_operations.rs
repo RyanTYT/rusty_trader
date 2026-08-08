@@ -317,7 +317,7 @@ where
 {
     sender: Arc<Sender<T>>,
     shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
-    shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
+    // shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
 }
 
 impl<T> BatchDbCreator<T>
@@ -327,12 +327,12 @@ where
     fn new(
         sender: Arc<Sender<T>>,
         shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
-        shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
+        // shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
     ) -> Self {
         Self {
             sender,
             shutdown_sender,
-            shutdown_success_rcx,
+            // shutdown_success_rcx,
         }
     }
 
@@ -343,42 +343,42 @@ where
         Ok(())
     }
 
-    /// Drop BatchDbCreator, waiting for all to flush fully
-    async fn blocking_drop(&mut self) {
-        let sender = {
-            let opt = self
-                .shutdown_sender
-                .lock()
-                .expect("Failed to acquire lock shutdown_sender")
-                .take();
-            if opt.is_none() {
-                tracing::warn!("historical_data: Channel already closed!");
-                return;
-            }
-            opt.unwrap()
-        };
-
-        if let Err(e) = sender.send(true) {
-            tracing::error!("Error sending shutdown command: {e:?}");
-        }
-
-        // Wait for acknowledgement / channel close
-        let rcx = {
-            let rcx_opt = self
-                .shutdown_success_rcx
-                .lock()
-                .expect("Failed to acquire shutdown_success_rcx lock")
-                .take();
-            if rcx_opt.is_none() {
-                tracing::warn!("Shutdown signal already sent and success already received!");
-                return;
-            }
-            rcx_opt.unwrap()
-        };
-        if let Err(e) = rcx.await {
-            tracing::error!("Shutdown responder dropped prematurely without sending: {e:?}")
-        };
-    }
+    // /// Drop BatchDbCreator, waiting for all to flush fully
+    // async fn blocking_drop(&mut self) {
+    //     let sender = {
+    //         let opt = self
+    //             .shutdown_sender
+    //             .lock()
+    //             .expect("Failed to acquire lock shutdown_sender")
+    //             .take();
+    //         if opt.is_none() {
+    //             tracing::warn!("historical_data: Channel already closed!");
+    //             return;
+    //         }
+    //         opt.unwrap()
+    //     };
+    //
+    //     if let Err(e) = sender.send(true) {
+    //         tracing::error!("Error sending shutdown command: {e:?}");
+    //     }
+    //
+    //     // Wait for acknowledgement / channel close
+    //     let rcx = {
+    //         let rcx_opt = self
+    //             .shutdown_success_rcx
+    //             .lock()
+    //             .expect("Failed to acquire shutdown_success_rcx lock")
+    //             .take();
+    //         if rcx_opt.is_none() {
+    //             tracing::warn!("Shutdown signal already sent and success already received!");
+    //             return;
+    //         }
+    //         rcx_opt.unwrap()
+    //     };
+    //     if let Err(e) = rcx.await {
+    //         tracing::error!("Shutdown responder dropped prematurely without sending: {e:?}")
+    //     };
+    // }
 }
 
 impl<T> Drop for BatchDbCreator<T>
@@ -438,7 +438,7 @@ where
 
     let (sender, mut rx) = channel::<T>(10_000);
     let (shutdown_sender, mut shutdown_rx) = tokio::sync::oneshot::channel::<bool>();
-    let (shutdown_resp_sender, shutdown_resp_rx) = tokio::sync::oneshot::channel::<bool>();
+    let (shutdown_resp_sender, _shutdown_resp_rx) = tokio::sync::oneshot::channel::<bool>();
 
     tokio::spawn(async move {
         let mut buffer = Vec::with_capacity(BATCH_SIZE);
@@ -519,7 +519,7 @@ where
     BatchDbCreator::new(
         Arc::new(sender),
         Arc::new(Mutex::new(Some(shutdown_sender))),
-        Arc::new(Mutex::new(Some(shutdown_resp_rx))),
+        // Arc::new(Mutex::new(Some(shutdown_resp_rx))),
     )
 }
 

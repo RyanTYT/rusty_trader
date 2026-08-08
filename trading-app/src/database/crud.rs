@@ -1,5 +1,5 @@
 // use anyhow::Result;
-// use async_trait::async_trait;
+use async_trait::async_trait;
 use crud_insertable::Insertable;
 use sqlx::{FromRow, PgPool};
 
@@ -29,7 +29,7 @@ impl<FK, PK, UK> CRUD<FK, PK, UK> {
     }
 }
 
-// #[async_trait]
+#[async_trait]
 pub trait CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys>
 where
     FullKeys: Sized + Send + Sync,
@@ -50,7 +50,7 @@ where
     async fn delete(&self, raw_pk: &PrimaryKeys) -> Result<(), String>;
 }
 
-// #[async_trait]
+#[async_trait]
 impl<
     FullKeys: Sized + Send + Sync + Insertable,
     PrimaryKeys: Sized + Send + Sync + Insertable,
@@ -261,42 +261,46 @@ impl<
 }
 
 #[macro_export]
-macro_rules! delegate_all_crud_methods {
-    ($delegator:ident, $FullKeys:ty, $PrimaryKeys:ty, $UpdateKeys:ty) => {
-        async fn create(&self, raw_item: &$FullKeys) -> Result<(), String> {
-            self.$delegator.create(raw_item).await
-        }
-        async fn create_or_ignore(&self, raw_item: &$FullKeys) -> Result<(), String> {
-            self.$delegator.create_or_ignore(raw_item).await
-        }
-        async fn read(&self, raw_pk: &$PrimaryKeys) -> Result<Option<$FullKeys>, String>
-        where
-            $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+macro_rules! implement_all_crud_methods {
+    ($delegator:ident, $FullKeys:ty, $PrimaryKeys:ty, $UpdateKeys:ty, $crud:ident) => {
+        #[async_trait::async_trait]
+        impl crate::database::crud::CRUDTrait<$FullKeys,$PrimaryKeys,$UpdateKeys> for $crud
         {
-            self.$delegator.read(raw_pk).await
-        }
-        async fn create_or_update(
-            &self,
-            pk: &$PrimaryKeys,
-            uk: &$UpdateKeys,
-        ) -> anyhow::Result<(), String> {
-            self.$delegator.create_or_update(pk, uk).await
-        }
-        async fn read_all(&self) -> Result<Vec<$FullKeys>, String>
-        where
-            $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
-        {
-            self.$delegator.read_all().await
-        }
-        async fn update(
-            &self,
-            raw_pk: &$PrimaryKeys,
-            raw_update: &$UpdateKeys,
-        ) -> Result<u64, String> {
-            self.$delegator.update(raw_pk, raw_update).await
-        }
-        async fn delete(&self, raw_pk: &$PrimaryKeys) -> Result<(), String> {
-            self.$delegator.delete(raw_pk).await
+            async fn create(&self, raw_item: &$FullKeys) -> Result<(), String> {
+                self.$delegator.create(raw_item).await
+            }
+            async fn create_or_ignore(&self, raw_item: &$FullKeys) -> Result<(), String> {
+                self.$delegator.create_or_ignore(raw_item).await
+            }
+            async fn read(&self, raw_pk: &$PrimaryKeys) -> Result<Option<$FullKeys>, String>
+            where
+                $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                self.$delegator.read(raw_pk).await
+            }
+            async fn create_or_update(
+                &self,
+                pk: &$PrimaryKeys,
+                uk: &$UpdateKeys,
+            ) -> anyhow::Result<(), String> {
+                self.$delegator.create_or_update(pk, uk).await
+            }
+            async fn read_all(&self) -> Result<Vec<$FullKeys>, String>
+            where
+                $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                self.$delegator.read_all().await
+            }
+            async fn update(
+                &self,
+                raw_pk: &$PrimaryKeys,
+                raw_update: &$UpdateKeys,
+            ) -> Result<u64, String> {
+                self.$delegator.update(raw_pk, raw_update).await
+            }
+            async fn delete(&self, raw_pk: &$PrimaryKeys) -> Result<(), String> {
+                self.$delegator.delete(raw_pk).await
+            }
         }
     };
 }
@@ -304,6 +308,7 @@ macro_rules! delegate_all_crud_methods {
 #[macro_export]
 macro_rules! implement_crud_trait_for_interface {
     ($crud:ty, $fk:ident, $pk:ident, $uk:ident, [$($variant:ident),* $(,)?]) => {
+        #[async_trait::async_trait]
         impl crate::database::crud::CRUDTrait<$fk,$pk,$uk> for $crud
         {
             async fn read(

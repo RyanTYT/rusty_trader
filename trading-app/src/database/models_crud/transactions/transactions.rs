@@ -191,6 +191,7 @@ implement_crud_trait_for_interface!(
     [Stock, Options]
 );
 
+#[async_trait::async_trait]
 pub trait TransactionsOps {
     /// Returns an Err(...) when sql query fails
     /// - returns a None when query succeeds but no transactions recorded in DB
@@ -200,6 +201,7 @@ pub trait TransactionsOps {
     ) -> Result<Option<TransactionsFullKeys>, String>;
 }
 
+#[async_trait::async_trait]
 impl TransactionsOps for TransactionsCRUD {
     async fn read_last_transaction(
         &self,

@@ -2,12 +2,12 @@ use sqlx::PgPool;
 
 use crate::{
     database::{
-        crud::{CRUD, CRUDTrait},
+        crud::CRUD,
         models::{
             StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys,
         },
     },
-    delegate_all_crud_methods,
+    implement_all_crud_methods,
 };
 
 #[derive(Clone, Debug)]
@@ -16,16 +16,13 @@ pub struct StagedCommissionsCRUD {
         CRUD<StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys>,
 }
 
-impl CRUDTrait<StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys>
-    for StagedCommissionsCRUD
-{
-    delegate_all_crud_methods!(
-        crud,
-        StagedCommissionsFullKeys,
-        StagedCommissionsPrimaryKeys,
-        StagedCommissionsUpdateKeys
-    );
-}
+implement_all_crud_methods!(
+    crud,
+    StagedCommissionsFullKeys,
+    StagedCommissionsPrimaryKeys,
+    StagedCommissionsUpdateKeys,
+    StagedCommissionsCRUD
+);
 
 impl StagedCommissionsCRUD {
     pub fn new(pool: PgPool) -> Self {

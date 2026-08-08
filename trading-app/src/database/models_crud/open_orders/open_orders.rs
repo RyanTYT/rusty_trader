@@ -237,11 +237,13 @@ implement_crud_trait_for_interface!(
     [Stock, Options]
 );
 
+#[async_trait::async_trait]
 pub trait OpenOrdersOps {
     async fn get_orders_for_strat(&self, strategy: &str)
     -> Result<Vec<OpenOrdersFullKeys>, String>;
 }
 
+#[async_trait::async_trait]
 impl OpenOrdersOps for OpenOrdersCRUD {
     async fn get_orders_for_strat(
         &self,

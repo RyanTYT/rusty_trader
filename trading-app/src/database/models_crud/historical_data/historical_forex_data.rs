@@ -2,13 +2,13 @@ use sqlx::PgPool;
 
 use crate::{
     database::{
-        crud::{CRUD, CRUDTrait},
+        crud::CRUD,
         models::{
             HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys,
             HistoricalForexDataUpdateKeys,
         },
     },
-    delegate_all_crud_methods,
+    implement_all_crud_methods,
 };
 
 #[derive(Clone, Debug)]
@@ -20,20 +20,13 @@ pub struct HistoricalForexDataCRUD {
     >,
 }
 
-impl
-    CRUDTrait<
-        HistoricalForexDataFullKeys,
-        HistoricalForexDataPrimaryKeys,
-        HistoricalForexDataUpdateKeys,
-    > for HistoricalForexDataCRUD
-{
-    delegate_all_crud_methods!(
-        crud,
-        HistoricalForexDataFullKeys,
-        HistoricalForexDataPrimaryKeys,
-        HistoricalForexDataUpdateKeys
-    );
-}
+implement_all_crud_methods!(
+    crud,
+    HistoricalForexDataFullKeys,
+    HistoricalForexDataPrimaryKeys,
+    HistoricalForexDataUpdateKeys,
+    HistoricalForexDataCRUD
+);
 
 impl HistoricalForexDataCRUD {
     pub(super) fn new(pool: PgPool) -> Self {

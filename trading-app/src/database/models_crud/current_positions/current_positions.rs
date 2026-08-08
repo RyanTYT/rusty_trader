@@ -6,7 +6,7 @@ use crate::{
         models::{
             AssetType, CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
             CurrentOptionPositionsUpdateKeys, CurrentStockPositionsFullKeys,
-            CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, ExecutionSide,
+            CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
             OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys, OptionType,
         },
         models_crud::{
@@ -270,6 +270,7 @@ implement_crud_trait_for_interface!(
     [Stock, Options]
 );
 
+#[async_trait::async_trait]
 pub trait CurrentPositionsOps {
     async fn get_pos_by_strat(
         &self,
@@ -294,6 +295,7 @@ pub trait CurrentPositionsOps {
     ) -> Result<(), String>;
 }
 
+#[async_trait::async_trait]
 impl CurrentPositionsOps for CurrentPositionsCRUD {
     async fn get_pos_by_strat(
         &self,
