@@ -23,7 +23,7 @@ impl CRUDTrait<StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys> for St
 }
 
 impl StrategyCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys>::new(
                 pool,

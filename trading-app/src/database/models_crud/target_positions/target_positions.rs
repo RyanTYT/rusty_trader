@@ -1,15 +1,19 @@
+use async_trait::async_trait;
 use sqlx::PgPool;
 
-use crate::database::{
-    models::{
-        AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
-        TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys,
-        TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
+use crate::{
+    database::{
+        models::{
+            AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
+            TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys,
+            TargetStockPositionsPrimaryKeys, TargetStockPositionsUpdateKeys,
+        },
+        models_crud::target_positions::{
+            target_option_positions::{TargetOptionPositionsCRUD, TargetOptionPositionsQtyDiff},
+            target_stock_positions::{TargetStockPositionsCRUD, TargetStockPositionsQtyDiff},
+        },
     },
-    models_crud::target_positions::{
-        target_option_positions::{TargetOptionPositionsCRUD, TargetOptionPositionsQtyDiff},
-        target_stock_positions::{TargetStockPositionsCRUD, TargetStockPositionsQtyDiff},
-    },
+    implement_crud_trait_for_interface,
 };
 
 #[derive(Debug, Clone)]
@@ -81,6 +85,15 @@ impl TargetPositionsCRUD {
     }
 }
 
+implement_crud_trait_for_interface!(
+    TargetPositionsCRUD,
+    TargetPositionsFullKeys,
+    TargetPositionsPrimaryKeys,
+    TargetPositionsUpdateKeys,
+    [Stock, Options]
+);
+
+#[async_trait]
 pub trait TargetPositionsOps {
     async fn get_target_pos_diff_by_pk(
         &self,
@@ -93,6 +106,7 @@ pub trait TargetPositionsOps {
     async fn clear_strat_pos(&self, strategy: &str) -> Result<(), String>;
 }
 
+#[async_trait]
 impl TargetPositionsOps for TargetPositionsCRUD {
     async fn get_target_pos_diff_by_pk(
         &self,

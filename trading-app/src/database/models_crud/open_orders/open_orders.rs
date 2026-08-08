@@ -91,7 +91,7 @@ impl OpenOrdersFullKeys {
                     contract.symbol,
                     contract.security_type
                 );
-                panic!("Tried to create OpenOrdersFullKeys from AssetType::CASH".to_string());
+                panic!("Tried to create OpenOrdersFullKeys from AssetType::CASH");
             }
             AssetType::Unknown => {
                 tracing::error!(
@@ -100,7 +100,7 @@ impl OpenOrdersFullKeys {
                     contract.security_type
                     )
                 );
-                panic!("Tried to create OpenOrdersFullKeys from AssetType::Unknown".to_string());
+                panic!("Tried to create OpenOrdersFullKeys from AssetType::Unknown");
             }
         }
     }

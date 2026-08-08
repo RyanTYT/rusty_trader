@@ -485,7 +485,7 @@ pub trait HistoricalDataOps {
         pk: HistoricalDataPrimaryKeysWoTime,
         timezone: Option<String>,
         vwap_bar_value: VwapBarValue,
-    ) -> Result<f64, String>;
+    ) -> Result<Option<f64>, String>;
     async fn has_at_least_n_rows_since(
         &self,
         pk: HistoricalDataPrimaryKeysWoTime,
@@ -823,7 +823,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         pk: HistoricalDataPrimaryKeysWoTime,
         timezone: Option<String>,
         vwap_bar_value: VwapBarValue,
-    ) -> Result<f64, String> {
+    ) -> Result<Option<f64>, String> {
         #[derive(FromRow)]
         struct Vwap {
             vwap: f64,
@@ -946,9 +946,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }
         };
 
-        vwap_opt
-            .ok_or_else(|| "Failed to get vwap value".to_string())
-            .map(|v| v.vwap)
+        Ok(vwap_opt.map(|v| v.vwap))
     }
 
     async fn has_at_least_n_rows_since(
