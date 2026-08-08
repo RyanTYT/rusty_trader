@@ -1,15 +1,27 @@
 use std::{hash::Hash, sync::Arc};
 
-use async_trait::async_trait;
-use ibapi::prelude::Contract;
+use ibapi::{Client, prelude::Contract};
 
 use crate::{
-    database::models::AssetType,
+    database::{
+        models::AssetType, models_crud::historical_data::historical_data::HistoricalDataFullKeys,
+    },
+    execution::order_engine::OrderIBKR,
     market_data::consolidator::Consolidator,
     strategy::{manual::Manual, noise::Noise, unknown::Unknown},
 };
 
-#[async_trait]
+#[derive(Debug, Clone)]
+pub enum BarUpdateOutcome {
+    /// Fast Path: In-memory evaluation ready to submit orders immediately.
+    EmitOrders(Vec<OrderIBKR>),
+    /// Slow Path: Strategy requires target position V current position
+    /// to determine market action.
+    PendingDbQuery(Vec<AssetType>),
+    /// No action required for this bar tick.
+    NoAction,
+}
+
 pub trait StrategyExecutor: Ord + PartialOrd + Eq + PartialEq + Clone + Send + Sync {
     /// NEEDS TO BE DEFINED CORRECTLY
     /// Usually for initialisation and storing of the relevant contracts for each strategy
@@ -17,34 +29,22 @@ pub trait StrategyExecutor: Ord + PartialOrd + Eq + PartialEq + Clone + Send + S
     /// Should return a unique name for the DB table for coordination and tracking - the main
     /// reason for this whole app
     fn get_name(&self) -> String;
-    /// Returns the asset type being tracked/traded - used for consolidator to determine how to
-    /// process data
-    fn uses_data_type(&self) -> AssetType;
     /// NEEDS TO BE DEFINED CORRECTLY
     /// Should update all relevant TargetPositions for the strategy
     /// - assume always that data in DB is fully updated
     /// - Result(bool, bool): (is positions updated, is all contracts of strategy used / ignore
     /// contract for strategy)
-    async fn on_bar_update(
+    fn on_bar_update(
         &self,
         contract: &Contract,
+        bar: &HistoricalDataFullKeys,
         consolidator: &Arc<Consolidator>,
-    ) -> Result<(bool, bool), String>;
+    ) -> Result<BarUpdateOutcome, String>;
     /// Should return all associated contracts with this strategy
-    fn get_contracts(&self) -> Vec<Contract>;
-    /// NEEDS TO BE DEFINED CORRECTLY
-    /// Should return the associated contract given by the stock - used when determining contracts
-    /// to place orders for in TargetPositions
-    fn get_contract(
-        &self,
-        stock: &str,
-        primary_exchange: &str,
-        currency: &str,
-        consolidator: &Arc<Consolidator>,
-    ) -> Option<Contract>;
+    fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract>;
     /// Warm up the data given the consolidator - get all data required up till now for the
     /// strategy
-    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>;
+    fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>;
     fn is_fx_strategy(&self) -> bool;
 }
 
@@ -64,7 +64,6 @@ macro_rules! strategy_enum {
             }
         }
 
-        #[async_trait]
         impl StrategyExecutor for StrategyEnum {
             fn get_name(&self) -> String {
                 match self {
@@ -72,39 +71,28 @@ macro_rules! strategy_enum {
                 }
             }
 
-            fn uses_data_type(&self) -> AssetType {
-                match self {
-                    $(StrategyEnum::$variant(s) => s.uses_data_type()),*
-                }
-            }
-
-            async fn on_bar_update(
+            fn on_bar_update(
                 &self,
                 contract: &Contract,
+                bar: &HistoricalDataFullKeys,
                 consolidator: &Arc<Consolidator>,
-            ) -> Result<(bool, bool), String>
+            ) -> Result<BarUpdateOutcome, String>
             {
                 match self {
-                    $(StrategyEnum::$variant(s) => s.on_bar_update(contract, consolidator).await),*
+                    $(StrategyEnum::$variant(s) => s.on_bar_update(contract, bar, consolidator)),*
                 }
             }
 
-            fn get_contracts(&self) -> Vec<Contract> {
+            fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract> {
                 match self {
-                    $(StrategyEnum::$variant(s) => s.get_contracts()),*
+                    $(StrategyEnum::$variant(s) => s.get_contracts(client)),*
                 }
             }
 
-            fn get_contract(&self, stock: &str, primary_exchange: &str, currency: &str, consolidator: &Arc<Consolidator>) -> Option<Contract> {
-                match self {
-                    $(StrategyEnum::$variant(s) => s.get_contract(stock, primary_exchange, currency, consolidator)),*
-                }
-            }
-
-            async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
+            fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
             {
                 match self {
-                    $(StrategyEnum::$variant(s) => s.warm_up_data(consolidator).await),*
+                    $(StrategyEnum::$variant(s) => s.warm_up_data(consolidator)),*
                 }
             }
 
@@ -123,3 +111,4 @@ strategy_enum! {
     Manual(Manual),
     Unknown(Unknown)
 }
+
