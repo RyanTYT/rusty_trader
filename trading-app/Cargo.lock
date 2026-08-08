@@ -1088,6 +1088,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hotpath"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be80823867e0c9820c9237c38b21f9f4aa1ebb0db1f98ff25ac0b1d2c088a470"
+dependencies = [
+ "hotpath-macros",
+]
+
+[[package]]
+name = "hotpath-macros"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61d1fb3ee80ae7b4743d29487665766ce5a1442e959521790e86317f89dcd5a3"
+
+[[package]]
 name = "http"
 version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3657,6 +3672,7 @@ dependencies = [
  "crud_models",
  "csv",
  "futures",
+ "hotpath",
  "ibapi",
  "moka",
  "nyse-holiday-cal",
