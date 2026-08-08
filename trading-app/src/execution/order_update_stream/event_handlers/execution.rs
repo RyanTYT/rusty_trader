@@ -38,6 +38,7 @@ pub fn on_execution_update(
     execution_data: ExecutionData,
     strategy_map: Arc<HashMap<String, StrategyEnum>>,
     default_strategy: &str,
+    handle: tokio::runtime::Handle,
 ) -> Result<(), String> {
     let asset_type = AssetType::from_str(&execution_data.contract.security_type);
     match asset_type {
@@ -282,8 +283,14 @@ pub fn on_execution_update(
         current_positions_pk.with_stock(&stock);
         let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
 
-        current_positions_crud
-            .update_positions_additive(current_positions_pk, current_positions_uk);
+        handle.spawn(async move {
+            if let Err(e) = current_positions_crud
+                .update_positions_additive(current_positions_pk, current_positions_uk)
+                .await
+            {
+                tracing::error!("Failed to update positions in new execution update: {e:?}");
+            };
+        });
     });
 
     Ok(())

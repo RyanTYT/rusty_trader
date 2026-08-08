@@ -15,7 +15,7 @@ use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::market_data::consolidator::{Consolidator, is_fx_trading_datetime};
+use crate::market_data::consolidator::is_fx_trading_datetime;
 
 #[allow(dead_code)]
 struct FieldVisitor {

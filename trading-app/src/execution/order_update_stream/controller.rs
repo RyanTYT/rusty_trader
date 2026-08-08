@@ -63,6 +63,7 @@ impl OrderUpdateStreamController {
         weak_client: Weak<Client>,
         strategy_map: Arc<HashMap<String, StrategyEnum>>,
         default_strategy: Option<String>,
+        handle: tokio::runtime::Handle
     ) -> Option<Self> {
         // https://ibridgepy.com/ib-api-knowledge-base/#step1-1-17
         // openOrder( ) is triggered twice automatically. When the order is initially accepted and when the order is fully executed. When the order is initially accepted, you would get an openOrder( ) and orderStatus( ) call back. Then if there are partial fills or any other status changes you would receive additional orderStatus( ) call back. Then if you receive additional orderStatus( ) call back, when the order fully executes you would get a final orderStatus( ) followed by an openOrder( ) and then receive the execDetails( ) and commissionReport( ). If you invoke reqOpenOrders( ), it will only relay the last orderStatus( ) of any current working order.
@@ -99,9 +100,7 @@ impl OrderUpdateStreamController {
                 let event_subscription = client.order_update_stream();
                 if let Err(e) = &event_subscription {
                     tracing::error!("Failed to begin order_update_stream in OrderEngine: {e:?}");
-                    unsafe {
-                        ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
-                    }
+                    ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
                     return;
                 }
                 event_subscription.unwrap()
@@ -164,7 +163,8 @@ impl OrderUpdateStreamController {
         let pool = pool.clone();
         let def_strat = default_strategy.unwrap_or("unknown".to_string());
         let strategy_map = strategy_map.clone();
-        tokio::spawn(async move {
+        let cloned_handle = handle.clone();
+        handle.spawn(async move {
             loop {
                 match rx.recv().await {
                     Some(order_update) => {
@@ -174,6 +174,7 @@ impl OrderUpdateStreamController {
                             pool.clone(),
                             order_update,
                             def_strat.as_str(),
+                            cloned_handle.clone()
                         )
                         .await
                         {
@@ -215,6 +216,7 @@ async fn on_order_update_received(
     pool: PgPool,
     order_update: OrderUpdate,
     default_strategy: &str,
+    handle: tokio::runtime::Handle,
 ) -> Result<(), String> {
     match order_update {
         OrderUpdate::OrderStatus(status) => {
@@ -291,6 +293,7 @@ async fn on_order_update_received(
                 execution_data,
                 strategy_map.clone(),
                 default_strategy,
+                handle,
             ) {
                 return Err(format!("Error while running on_execution_update: {e:?}"));
             };

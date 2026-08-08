@@ -18,7 +18,6 @@ use crate::{
 pub struct Unknown {
     priority: u32,
     name: String,
-    pool: PgPool,
 }
 
 impl PartialEq for Unknown {
@@ -45,11 +44,10 @@ impl Ord for Unknown {
 }
 
 impl Unknown {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(_pool: PgPool) -> Self {
         Self {
             priority: 1,
             name: "unknown".to_string(),
-            pool,
         }
     }
 }

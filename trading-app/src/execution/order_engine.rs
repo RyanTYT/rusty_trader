@@ -413,12 +413,19 @@ impl OrderEngine {
                             }
                         }
 
-                        self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders);
+                        if let Err(e) = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders) {
+                            tracing::error!("Failed to run on_new_qty_diff_for_strat in handle_bar_update_outcome: {e:?}");
+                        };
                     });
 
                     if !fx_attachments.backed_up_orders.is_empty() {
-                        order_store
-                            .store_orders(&strategy.get_name(), &fx_attachments.backed_up_orders);
+                        if let Err(e) = order_store
+                            .store_orders(&strategy.get_name(), &fx_attachments.backed_up_orders)
+                        {
+                            tracing::error!(
+                                "Failed to run store_orders for order_store in handle_bar_update_outcome: {e:?}"
+                            )
+                        };
                     }
                 }
             }

@@ -19,7 +19,10 @@ use sqlx::PgPool;
 use crate::{
     market_data::{
         consumer::{
-            db_consumer::{begin_db_consumer_thread_grouped, begin_db_consumer_thread_singular},
+            db_consumer::{
+                MarketDataDbConsumer, begin_db_consumer_thread_grouped,
+                begin_db_consumer_thread_singular,
+            },
             strategy_consumer::IbkrBarConsumer,
         },
         producer::subscribe_to_data,
@@ -111,6 +114,7 @@ pub struct MarketDataHandler {
     pool: PgPool,
     subscriptions: HashMap<DataSubscription, SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>,
     live_prices: Cache<i32, (DateTime<Utc>, f64)>,
+    db_consumers: Vec<MarketDataDbConsumer>,
 }
 
 pub enum DbSubscriptionMethod {
@@ -126,6 +130,7 @@ impl MarketDataHandler {
             live_prices: Cache::builder()
                 .time_to_live(Duration::from_secs(60))
                 .build(),
+            db_consumers: vec![],
         }
     }
     /// This updates the subscriptions handled
@@ -166,21 +171,21 @@ impl MarketDataHandler {
         match subscription_method {
             DbSubscriptionMethod::OnePerThread => {
                 for consumer in new_consumers {
-                    begin_db_consumer_thread_singular(
+                    self.db_consumers.push(begin_db_consumer_thread_singular(
                         self.pool.clone(),
                         contract_scheduler.clone(),
                         consumer,
                         self.live_prices.clone(),
-                    );
+                    ));
                 }
             }
             DbSubscriptionMethod::GroupedPerThread => {
-                begin_db_consumer_thread_grouped(
+                self.db_consumers.push(begin_db_consumer_thread_grouped(
                     self.pool.clone(),
                     contract_scheduler.clone(),
                     new_consumers,
                     self.live_prices.clone(),
-                );
+                ));
             }
         }
     }

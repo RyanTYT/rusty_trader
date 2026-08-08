@@ -82,19 +82,13 @@ impl Consolidator {
         };
 
         for position in positions {
-            let (stock, primary_exchange, currency, quantity) = match &position {
-                CurrentPositionsFullKeys::Stock(v) => (
-                    v.stock.clone(),
-                    v.primary_exchange.clone(),
-                    v.currency.clone(),
-                    v.quantity,
-                ),
-                CurrentPositionsFullKeys::Options(v) => (
-                    v.stock.clone(),
-                    v.primary_exchange.clone(),
-                    v.currency.clone(),
-                    v.quantity,
-                ),
+            let (stock, currency, quantity) = match &position {
+                CurrentPositionsFullKeys::Stock(v) => {
+                    (v.stock.clone(), v.currency.clone(), v.quantity)
+                }
+                CurrentPositionsFullKeys::Options(v) => {
+                    (v.stock.clone(), v.currency.clone(), v.quantity)
+                }
             };
 
             if quantity == 0.0 {

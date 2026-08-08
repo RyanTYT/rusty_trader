@@ -5,7 +5,6 @@ use std::{collections::VecDeque, sync::Arc};
 use chrono::{DateTime, Utc};
 use ibapi::market_data::realtime::Bar;
 use moka::sync::Cache;
-use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferConsumer;
 use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
@@ -27,8 +26,18 @@ const HOT_WINDOW: Duration = Duration::from_millis(200);
 /// Set to Duration::ZERO for a true hot spin.
 const SPIN_BACKOFF: Duration = Duration::ZERO;
 
-struct MarketDataDbConsumer<const BUFFER_CAPACITY: usize> {
-    consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY>,
+// struct MarketDataDbConsumer<const BUFFER_CAPACITY: usize> {
+//     consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY>,
+// }
+
+pub struct MarketDataDbConsumer {
+    is_alive: Arc<AtomicBool>,
+}
+
+impl Drop for MarketDataDbConsumer {
+    fn drop(&mut self) {
+        self.is_alive.store(false, Ordering::Release);
+    }
 }
 
 pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
@@ -36,9 +45,10 @@ pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
     contract_scheduler: Arc<IbkrContractScheduler>,
     consumer: IbkrBarConsumer<BUFFER_CAPACITY>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
-) {
+) -> MarketDataDbConsumer {
     let rt_handle = tokio::runtime::Handle::current();
     let is_alive = Arc::new(AtomicBool::new(false));
+    let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
     std::thread::spawn(move || {
         let mut small_bars: VecDeque<Bar> = VecDeque::new();
@@ -110,6 +120,9 @@ pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
             next_deadline += BAR_INTERVAL;
         }
     });
+    MarketDataDbConsumer {
+        is_alive: is_alive_cloned,
+    }
 }
 
 pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
@@ -117,9 +130,10 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
     contract_scheduler: Arc<IbkrContractScheduler>,
     consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY>>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
-) {
+) -> MarketDataDbConsumer {
     let rt_handle = tokio::runtime::Handle::current();
     let is_alive = Arc::new(AtomicBool::new(false));
+    let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
     std::thread::spawn(move || {
         let mut next_deadline = align_and_prime_schedule(&contract_scheduler, &consumers);
@@ -209,6 +223,9 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
             next_deadline += BAR_INTERVAL;
         }
     });
+    MarketDataDbConsumer {
+        is_alive: is_alive_cloned,
+    }
 }
 
 fn sleep_until_system_time(target: SystemTime) {

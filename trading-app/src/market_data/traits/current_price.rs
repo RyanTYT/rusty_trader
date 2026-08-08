@@ -142,7 +142,7 @@ impl PriceSupplier for Consolidator {
             latest_request_timestamp - (latest_request_timestamp % bar_interval);
 
         let batch_creator_opt = if config.use_batching {
-            Some(tokio::runtime::Handle::current().block_on(async {
+            Some(self.handle.block_on(async {
                 match AssetType::from_str(&contract.security_type) {
                     AssetType::Stock | AssetType::CFD | AssetType::Future => {
                         BatchDbCreatorEnum::Stock(
@@ -189,24 +189,32 @@ impl PriceSupplier for Consolidator {
 
             let cloned_batch_creator_opt = batch_creator_opt.clone();
             let cloned_asset_type = asset_type.clone();
-            let insert_thread = tokio::spawn(async move {
+            let insert_thread = self.handle.spawn(async move {
                 match cloned_batch_creator_opt {
                     Some(batch_creator) => {
-                        batch_creator
+                        if let Err(e) = batch_creator
                             .batch_create_or_update(&historical_data_fk)
-                            .await;
+                            .await
+                        {
+                            tracing::error!("Failed to batch create or update: {e:?}");
+                        };
                     }
                     None => {
-                        HistoricalDataCRUD::from(&cloned_asset_type, cloned_pool)
+                        if let Err(e) = HistoricalDataCRUD::from(&cloned_asset_type, cloned_pool)
                             .create_or_update(&historical_data_pk, &historical_data_uk)
-                            .await;
+                            .await
+                        {
+                            tracing::error!("Failed to batch create or update: {e:?}");
+                        };
                     }
                 }
             });
             join_handles.push(insert_thread);
         }
 
-        futures::future::join_all(join_handles);
+        self.handle.block_on(async {
+            futures::future::join_all(join_handles).await;
+        });
 
         if asset_type == AssetType::ForexPair
             && what_to_show == ibapi::market_data::historical::WhatToShow::Bid

@@ -22,7 +22,6 @@ use crate::{
         memoise::{AnyMemoized, Memoized},
         traits::current_price::{HistoricalDataConfig, PriceSupplier},
     },
-    schedule::contract_scheduler::IbkrContractScheduler,
 };
 
 const NYSE_OPEN_TIME: (u32, u32) = (9, 30);
@@ -46,7 +45,7 @@ pub struct Consolidator {
     pub(crate) client: Arc<Client>,
 
     // StrategyScheduler
-    pub(super) contract_coordinator: Arc<IbkrContractScheduler>,
+    // pub(super) contract_coordinator: Arc<IbkrContractScheduler>,
 
     // AccountTracker
     pub pool: PgPool,
@@ -119,7 +118,7 @@ impl Consolidator {
             pool: pool.clone(),
             client: client.clone(),
             market_data_handler,
-            contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
+            // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
             handle,
         }
@@ -184,7 +183,11 @@ impl Consolidator {
                     } else {
                         let bar = bars.full.first().unwrap();
                         if bar.get_time() != target {
-                            self.populate_historical_data(contract, config);
+                            if let Err(e) = self.populate_historical_data(contract, config) {
+                                tracing::error!(
+                                    "Failed to populate_historical_data in refresh_if_stale: {e:?}"
+                                );
+                            };
                         }
                     }
                 }
@@ -310,7 +313,11 @@ impl Consolidator {
                 if passed {
                     self.refresh_if_stale(&contract, &config);
                 } else {
-                    self.populate_historical_data(&contract, &config);
+                    if let Err(e) = self.populate_historical_data(&contract, &config) {
+                        tracing::error!(
+                            "Failed to populate_historical_data in update_at_least_n_days_data: {e:?}"
+                        );
+                    };
                 }
             }
             Err(e) => tracing::error!("Failed to check for has_at_least_n_rows_since: {e:?}"),

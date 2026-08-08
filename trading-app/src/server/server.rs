@@ -1,15 +1,10 @@
+use crate::helpers::contract::{LocalContractTypes, get_contract_from};
 use crate::{
     database::{
         models::CurrentStockPositionsFullKeys,
         models_crud::current_positions::current_positions::CurrentPositionsFullKeys,
     },
-    helpers::{
-        contract::{
-            LocalContractTypes::{self, CurrentPosFk},
-            get_contract_from,
-        },
-        sync_timeout::timeout,
-    },
+    helpers::sync_timeout::timeout,
     init_app::ApplicationState,
     market_data::traits::{current_price::PriceSupplier, strategy_value::GetStrategyValue},
     schedule::broker_scheduler::IbkrRegion,
@@ -19,11 +14,10 @@ use axum::{
     extract::{Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ibapi::prelude::{Contract, Symbol};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::{
     sync::{Arc, Weak},
     thread,
@@ -171,6 +165,7 @@ async fn get_possible_stock_contracts(
             let current_price =
                 consolidator.get_current_price(contract.contract.clone(), false, &[]);
             if let Err(e) = current_price {
+                tracing::error!("Error trying to fetch current price in server.rs: {e:?}");
                 return None;
             }
             Some(ContractWithDetails {

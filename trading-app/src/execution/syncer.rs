@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use chrono::Utc;
 use ibapi::{
     Client,
@@ -44,6 +45,7 @@ pub struct SyncerEngine {
     // Contract -> Strategy
     // - Prioritisation of Strategy happens here
     contract_to_strategy: HashMap<HashContract, String>,
+    handle: tokio::runtime::Handle,
 }
 
 impl SyncerEngine {
@@ -51,6 +53,7 @@ impl SyncerEngine {
         pool: PgPool,
         account: String,
         active_strategies: &Vec<StrategyParameters>,
+        handle: tokio::runtime::Handle,
     ) -> SyncerEngine {
         let mut contract_to_full_strategy: HashMap<HashContract, StrategyEnum> = HashMap::new();
         for strategy in active_strategies {
@@ -87,10 +90,12 @@ impl SyncerEngine {
             account,
             strategy_map: Arc::new(strategy_map),
             contract_to_strategy,
+            handle,
         }
     }
 }
 
+#[async_trait]
 pub trait SyncOps {
     fn sync_executions(
         &self,
@@ -111,6 +116,7 @@ pub trait SyncOps {
     );
 }
 
+#[async_trait]
 impl SyncOps for SyncerEngine {
     // Call before sync_positions - tries its best to sync all missed orders since last session
     // - but may miss some position updates -> Have to reconcile manually and via sync_positions
@@ -147,12 +153,19 @@ impl SyncOps for SyncerEngine {
                         )
                     );
 
-                    order_update_stream::event_handlers::execution::on_execution_update(
-                        self.pool.clone(),
-                        execution_data,
-                        self.strategy_map.clone(),
-                        &def_strat,
-                    );
+                    if let Err(e) =
+                        order_update_stream::event_handlers::execution::on_execution_update(
+                            self.pool.clone(),
+                            execution_data,
+                            self.strategy_map.clone(),
+                            &def_strat,
+                            self.handle.clone(),
+                        )
+                    {
+                        tracing::error!(
+                            "Failed to run on_execution_update while syncing executions: {e:?}"
+                        );
+                    };
                 }
 
                 Executions::CommissionReport(commission_report) => {
@@ -399,7 +412,8 @@ impl SyncOps for SyncerEngine {
             self.account.to_string(),
             &fx_map,
             &mut errors,
-        );
+        )
+        .await;
 
         sync_stock_and_option_positions(
             self.account.to_string(),
@@ -411,7 +425,8 @@ impl SyncOps for SyncerEngine {
             &default_strategy.unwrap_or("unknown".to_string()),
             self.pool.clone(),
             &mut errors,
-        );
+        )
+        .await;
 
         if !errors.is_empty() {
             tracing::error!("{}", errors.join("\n"));
