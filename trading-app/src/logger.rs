@@ -15,8 +15,7 @@ use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::market_data::consolidator::Consolidator;
-use crate::market_data::strategy_scheduler::StrategyScheduler;
+use crate::market_data::consolidator::{Consolidator, is_fx_trading_datetime};
 
 #[allow(dead_code)]
 struct FieldVisitor {
@@ -158,7 +157,7 @@ fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
 }
 
 fn is_any_open(dt: &DateTime<Tz>) -> bool {
-    Consolidator::is_fx_trading_datetime(dt) || is_stock_open_hard(dt)
+    is_fx_trading_datetime(dt) || is_stock_open_hard(dt)
 }
 
 #[allow(dead_code)]
