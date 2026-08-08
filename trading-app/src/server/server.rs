@@ -1,7 +1,17 @@
 use crate::{
-    helpers::{contract::get_contract_from_local_symbol, sync_timeout::timeout},
+    database::{
+        models::CurrentStockPositionsFullKeys,
+        models_crud::current_positions::current_positions::CurrentPositionsFullKeys,
+    },
+    helpers::{
+        contract::{
+            LocalContractTypes::{self, CurrentPosFk},
+            get_contract_from,
+        },
+        sync_timeout::timeout,
+    },
     init_app::ApplicationState,
-    market_data::{consolidator_strategy::GetStrategyValue, strategy_scheduler::StrategyScheduler},
+    market_data::traits::{current_price::PriceSupplier, strategy_value::GetStrategyValue},
     schedule::broker_scheduler::IbkrRegion,
 };
 use axum::{
@@ -74,12 +84,18 @@ async fn get_current_price(
 
     consolidator
         .get_current_price(
-            &get_contract_from_local_symbol(
-                &payload.stock,
-                &payload.primary_exchange,
-                &payload.currency,
-            ),
-            &false,
+            get_contract_from(&LocalContractTypes::CurrentPosFk(
+                CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
+                    stock: payload.stock,
+                    primary_exchange: payload.primary_exchange,
+                    currency: payload.currency,
+                    strategy: "".to_string(),
+                    quantity: -1.0,
+                    avg_price: -1.0,
+                    last_updated: Utc::now(),
+                }),
+            )),
+            false,
             &[],
         )
         .map_or_else(
@@ -119,7 +135,7 @@ async fn get_possible_stock_contracts(
         let general_application_state = extract_application_state(state).await?;
         match general_application_state.as_ref() {
             ApplicationState::IbkrState(application_state) => (
-                application_state.master_client.clone(),
+                application_state.consolidator.client.clone(),
                 application_state.consolidator.clone(),
             ),
         }
@@ -152,7 +168,8 @@ async fn get_possible_stock_contracts(
     let possible_contracts = contracts
         .iter()
         .map(|contract| {
-            let current_price = consolidator.get_current_price(&contract.contract, &false, &[]);
+            let current_price =
+                consolidator.get_current_price(contract.contract.clone(), false, &[]);
             if let Err(e) = current_price {
                 return None;
             }
@@ -207,14 +224,14 @@ async fn get_exchange_rate(
     let quote = payload.quote;
     let currency = payload.currency;
     match consolidator.get_current_price(
-        &Contract {
+        Contract {
             symbol: Symbol::new(quote),
             security_type: ibapi::prelude::SecurityType::ForexPair,
             exchange: "IDEALPRO".into(),
             currency: ibapi::prelude::Currency(currency),
             ..Default::default()
         },
-        &false,
+        false,
         &[],
     ) {
         Ok(price) => Ok(Json(serde_json::json!(CurrencyVal { price }))),
@@ -249,7 +266,6 @@ async fn get_strategy_value(
     };
     consolidator
         .get_strategy_sgd_value(&payload.strategy)
-        .await
         .map_or_else(
             |e| Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
             |v| Ok(Json(serde_json::json!(StrategyValue { sgd_value: v }))),
@@ -318,7 +334,7 @@ async fn check_health(
     let is_ibkr_up = !IbkrRegion::Apac.is_in_maintenance(Utc::now());
     match trading_app_state.as_ref() {
         ApplicationState::IbkrState(application_state) => {
-            if (is_ibkr_up && application_state.master_client.is_connected()) || !is_ibkr_up {
+            if (is_ibkr_up && application_state.consolidator.client.is_connected()) || !is_ibkr_up {
                 Ok((
                     StatusCode::OK,
                     axum::Json(serde_json::json!({ "status": "ok" })),
