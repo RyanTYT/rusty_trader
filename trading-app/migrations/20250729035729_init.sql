@@ -103,7 +103,7 @@ CREATE TABLE trading.open_stock_orders (
 
     quantity DOUBLE PRECISION NOT NULL,
     filled DOUBLE PRECISION NOT NULL,
-    executions TEXT[] NOT NULL,
+    executions TEXT[] NOT NULL DEFAULT '{}',
 
     PRIMARY KEY (order_perm_id, order_id)
 );
@@ -121,7 +121,7 @@ CREATE TABLE trading.open_option_orders (
 
     quantity DOUBLE PRECISION NOT NULL,
     filled DOUBLE PRECISION NOT NULL,
-    executions TEXT[] NOT NULL,
+    executions TEXT[] NOT NULL DEFAULT "{}",
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
@@ -248,6 +248,25 @@ SELECT add_retention_policy('logs.logs', INTERVAL '3 days');
 ------------------------------------- LOGS -------------------------------------
 
 ------------------------------------- MISCELLANEOUS (strategy specific) -------------------------------------
+CREATE TABLE logs.cancelled_orders (
+    time TIMESTAMPTZ NOT NULL,
+    order_perm_id INTEGER NOT NULL,
+    order_id INTEGER NOT NULL,
+
+    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE CASCADE,
+    stock VARCHAR(50) NOT NULL,
+    primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL,
+
+    quantity DOUBLE PRECISION NOT NULL,
+    filled DOUBLE PRECISION NOT NULL,
+    executions TEXT[] NOT NULL DEFAULT '{}',
+
+    reason VARCHAR NOT NULL,
+
+    PRIMARY KEY (time, order_perm_id, order_id)
+)
+
 CREATE TABLE trading.threshold_rebalancing (
     time TIMESTAMPTZ NOT NULL,
     threshold_equity_prop_000 DOUBLE PRECISION NOT NULL,
