@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -30,9 +31,18 @@ const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 10;
 
 #[derive(Debug, Clone)]
-struct DataSubscription {
-    contract: Contract,
-    what_to_show: WhatToShow,
+pub struct DataSubscription {
+    pub contract: Contract,
+    pub what_to_show: WhatToShow,
+}
+
+impl DataSubscription {
+    pub fn new(contract: Contract, what_to_show: WhatToShow) -> Self {
+        Self {
+            contract,
+            what_to_show,
+        }
+    }
 }
 
 impl Hash for DataSubscription {
@@ -109,6 +119,15 @@ pub enum DbSubscriptionMethod {
 }
 
 impl MarketDataHandler {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            pool,
+            subscriptions: HashMap::new(),
+            live_prices: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .build(),
+        }
+    }
     /// This updates the subscriptions handled
     /// - if subscription already exists, nothing is done,
     /// - if subscription doesn't exst,
@@ -168,5 +187,12 @@ impl MarketDataHandler {
 
     pub fn try_get_price(&self, key: i32) -> Option<f64> {
         self.live_prices.get(&key).map(|v| v.1)
+    }
+
+    pub fn get_subsription(
+        &self,
+        sub: &DataSubscription,
+    ) -> Option<&SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>> {
+        self.subscriptions.get(&sub)
     }
 }

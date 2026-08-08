@@ -10,7 +10,7 @@ use crate::{
             CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
         },
     },
-    helpers::contract::{HashContract, get_contract_from_local_symbol},
+    helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     market_data::{
         consolidator::{Consolidator, MemoisedConsolidatorFns},
         memoise::AnyMemoized,
@@ -82,20 +82,26 @@ impl Consolidator {
         };
 
         for position in positions {
-            let (stock, primary_exchange, currency, quantity) = match position {
-                CurrentPositionsFullKeys::Stock(v) => {
-                    (v.stock, v.primary_exchange, v.currency, v.quantity)
-                }
-                CurrentPositionsFullKeys::Options(v) => {
-                    (v.stock, v.primary_exchange, v.currency, v.quantity)
-                }
+            let (stock, primary_exchange, currency, quantity) = match &position {
+                CurrentPositionsFullKeys::Stock(v) => (
+                    v.stock.clone(),
+                    v.primary_exchange.clone(),
+                    v.currency.clone(),
+                    v.quantity,
+                ),
+                CurrentPositionsFullKeys::Options(v) => (
+                    v.stock.clone(),
+                    v.primary_exchange.clone(),
+                    v.currency.clone(),
+                    v.quantity,
+                ),
             };
 
             if quantity == 0.0 {
                 continue;
             }
 
-            let contract = get_contract_from_local_symbol(&stock, &primary_exchange, &currency);
+            let contract = get_contract_from(&LocalContractTypes::CurrentPosFk(position));
 
             if contract.security_type == SecurityType::ForexPair {
                 let hash_contract = HashContract {
@@ -114,8 +120,13 @@ impl Consolidator {
             }
 
             if currency != "SGD" {
-                let fx_contract =
-                    get_contract_from_local_symbol(&format!("FX:{}/SGD", currency), "", "SGD");
+                let fx_contract = Contract {
+                    symbol: currency.into(),
+                    security_type: ibapi::prelude::SecurityType::ForexPair,
+                    exchange: "IDEALPRO".into(),
+                    currency: "SGD".into(),
+                    ..Default::default()
+                };
                 let hash_contract = HashContract {
                     contract: fx_contract.clone(),
                 };

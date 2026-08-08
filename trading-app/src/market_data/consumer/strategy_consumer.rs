@@ -1,6 +1,6 @@
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 use std::{collections::VecDeque, sync::Arc};
 
 use chrono::Utc;
@@ -74,7 +74,7 @@ impl<const BUFFER_CAPACITY: usize> IbkrBarConsumer<BUFFER_CAPACITY> {
     }
 }
 
-struct StrategyDataBundler<const BUFFER_CAPACITY: usize> {
+pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize> {
     contract_scheduler: Arc<IbkrContractScheduler>,
     is_alive: Arc<AtomicBool>,
 }
@@ -140,7 +140,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
             let strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
                 strategy.on_bar_update(
                     contract,
-                    bar,
+                    &bar,
                     &consolidator
                         .upgrade()
                         .expect("Expected Consolidator to still be alive on_bar_update"),

@@ -43,17 +43,14 @@ pub enum MemoisedConsolidatorFns {
 }
 
 pub struct Consolidator {
-    pub(super) client: Arc<Client>,
+    pub(crate) client: Arc<Client>,
 
     // StrategyScheduler
     pub(super) contract_coordinator: Arc<IbkrContractScheduler>,
-    // pub(super) strat_contracts: Arc<RwLock<HashMap<String, Vec<HashContract>>>>,
 
     // AccountTracker
-    // pub(super) available_funds: Arc<Mutex<Option<f64>>>,
-    // pub(super) available_funds_channel_killer: Arc<Mutex<Option<Arc<()>>>>,
     pub pool: PgPool,
-    pub(super) market_data_handler: MarketDataHandler,
+    pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
     pub(super) handle: tokio::runtime::Handle,
 }
@@ -66,7 +63,6 @@ impl Consolidator {
         market_data_handler: MarketDataHandler,
     ) -> Self {
         let ttl = Duration::from_secs(60);
-        // let available_funds: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
         let mut memoisers: HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>> =
             HashMap::new();
         let get_price_fn: Arc<Box<dyn AnyMemoized>> = Arc::new(Box::new(Memoized::new(
@@ -118,42 +114,12 @@ impl Consolidator {
                 },
             ))),
         );
-        // memoisers.insert(
-        //     MemoisedConsolidatorFns::GetStrategyValue,
-        //     Box::new(Memoized::new(
-        //         ttl,
-        //         |strategy: &str| (strategy.to_string()),
-        //         move |strategy: &str| Self(client, contract, vwap, generic_ticks, is_second_try),
-        //     )),
-        // );
 
         Self {
             pool: pool.clone(),
             client: client.clone(),
             market_data_handler,
-
-            // live_data: Arc::new(RwLock::new(HashMap::new())),
-            // past_strategy_data: Arc::new(
-            //     Cache::builder()
-            //         .time_to_live(Duration::from_mins(60))
-            //         .max_capacity(1000)
-            //         .build(),
-            // ),
-            // past_data: Cache::builder()
-            //     .time_to_live(ttl)
-            //     .max_capacity(max_capacity)
-            //     .build(),
-            // past_data_vwap: Arc::new(
-            //     Cache::builder()
-            //         .time_to_live(ttl)
-            //         .max_capacity(max_capacity)
-            //         .build(),
-            // ),
             contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
-            // strat_contracts: Arc::new(RwLock::new(HashMap::new())),
-            // available_funds: available_funds,
-
-            // available_funds_channel_killer: Arc::new(Mutex::new(None)),
             memoisers: Arc::new(memoisers),
             handle,
         }
@@ -161,15 +127,19 @@ impl Consolidator {
 
     pub fn validate_contract(
         &self,
-        contract: &Contract,
+        contract: Contract,
         timeout_duration: Duration,
     ) -> Option<Contract> {
-        let client = self.client.clone();
-        let cloned_contract = contract.clone();
+        Self::_validate_contract(self.client.clone(), contract, timeout_duration)
+    }
 
-        match timeout(timeout_duration, move || {
-            client.contract_details(&cloned_contract)
-        }) {
+    pub(crate) fn _validate_contract(
+        client: Arc<Client>,
+        contract: Contract,
+        timeout_duration: Duration,
+    ) -> Option<Contract> {
+        let symbol = contract.symbol.clone();
+        match timeout(timeout_duration, move || client.contract_details(&contract)) {
             Ok(validated_contracts) => {
                 if validated_contracts.len() == 0 {
                     return None;
@@ -180,7 +150,7 @@ impl Consolidator {
                 tracing::error!(
                     message=%format!(
                         "Error occurred requesting contract details for {}: {}",
-                        contract.symbol,
+                        symbol,
                         e
                     )
                 );
@@ -1467,7 +1437,7 @@ fn last_bar_available(now: DateTime<Tz>, asset_type: &AssetType) -> Option<DateT
     (last_bar > open_threshold).then_some(last_bar)
 }
 
-fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
+pub(crate) fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
     fn is_fx_market_holiday(date: NaiveDate) -> bool {
         let year = date.year();
 

@@ -17,15 +17,17 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
         .get_new_producer()
         .expect("Expected to be able to get producer for SPMC ring buffer");
     std::thread::spawn(move || {
-        let client = weak_client.upgrade().expect("Expected client to be alive");
-        let subscription = client
-            .realtime_bars(
-                &contract,
-                ibapi::market_data::realtime::BarSize::Sec5,
-                what_to_show,
-                ibapi::market_data::TradingHours::Regular,
-            )
-            .expect("Expected realtime_bars request to succeed!");
+        let subscription = {
+            let client = weak_client.upgrade().expect("Expected client to be alive");
+            client
+                .realtime_bars(
+                    &contract,
+                    ibapi::market_data::realtime::BarSize::Sec5,
+                    what_to_show,
+                    ibapi::market_data::TradingHours::Regular,
+                )
+                .expect("Expected realtime_bars request to succeed!")
+        };
         for bar in subscription.iter() {
             producer.push(bar);
         }
