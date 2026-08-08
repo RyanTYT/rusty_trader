@@ -1,16 +1,8 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use chrono::{TimeDelta, Utc};
-use ibapi::{
-    Client,
-    prelude::{Contract, RealtimeWhatToShow},
-};
+use ibapi::{Client, contracts::Contract, prelude::RealtimeWhatToShow};
 use sqlx::PgPool;
-use tokio::{sync::oneshot::Sender, time::sleep};
+use tokio::time::sleep;
 
 use crate::{
     database::{crud::CRUDTrait, models::StrategyFullKeys, models_crud::strategy::StrategyCRUD},
@@ -20,13 +12,13 @@ use crate::{
         order_update_stream::controller::OrderUpdateStreamController,
         syncer::{SyncOps, SyncerEngine},
     },
-    ibc::{IBGateway, init_ibc_with_retry},
+    ibc::init_ibc_with_retry,
     market_data::{
         consolidator::Consolidator,
         consumer::strategy_consumer::{IbkrBarConsumer, StrategyDataBundler},
         handler::{DataSubscription, DbSubscriptionMethod, MarketDataHandler},
     },
-    schedule::contract_scheduler::IbkrContractScheduler,
+    schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler},
     strategy::{
         manual::Manual,
         noise::Noise,
@@ -47,7 +39,6 @@ pub enum ApplicationState {
 pub struct StrategyParameters {
     pub(crate) strategy: StrategyEnum,
     // used to provide time for warm up before market open so be conservative
-    estimated_time_to_warm_up: Duration,
     pub(crate) subscribed_contracts: Vec<DataSubscription>,
 }
 
@@ -67,7 +58,6 @@ pub fn init_strategies(
         .clone();
     let noise_strat_params = StrategyParameters {
         strategy: noise.clone(),
-        estimated_time_to_warm_up: Duration::from_secs(40),
         subscribed_contracts: vec![DataSubscription::new(
             noise_contract.clone(),
             RealtimeWhatToShow::Trades,
@@ -81,7 +71,6 @@ pub fn init_strategies(
         .clone();
     let manual_params = StrategyParameters {
         strategy: manual.clone(),
-        estimated_time_to_warm_up: Duration::from_secs(1),
         subscribed_contracts: vec![DataSubscription::new(
             manual_contract.clone(),
             RealtimeWhatToShow::Trades,
@@ -95,7 +84,6 @@ pub fn init_strategies(
         .clone();
     let unknown_params = StrategyParameters {
         strategy: unknown.clone(),
-        estimated_time_to_warm_up: Duration::from_secs(1),
         subscribed_contracts: vec![DataSubscription::new(
             unknown_contract.clone(),
             RealtimeWhatToShow::Trades,
@@ -109,7 +97,7 @@ pub fn init_strategies(
         handle.clone().block_on(async move {
             if let Err(e) = strategy_crud
                 .create_or_ignore(&StrategyFullKeys {
-                    strategy: "unknown".to_string(),
+                    strategy: strat_param.strategy.get_name(),
                     status: crate::database::models::Status::Active,
                 })
                 .await
@@ -202,8 +190,23 @@ pub async fn init_app(
         Arc::downgrade(&master_client),
         strategy_map,
         Some(default_strategy.clone()),
+        tokio::runtime::Handle::current(),
     );
-    let contract_scheduler = Arc::new(IbkrContractScheduler::new(client_1.clone()));
+    let mut raw_contract_scheduler = IbkrContractScheduler::new(client_1.clone());
+    if let Err(e) = raw_contract_scheduler.add_all_schedules(
+        strat_params
+            .iter()
+            .flat_map(|strat_param| {
+                strat_param
+                    .subscribed_contracts
+                    .iter()
+                    .map(|subscription| subscription.contract.clone())
+            })
+            .collect::<Vec<Contract>>(),
+    ) {
+        tracing::error!("Failed to add all schedules of contracts: {e:?}");
+    };
+    let contract_scheduler = Arc::new(raw_contract_scheduler);
     // populate contract_scheduler with full contract with correct contract ids
     let mut mkt_data_handler = MarketDataHandler::new(pool.clone());
     mkt_data_handler.load_all_subscription_producers(
@@ -225,7 +228,12 @@ pub async fn init_app(
     let backed_up_orders =
         Arc::new(OrderStore::open().expect("Expected opening order store to work"));
 
-    let syncer = SyncerEngine::new(pool.clone(), account.to_string(), &strat_params);
+    let syncer = SyncerEngine::new(
+        pool.clone(),
+        account.to_string(),
+        &strat_params,
+        tokio::runtime::Handle::current(),
+    );
     syncer.sync_open_orders(
         &master_client,
         &consolidator,
@@ -248,7 +256,7 @@ pub async fn init_app(
             s.spawn(|| {
                 if let Err(e) = strat_param.strategy.warm_up_data(&consolidator) {
                     tracing::error!(
-                        "Failed to initialise strategy: {}",
+                        "Failed to initialise strategy ({}): {e:?}",
                         strat_param.strategy.get_name()
                     )
                 };
