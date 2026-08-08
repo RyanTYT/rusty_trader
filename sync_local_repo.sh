@@ -2,14 +2,19 @@
 #
 # sync_to_pub.sh
 #
-# Syncs new commits from the local "APP" repo into the sibling public
-# "APP_PUB" repo, using git format-patch + git am, applying the
-# strategy-folder include/exclude rules automatically.
+# Syncs new commits from the local "APP" repo (rust-highsierra branch)
+# into the sibling public "APP_PUB" repo, using git format-patch + git am.
+#
+# Range is determined by DATE, not by a stored marker: it takes the
+# author date of APP_PUB's current HEAD commit, and syncs every commit
+# on APP's rust-highsierra branch authored strictly after that date.
+# This works because every sync applies patches with
+# --committer-date-is-author-date, so APP_PUB's HEAD author date always
+# matches the original commit's date in APP.
 #
 # Usage:
-#   ./sync_to_pub.sh                # sync all new commits since last sync
-#   ./sync_to_pub.sh --dry-run       # just show what would be patched
-#   ./sync_to_pub.sh --reset-marker <sha>   # manually set the sync marker
+#   ./sync_to_pub.sh              # sync all commits newer than APP_PUB's HEAD date
+#   ./sync_to_pub.sh --dry-run    # just show what would be patched
 #
 # Run this script from anywhere; paths below are resolved relative to
 # its own location (assumes APP and APP_PUB are sibling folders).
@@ -25,7 +30,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/APP"          # local (private) repo
 PUB_DIR="$SCRIPT_DIR/APP_PUB"      # public repo
 PATCH_DIR="$APP_DIR/.sync-patches" # scratch dir for patch files
-MARKER_FILE="$PUB_DIR/.last-synced-commit"
 
 # Only commits on this branch (in APP) are ever synced to the public repo.
 # Referenced by name via plumbing commands below — does NOT require this
@@ -57,16 +61,10 @@ STRATEGY_KEEP_DIR="trading-app/src/strategy/helpers"
 # ---------------------------------------------------------------------------
 
 DRY_RUN=false
-RESET_MARKER=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
-    --reset-marker)
-      RESET_MARKER="${2:-}"
-      [[ -z "$RESET_MARKER" ]] && { echo "error: --reset-marker requires a commit SHA"; exit 1; }
-      shift 2
-      ;;
     *) echo "unknown option: $1"; exit 1 ;;
   esac
 done
@@ -78,53 +76,48 @@ if [[ ! -d "$PUB_DIR/.git" ]]; then
   echo "error: PUB_DIR ($PUB_DIR) is not a git repo"; exit 1
 fi
 
-if [[ -n "$RESET_MARKER" ]]; then
-  mkdir -p "$PUB_DIR"
-  echo "$RESET_MARKER" > "$MARKER_FILE"
-  echo "Marker reset to $RESET_MARKER"
-  exit 0
-fi
-
 # ---------------------------------------------------------------------------
-# DETERMINE RANGE
+# DETERMINE RANGE — by date, based on APP_PUB's current HEAD
 # ---------------------------------------------------------------------------
 
-cd "$APP_DIR"
-
-if ! git show-ref --verify --quiet "refs/heads/$SYNC_BRANCH"; then
+if ! git -C "$APP_DIR" show-ref --verify --quiet "refs/heads/$SYNC_BRANCH"; then
   echo "error: branch '$SYNC_BRANCH' not found in APP repo ($APP_DIR)"
   exit 1
 fi
 
-if [[ -f "$MARKER_FILE" ]]; then
-  LAST_SYNCED="$(cat "$MARKER_FILE")"
-  if ! git cat-file -e "${LAST_SYNCED}^{commit}" 2>/dev/null; then
-    echo "error: marker commit $LAST_SYNCED not found in APP repo history."
-    echo "Fix or reset it with: $0 --reset-marker <sha>"
-    exit 1
-  fi
-else
-  echo "No marker file found at $MARKER_FILE."
-  echo "This looks like the first sync. Defaulting to the repo's root commit."
-  echo "If that's wrong, abort and run: $0 --reset-marker <sha>"
-  read -r -p "Continue with full history? [y/N] " CONFIRM
-  [[ "$CONFIRM" =~ ^[Yy]$ ]] || exit 1
-  LAST_SYNCED="$(git rev-list --max-parents=0 "$SYNC_BRANCH" | tail -1)"
-fi
+# Author date (ISO 8601, with timezone) of APP_PUB's latest commit.
+CUTOFF_DATE="$(git -C "$PUB_DIR" log -1 --format=%aI)"
+CUTOFF_SUBJECT="$(git -C "$PUB_DIR" log -1 --format=%s)"
 
-NEW_HEAD="$(git rev-parse "$SYNC_BRANCH")"
+echo "APP_PUB HEAD: \"$CUTOFF_SUBJECT\" ($CUTOFF_DATE)"
+echo "Syncing commits on '$SYNC_BRANCH' authored after that date..."
 
-if [[ "$LAST_SYNCED" == "$NEW_HEAD" ]]; then
-  echo "Nothing to sync — APP is already at the last-synced commit."
+COMMIT_COUNT="$(git -C "$APP_DIR" rev-list --count --since="$CUTOFF_DATE" "$SYNC_BRANCH")"
+if [[ "$COMMIT_COUNT" -eq 0 ]]; then
+  echo "Nothing to sync — no commits on '$SYNC_BRANCH' newer than APP_PUB's HEAD date."
   exit 0
 fi
+echo "Found $COMMIT_COUNT commit(s) newer than the cutoff."
 
-COMMIT_COUNT="$(git rev-list --count "$LAST_SYNCED..$NEW_HEAD")"
-echo "Found $COMMIT_COUNT new commit(s) to sync ($LAST_SYNCED..$NEW_HEAD)"
+# Resolve the date filter into an explicit two-dot commit range ourselves.
+# NOTE: we deliberately do NOT hand `--since` + a bare single ref straight
+# to `git format-patch` — format-patch special-cases a lone revision
+# argument to mean "just that one commit" (unlike `git log`/`git rev-list`,
+# which walk full history from it), so combining it with --since silently
+# produces zero patches instead of the expected filtered range.
+OLDEST_COMMIT="$(git -C "$APP_DIR" rev-list --since="$CUTOFF_DATE" "$SYNC_BRANCH" | tail -1)"
+if git -C "$APP_DIR" rev-parse --verify -q "${OLDEST_COMMIT}^" >/dev/null; then
+  PATCH_RANGE="${OLDEST_COMMIT}^..$SYNC_BRANCH"
+else
+  # OLDEST_COMMIT is the repo's root commit — no parent to range from.
+  PATCH_RANGE="--root $SYNC_BRANCH"
+fi
 
 # ---------------------------------------------------------------------------
 # BUILD EXCLUDE PATHSPECS FOR THE STRATEGY FOLDER
 # ---------------------------------------------------------------------------
+
+cd "$APP_DIR"
 
 STRATEGY_EXCLUDES=()
 while IFS= read -r f; do
@@ -150,15 +143,12 @@ EXCLUDE_PATHSPECS+=("${STRATEGY_EXCLUDES[@]}")
 rm -rf "$PATCH_DIR"
 mkdir -p "$PATCH_DIR"
 
-git format-patch "$LAST_SYNCED..$NEW_HEAD" -o "$PATCH_DIR" -- . "${EXCLUDE_PATHSPECS[@]}"
+cd "$APP_DIR"
+git format-patch $PATCH_RANGE -o "$PATCH_DIR" -- . "${EXCLUDE_PATHSPECS[@]}"
 
 PATCH_FILES=("$PATCH_DIR"/*.patch)
 if [[ ! -e "${PATCH_FILES[0]}" ]]; then
   echo "No patches generated (all changes may have been in excluded paths)."
-  echo "Updating marker to $NEW_HEAD anyway."
-  if ! $DRY_RUN; then
-    echo "$NEW_HEAD" > "$MARKER_FILE"
-  fi
   exit 0
 fi
 
@@ -170,7 +160,7 @@ if $DRY_RUN; then
   for p in "${PATCH_FILES[@]}"; do
     basename "$p"
   done
-  echo "(marker NOT updated, nothing applied — rerun without --dry-run to apply)"
+  echo "(nothing applied — rerun without --dry-run to apply)"
   exit 0
 fi
 
@@ -183,14 +173,10 @@ cd "$PUB_DIR"
 echo
 echo "Applying patches to $PUB_DIR ..."
 if git am --committer-date-is-author-date "$PATCH_DIR"/*.patch; then
-  echo "$NEW_HEAD" > "$MARKER_FILE"
-  git add "$MARKER_FILE" 2>/dev/null || true
-  if ! git diff --cached --quiet; then
-    git commit -m "chore: update sync marker to $NEW_HEAD" >/dev/null
-  fi
   rm -rf "$PATCH_DIR"
   echo
-  echo "✅ Synced successfully. Marker updated to $NEW_HEAD."
+  echo "✅ Synced successfully."
+  echo "APP_PUB's new HEAD date will be the cutoff for the next run."
 else
   echo
   echo "⚠️  git am stopped partway through (conflict or missing path)."
@@ -199,9 +185,10 @@ else
   echo "  git am --skip       (to skip the offending patch)"
   echo "  git am --abort      (to bail out entirely)"
   echo
-  echo "Once 'git am' reports no session in progress, re-run this script"
-  echo "with:  $0 --reset-marker $NEW_HEAD"
-  echo "to mark everything up to $NEW_HEAD as synced (only do this once"
-  echo "you've confirmed all patches were actually applied or intentionally skipped)."
+  echo "IMPORTANT: because the range is date-based (not marker-based), if you"
+  echo "'--skip' a patch, that commit's changes will NOT be retried on the next"
+  echo "run — the next run's cutoff is simply APP_PUB's new HEAD date, and any"
+  echo "skipped commit's date will already be earlier than that. If you need"
+  echo "it applied, resolve it manually now rather than skipping."
   exit 1
 fi
