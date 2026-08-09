@@ -8,6 +8,7 @@ use ibapi::{
     contracts::Contract,
     market_data::realtime::{Bar, WhatToShow},
 };
+use time::OffsetDateTime;
 
 use crate::{
     database::models_crud::historical_data::historical_data::HistoricalDataFullKeys,
@@ -48,15 +49,24 @@ pub fn aggregate_bars(
     }
 
     let mut agg_bars = Vec::new();
+
     while !collected_bars.is_empty() {
-        // Process first bar first
         let first_bar = collected_bars.pop_front().unwrap();
-        let bar_time = first_bar.date.unix_timestamp();
-        let prev_bar_time = bar_time - 5;
-        let bar_no = bar_time - (bar_time % bar_time_width);
-        tracing::warn!("Bar Time: {bar_time:?}, bar_no: {bar_no:?}");
-        let prev_bar_no = prev_bar_time - (prev_bar_time % bar_time_width);
-        let has_first_bar = prev_bar_no != bar_no;
+
+        // 1. Calculate the bucket start time using OffsetDateTime directly
+        // Assuming bar_time_width is in seconds (e.g. 5 for 5-second bars, 60 for 1-minute bars)
+        let current_ts = first_bar.date.unix_timestamp();
+        let bucket_ts = current_ts - current_ts.rem_euclid(bar_time_width as i64);
+
+        // Create the rounded bar_date directly from the bucket timestamp
+        let bar_date = OffsetDateTime::from_unix_timestamp(bucket_ts)
+            .expect("Valid unix timestamp")
+            .to_offset(first_bar.date.offset()); // Retain original offset if needed
+
+        // Check if previous bar was in a different bucket
+        let prev_ts = current_ts - 5;
+        let prev_bucket_ts = prev_ts - prev_ts.rem_euclid(bar_time_width as i64);
+        let has_first_bar = prev_bucket_ts != bucket_ts;
 
         let (open, mut high, mut low, mut close, mut volume) = (
             first_bar.open,
@@ -66,34 +76,38 @@ pub fn aggregate_bars(
             first_bar.volume,
         );
 
-        loop {
-            if collected_bars.is_empty() {
-                break;
-            }
-            let this_bar_date = &collected_bars.front().unwrap().date.unix_timestamp();
-            let this_bar_no = this_bar_date - (this_bar_date % bar_time_width);
-            if bar_no != this_bar_no {
+        // 2. Aggregate inner bars
+        while let Some(front) = collected_bars.front() {
+            let front_ts = front.date.unix_timestamp();
+            let front_bucket_ts = front_ts - front_ts.rem_euclid(bar_time_width as i64);
+
+            if front_bucket_ts != bucket_ts {
                 break;
             }
 
-            let first_bar = &collected_bars.pop_front().unwrap();
-            high = f64::max(high, first_bar.high);
-            low = f64::min(low, first_bar.low);
-            close = first_bar.close;
-            volume += first_bar.volume;
+            let bar = collected_bars.pop_front().unwrap();
+            high = high.max(bar.high);
+            low = low.min(bar.low);
+            close = bar.close;
+            volume += bar.volume;
         }
+
         tracing::info!("Has first bar: {has_first_bar:?}");
+
+        // 3. Convert OffsetDateTime to chrono::DateTime<Utc> if HistoricalDataFullKeys requires chrono
+        let chrono_bar_date = chrono::DateTime::from_timestamp(bar_date.unix_timestamp(), 0)
+            .expect("Valid chrono timestamp");
 
         agg_bars.push(HistoricalDataFullKeys::from_data(
             &contract,
             &what_to_show,
-            Utc.timestamp_opt(bar_no, 0).unwrap(),
+            chrono_bar_date, // Or pass `bar_date` directly if it accepts time::OffsetDateTime
             open,
             high,
             low,
             close,
             volume,
-        ))
+        ));
     }
 
     agg_bars
