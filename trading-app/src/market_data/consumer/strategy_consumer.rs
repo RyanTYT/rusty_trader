@@ -129,7 +129,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
         client: Weak<Client>,
         order_store: Weak<OrderStore>,
     ) {
-        if !self.is_alive.swap(true, Ordering::AcqRel) {
+        if self.is_alive.swap(true, Ordering::AcqRel) {
             // Already started.
             return;
         }
@@ -138,10 +138,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
         Self::sort_consumers(&mut consumers);
         let contract_scheduler = self.contract_scheduler.clone();
         std::thread::Builder::new()
-            .name(format!(
-                "Strategy ({}) Consumer Thread",
-                strategy.get_name()
-            ))
+            .name(format!("{}_strat", strategy.get_name()))
             .spawn(move || {
                 let strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
                     strategy.on_bar_update(
