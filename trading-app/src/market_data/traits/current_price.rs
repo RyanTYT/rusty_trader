@@ -478,9 +478,13 @@ impl Consolidator {
                                         e,
                                         yt
                                     );
-                                    let yfinance_price = Self::get_price_from_yfinance(&yt)?;
-                                    return yfinance_price
-                                        .ok_or("Failed to fetch data from yfinance".to_string());
+                                    return match Self::get_price_from_yfinance(&yt) {
+                                        Ok(Some(price)) => Ok(price),
+                                        Ok(None) => {
+                                            Err(format!("yfinance returned no price data for {yt}"))
+                                        }
+                                        Err(err) => Err(format!("yfinance error for {yt}: {err}")),
+                                    };
                                 }
                                 None => {
                                     // No Yahoo mapping — fall through to normal retry/error path
