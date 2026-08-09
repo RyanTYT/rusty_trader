@@ -33,6 +33,7 @@ COPY Cargo.toml Cargo.lock ./
 # Copy local dependencies and migrations (needed at compile time)
 COPY crud_insertable ./crud_insertable
 COPY crud_models ./crud_models
+COPY spmc-ring ./spmc-ring
 COPY .sqlx ./.sqlx
 COPY migrations ./migrations
 

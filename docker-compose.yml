@@ -61,6 +61,17 @@ services:
       autoheal:
         condition: service_started
 
+  hotpath-console:
+    build:
+      context: ./hotpath-console
+    network_mode: "service:trading-bot"
+    stdin_open: true
+    tty: true
+    profiles: ["debug"] # excluded from a normal `docker compose up`
+    depends_on:
+      trading-bot:
+        condition: service_started
+
   backend:
     build:
       context: ./backend # assumes Dockerfile is in the root directory
