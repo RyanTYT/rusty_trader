@@ -153,6 +153,7 @@ impl MarketDataHandler {
         contract_scheduler: Arc<IbkrContractScheduler>,
         subscriptions: Vec<DataSubscription>,
         subscription_method: DbSubscriptionMethod,
+        rt_handle: tokio::runtime::Handle,
     ) {
         let mut new_consumers = vec![];
         for subscription in subscriptions.into_iter() {
@@ -181,6 +182,7 @@ impl MarketDataHandler {
                         contract_scheduler.clone(),
                         consumer,
                         self.live_prices.clone(),
+                        rt_handle.clone(),
                     ));
                 }
             }
@@ -190,6 +192,7 @@ impl MarketDataHandler {
                     contract_scheduler.clone(),
                     new_consumers,
                     self.live_prices.clone(),
+                    rt_handle.clone(),
                 ));
             }
         }

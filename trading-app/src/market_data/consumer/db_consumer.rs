@@ -45,8 +45,8 @@ pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
     contract_scheduler: Arc<IbkrContractScheduler>,
     consumer: IbkrBarConsumer<BUFFER_CAPACITY>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
+    rt_handle: tokio::runtime::Handle::current()
 ) -> MarketDataDbConsumer {
-    let rt_handle = tokio::runtime::Handle::current();
     let is_alive = Arc::new(AtomicBool::new(false));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
@@ -151,8 +151,8 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
     contract_scheduler: Arc<IbkrContractScheduler>,
     consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY>>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
+    rt_handle: tokio::runtime::Handle
 ) -> MarketDataDbConsumer {
-    let rt_handle = tokio::runtime::Handle::current();
     let is_alive = Arc::new(AtomicBool::new(false));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
