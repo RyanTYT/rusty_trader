@@ -59,7 +59,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     std::thread::Builder::new()
         .name(
             format!(
-                "({}, {}) Producer Thread",
+                "{}_{}_prod",
                 contract.symbol, 
                 contract.security_type
             )
