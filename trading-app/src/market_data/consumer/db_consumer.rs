@@ -47,12 +47,12 @@ pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
     cache: Cache<i32, (DateTime<Utc>, f64)>,
     rt_handle: tokio::runtime::Handle,
 ) -> MarketDataDbConsumer {
-    let is_alive = Arc::new(AtomicBool::new(false));
+    let is_alive = Arc::new(AtomicBool::new(true));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
     std::thread::Builder::new()
         .name(format!(
-            "({}, {}) Consumer Thread",
+            "{}_{}_consumer",
             consumer.contract.symbol, consumer.contract.security_type
         ))
         .spawn(move || {
@@ -153,12 +153,12 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
     cache: Cache<i32, (DateTime<Utc>, f64)>,
     rt_handle: tokio::runtime::Handle,
 ) -> MarketDataDbConsumer {
-    let is_alive = Arc::new(AtomicBool::new(false));
+    let is_alive = Arc::new(AtomicBool::new(true));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
     std::thread::Builder::new()
         .name(format!(
-            "({}, {}) Consumer Thread",
+            "{}_{}_consumer",
             consumers
                 .first()
                 .expect("Expected consumers argument to not be empty")
