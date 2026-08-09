@@ -67,6 +67,7 @@ impl FormatTime for NewYorkTime {
     }
 }
 
+#[hotpath::main]
 #[tokio::main]
 async fn main() {
     // ================== INITIALISATION ======================
