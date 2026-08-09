@@ -219,7 +219,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
-                                                        &Some(&agg_bars[slot + 1]),
+                                                        &Some(&agg_bars[idx + 1]),
                                                         strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
@@ -252,7 +252,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
-                                                        &Some(&agg_bars[slot - 1]),
+                                                        &Some(&agg_bars[idx - 1]),
                                                         strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
