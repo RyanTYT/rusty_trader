@@ -125,7 +125,9 @@ impl HistoricalDataFullKeys {
                     high,
                     low,
                     close,
-                    volume: Decimal::from_f64(volume).expect(""),
+                    volume: Decimal::from_f64(volume).expect(&format!(
+                        "Expected volume ({volume}) to be convertible to Dec"
+                    )),
                 })
             }
             AssetType::Option => HistoricalDataFullKeys::Options(HistoricalOptionsDataFullKeys {
@@ -142,7 +144,7 @@ impl HistoricalDataFullKeys {
                 high,
                 low,
                 close,
-                volume: Decimal::from_f64(volume).expect(""),
+                volume: Decimal::from_f64(volume).expect("Expected volume ({volume}) to be convertible to Dec"),
             }),
             AssetType::ForexPair => match what_to_show {
                 WhatToShow::Bid => Self::Forex(HistoricalForexDataFullKeys {
