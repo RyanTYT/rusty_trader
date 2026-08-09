@@ -129,7 +129,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
         client: Weak<Client>,
         order_store: Weak<OrderStore>,
     ) {
-        if self.is_alive.swap(true, Ordering::AcqRel) {
+        if !self.is_alive.swap(true, Ordering::AcqRel) {
             // Already started.
             return;
         }
