@@ -25,7 +25,7 @@ use crate::{
             },
             strategy_consumer::IbkrBarConsumer,
         },
-        producer::subscribe_to_data,
+        producer::{MarketDataProducer, subscribe_to_data},
     },
     schedule::contract_scheduler::IbkrContractScheduler,
 };
@@ -110,11 +110,13 @@ impl PartialEq for DataSubscription {
 
 impl Eq for DataSubscription {}
 
+// This struct will basically help manage the lifetimes of consumers and producers
 pub struct MarketDataHandler {
     pool: PgPool,
     subscriptions: HashMap<DataSubscription, SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>,
     live_prices: Cache<i32, (DateTime<Utc>, f64)>,
     db_consumers: Vec<MarketDataDbConsumer>,
+    client_producers: Vec<MarketDataProducer>,
 }
 
 pub enum DbSubscriptionMethod {
@@ -131,6 +133,7 @@ impl MarketDataHandler {
                 .time_to_live(Duration::from_secs(60))
                 .build(),
             db_consumers: vec![],
+            client_producers: vec![],
         }
     }
     /// This updates the subscriptions handled
@@ -154,11 +157,13 @@ impl MarketDataHandler {
         let mut new_consumers = vec![];
         for subscription in subscriptions.into_iter() {
             if !self.subscriptions.contains_key(&subscription) {
-                let ring_buffer = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+                let (ring_buffer, producer) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
                     client.clone(),
                     subscription.contract.clone(),
                     subscription.what_to_show.clone(),
+                    contract_scheduler.clone(),
                 );
+                self.client_producers.push(producer);
                 new_consumers.push(IbkrBarConsumer::<BUFFER_SIZE>::new(
                     subscription.contract.clone(),
                     subscription.what_to_show.clone(),
