@@ -51,10 +51,10 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     let metric_is_trading = format!("{symbol_key}_is_trading");
     let metric_missed_bar = format!("{symbol_key}_missed_bars");
     let metric_sub_errors = format!("{symbol_key}_sub_errors");
-    hotpath::gauge!(&metric_push_retries).set(0);
-    hotpath::gauge!(&metric_is_trading).set(1.0);
-    hotpath::gauge!(&metric_missed_bar).set(0);
-    hotpath::gauge!(&metric_sub_errors).set(0);
+    hotpath::gauge!(metric_push_retries.as_str()).set(0);
+    hotpath::gauge!(metric_is_trading.as_str()).set(1.0);
+    hotpath::gauge!(metric_missed_bar.as_str()).set(0);
+    hotpath::gauge!(metric_sub_errors.as_str()).set(0);
 
     std::thread::Builder::new()
         .name(
@@ -98,7 +98,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                     "Expected contract for producer sub to be in tracked contracts!",
                                 )
                             {
-                                hotpath::gauge!(&metric_is_trading).set(0.0);
+                                hotpath::gauge!(metric_is_trading.as_str()).set(0.0);
                                 let deadline = contract_scheduler
                                     .get_next_earliest_available_data(&contracts, &Utc::now())
                                     .expect(
@@ -117,7 +117,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                 }
                             }
 
-                            hotpath::gauge!(&metric_is_trading).set(1.0);
+                            hotpath::gauge!(metric_is_trading.as_str()).set(1.0);
                             match hotpath::measure_block!("bar_next_timeout_wait", {
                                 subscription.next_timeout(Duration::from_secs(20))
                             }) {
@@ -131,7 +131,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                                 Err(returned_bar) => {
                                                     bar = returned_bar;
                                                     try_times += 1;
-                                                    hotpath::gauge!(&metric_push_retries).inc(1);
+                                                    hotpath::gauge!(metric_push_retries.as_str()).inc(1);
                                                     if try_times == MAX_SUB_TRY_TIMES {
                                                         tracing::error!(
                                                             "Consumer either too slow \
@@ -158,14 +158,14 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                             to be in tracked contracts!",
                                         )
                                     {
-                                        hotpath::gauge!(&metric_missed_bar).inc(1);
+                                        hotpath::gauge!(metric_missed_bar.as_str()).inc(1);
                                         if let Some(e) = subscription.error() {
                                             tracing::error!(
                                                 "Subscription for ({}, {}) errored out ({e:?}): retrying...",
                                                 contract.symbol,
                                                 contract.security_type
                                             );
-                                            hotpath::gauge!(&metric_sub_errors).inc(1);
+                                            hotpath::gauge!(metric_sub_errors.as_str()).inc(1);
                                             // go to outer loop to try to re-subscribe
                                             break 'inner_loop;
                                         }
