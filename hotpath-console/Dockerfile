@@ -1,4 +1,4 @@
-FROM rust:1.85.1-slim-bullseye AS build
+FROM rust:1.88-slim-bullseye AS build
 RUN cargo install hotpath --features=tui --version '^0.23'
 
 FROM debian:bullseye-slim

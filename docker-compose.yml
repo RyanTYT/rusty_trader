@@ -44,6 +44,7 @@ services:
       - ALPACA_API_KEY=${ALPACA_API_KEY}
       - ALPACA_API_SECRET=${ALPACA_API_SECRET}
       - TRADING_TYPE=paper
+      - RUST_BACKTRACE=1
     ports:
       - 7462:7462
       - 4002:4002
@@ -67,7 +68,6 @@ services:
     network_mode: "service:trading-bot"
     stdin_open: true
     tty: true
-    profiles: ["debug"] # excluded from a normal `docker compose up`
     depends_on:
       trading-bot:
         condition: service_started
@@ -230,6 +230,7 @@ services:
       - AUTOHEAL_CONTAINER_LABEL=all
       - AUTOHEAL_INTERVAL=300
       - AUTOHEAL_DEFAULT_STOP_TIMEOUT=20
+      - TZ=Asia/Singapore
     image: willfarrell/autoheal:latest
     network_mode: none
     restart: always

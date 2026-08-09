@@ -26,6 +26,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 ENV SQLX_OFFLINE=true
+ENV CARGO_FEATURES=hotpath,hotpath-alloc,hotpath-cpu
 
 # Copy manifests first (for better caching of dependencies)
 COPY Cargo.toml Cargo.lock ./
