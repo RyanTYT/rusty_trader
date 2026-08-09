@@ -93,9 +93,10 @@ impl PriceSupplier for Consolidator {
         // just move it straight into the tuple.
         let result = entry.call_any(Box::new((client, contract, vwap, ticks_owned, false)))?;
 
-        *result
-            .downcast::<Result<f64, String>>()
-            .unwrap_or_else(|_| panic!("AnyMemoized: return type mismatch for GetPrice"))
+        result
+            .downcast::<f64>()
+            .map(|v| *v)
+            .map_err(|e| format!("AnyMemoized: return type mismatch for GetPrice"))
     }
 
     // If is_forex is true, what_to_show is ignored - takes both bid and ask
