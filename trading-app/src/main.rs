@@ -68,8 +68,13 @@ impl FormatTime for NewYorkTime {
 }
 
 #[hotpath::main]
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Runtime::new().expect("Expected to be able to make main tokio thread");
+    rt.block_on(async { tokio_main().await });
+}
+
+// #[tokio::main]
+async fn tokio_main() {
     // ================== INITIALISATION ======================
     let database_url = std::env::var("DATABASE_URL")
         .expect("Expected DATABASE_URL environment variable to be set!");
