@@ -54,7 +54,6 @@ pub fn aggregate_bars(
         let bar_time = first_bar.date.unix_timestamp();
         let prev_bar_time = bar_time - 5;
         let bar_no = bar_time - (bar_time % bar_time_width);
-        tracing::warn!("Bar Time: {bar_time:?}, bar_no: {bar_no:?}");
         let prev_bar_no = prev_bar_time - (prev_bar_time % bar_time_width);
         let has_first_bar = prev_bar_no != bar_no;
 
@@ -64,6 +63,9 @@ pub fn aggregate_bars(
             first_bar.low,
             first_bar.close,
             first_bar.volume,
+        );
+        tracing::warn!(
+            "Bar Time: {bar_time:?}, bar_no: {bar_no:?}, open: {open:?}, high: {high:?}, low: {low:?}, close: {close:?}"
         );
 
         loop {
