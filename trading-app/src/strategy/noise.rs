@@ -71,6 +71,7 @@ impl Noise {
     }
 }
 
+#[hotpath::measure_all]
 impl StrategyExecutor for Noise {
     fn get_name(&self) -> String {
         self.name.clone()
@@ -128,6 +129,7 @@ impl StrategyExecutor for Noise {
     }
 }
 
+#[hotpath::measure_all]
 impl Noise {
     fn _on_bar_update(
         &self,
@@ -143,54 +145,68 @@ impl Noise {
         let historical_data_crud_orig =
             HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
         let historical_data_crud = historical_data_crud_orig.clone();
-        let avg_move_since_open_thread = self.tokio_handle.spawn(async move {
-            historical_data_crud
-                .get_avg_move_since_open(HistoricalStockDataPrimaryKeysWoTime {
-                    stock: "QQQ".to_string(),
-                    primary_exchange: "NASDAQ".to_string(),
-                    currency: "USD".to_string(),
-                })
-                // .get_avg_move_since_open("QQQ", "NASDAQ", "USD")
-                .await
-                .map_err(|e| format!("{}", e))
-        });
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let most_recent_open_thread = self.tokio_handle.spawn(async move {
-            historical_data_crud
-                .get_most_recent_daily_open(HistoricalStockDataPrimaryKeysWoTime {
-                    stock: "QQQ".to_string(),
-                    primary_exchange: "NASDAQ".to_string(),
-                    currency: "USD".to_string(),
-                })
-                .await
-                .map_err(|e| format!("{}", e))
-        });
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let most_recent_daily_vol_thread = self.tokio_handle.spawn(async move {
-            historical_data_crud
-                .get_daily_vol(HistoricalStockDataPrimaryKeysWoTime {
-                    stock: "QQQ".to_string(),
-                    primary_exchange: "NASDAQ".to_string(),
-                    currency: "USD".to_string(),
-                })
-                .await
-                .map_err(|e| format!("{}", e))
-        });
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let vwap_thread = self.tokio_handle.spawn(async move {
-            historical_data_crud
-                .read_last_vwap(
-                    HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+        let avg_move_since_open_thread = self.tokio_handle.spawn(hotpath::future!(
+            async move {
+                historical_data_crud
+                    .get_avg_move_since_open(HistoricalStockDataPrimaryKeysWoTime {
                         stock: "QQQ".to_string(),
                         primary_exchange: "NASDAQ".to_string(),
                         currency: "USD".to_string(),
-                    }),
-                    Some("US/Eastern".to_string()),
-                    VwapBarValue::Close,
-                )
-                .await
-                .map_err(|e| format!("{}", e))
-        });
+                    })
+                    // .get_avg_move_since_open("QQQ", "NASDAQ", "USD")
+                    .await
+                    .map_err(|e| format!("{}", e))
+            },
+            label = "noise_get_avg_move_since_open"
+        ));
+        let historical_data_crud = historical_data_crud_orig.clone();
+        let most_recent_open_thread = self.tokio_handle.spawn(hotpath::future!(
+            async move {
+                historical_data_crud
+                    .get_most_recent_daily_open(HistoricalStockDataPrimaryKeysWoTime {
+                        stock: "QQQ".to_string(),
+                        primary_exchange: "NASDAQ".to_string(),
+                        currency: "USD".to_string(),
+                    })
+                    .await
+                    .map_err(|e| format!("{}", e))
+            },
+            label = "noise_get_most_recent_daily_open"
+        ));
+        let historical_data_crud = historical_data_crud_orig.clone();
+        let most_recent_daily_vol_thread = self.tokio_handle.spawn(hotpath::future!(
+            async move {
+                historical_data_crud
+                    .get_daily_vol(HistoricalStockDataPrimaryKeysWoTime {
+                        stock: "QQQ".to_string(),
+                        primary_exchange: "NASDAQ".to_string(),
+                        currency: "USD".to_string(),
+                    })
+                    .await
+                    .map_err(|e| format!("{}", e))
+            },
+            label = "noise_get_daily_vol"
+        ));
+        let historical_data_crud = historical_data_crud_orig.clone();
+        let vwap_thread = self.tokio_handle.spawn(hotpath::future!(
+            async move {
+                historical_data_crud
+                    .read_last_vwap(
+                        HistoricalDataPrimaryKeysWoTime::Stock(
+                            HistoricalStockDataPrimaryKeysWoTime {
+                                stock: "QQQ".to_string(),
+                                primary_exchange: "NASDAQ".to_string(),
+                                currency: "USD".to_string(),
+                            },
+                        ),
+                        Some("US/Eastern".to_string()),
+                        VwapBarValue::Close,
+                    )
+                    .await
+                    .map_err(|e| format!("{}", e))
+            },
+            label = "noise_read_last_vwap"
+        ));
         // let historical_data_crud = historical_data_crud_orig.clone();
         // let current_price_thread = self.tokio_handle.spawn(async move {
         //     historical_data_crud
@@ -223,15 +239,17 @@ impl Noise {
             vwap_joined,
             // current_price_joined,
             // current_pos_joined,
-        ) = self.tokio_handle.block_on(async {
-            tokio::join!(
-                avg_move_since_open_thread,
-                most_recent_open_thread,
-                most_recent_daily_vol_thread,
-                vwap_thread,
-                // current_price_thread,
-                // current_pos_thread
-            )
+        ) = hotpath::measure_block!("noise_join_db_queries", {
+            self.tokio_handle.block_on(async {
+                tokio::join!(
+                    avg_move_since_open_thread,
+                    most_recent_open_thread,
+                    most_recent_daily_vol_thread,
+                    vwap_thread,
+                    // current_price_thread,
+                    // current_pos_thread
+                )
+            })
         });
 
         let (
@@ -399,21 +417,23 @@ impl Noise {
                 let target_stock_positions_crud =
                     TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
                 let name = self.get_name();
-                self.tokio_handle.block_on(async move {
-                    target_stock_positions_crud
-                        .delete(&TargetPositionsPrimaryKeys::Stock(
-                            TargetStockPositionsPrimaryKeys {
-                                strategy: name,
-                                stock: "QQQ".to_string(),
-                                primary_exchange: "NASDAQ".to_string(),
-                                currency: "USD".to_string(),
-                            },
-                        ))
-                        .await
-                        .map_err(|e| {
-                            tracing::error!("Failed to delete QQQ: {e:?}");
-                            BarUpdateOutcome::NoAction
-                        })
+                hotpath::measure_block!("noise_delete_target_position", {
+                    self.tokio_handle.block_on(async move {
+                        target_stock_positions_crud
+                            .delete(&TargetPositionsPrimaryKeys::Stock(
+                                TargetStockPositionsPrimaryKeys {
+                                    strategy: name,
+                                    stock: "QQQ".to_string(),
+                                    primary_exchange: "NASDAQ".to_string(),
+                                    currency: "USD".to_string(),
+                                },
+                            ))
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Failed to delete QQQ: {e:?}");
+                                BarUpdateOutcome::NoAction
+                            })
+                    })
                 })?;
                 return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
             }
@@ -424,25 +444,27 @@ impl Noise {
             let target_stock_positions_crud =
                 TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
             let name = self.get_name();
-            self.tokio_handle.block_on(async move {
-                target_stock_positions_crud
-                    .create_or_update(
-                        &TargetPositionsPrimaryKeys::Stock(TargetStockPositionsPrimaryKeys {
-                            strategy: name,
-                            primary_exchange: "NASDAQ".to_string(),
-                            currency: "USD".to_string(),
-                            stock: "QQQ".to_string(),
-                        }),
-                        &TargetPositionsUpdateKeys::Stock(TargetStockPositionsUpdateKeys {
-                            avg_price: Some(0.0),
-                            quantity: Some(qty),
-                        }),
-                    )
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Failed to delete QQQ: {e:?}");
-                        BarUpdateOutcome::NoAction
-                    })
+            hotpath::measure_block!("noise_create_or_update_target_position", {
+                self.tokio_handle.block_on(async move {
+                    target_stock_positions_crud
+                        .create_or_update(
+                            &TargetPositionsPrimaryKeys::Stock(TargetStockPositionsPrimaryKeys {
+                                strategy: name,
+                                primary_exchange: "NASDAQ".to_string(),
+                                currency: "USD".to_string(),
+                                stock: "QQQ".to_string(),
+                            }),
+                            &TargetPositionsUpdateKeys::Stock(TargetStockPositionsUpdateKeys {
+                                avg_price: Some(0.0),
+                                quantity: Some(qty),
+                            }),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to delete QQQ: {e:?}");
+                            BarUpdateOutcome::NoAction
+                        })
+                })
             })?;
             return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
         }

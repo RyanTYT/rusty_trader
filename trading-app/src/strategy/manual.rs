@@ -52,6 +52,7 @@ impl Manual {
     }
 }
 
+#[hotpath::measure_all]
 impl StrategyExecutor for Manual {
     fn get_name(&self) -> String {
         self.name.clone()

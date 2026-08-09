@@ -52,6 +52,7 @@ impl Unknown {
     }
 }
 
+#[hotpath::measure_all]
 impl StrategyExecutor for Unknown {
     fn get_name(&self) -> String {
         self.name.clone()

@@ -79,6 +79,7 @@ pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize> {
     is_alive: Arc<AtomicBool>,
 }
 
+#[hotpath::measure_all]
 impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
     pub fn new(contract_scheduler: Arc<IbkrContractScheduler>) -> Self {
         Self {
@@ -162,57 +163,50 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                             .expect("Expected OrderStore to be alive on handle_bar_update_outcome"),
                     );
                 };
-                let mut next_deadline = align_and_prime_schedule(&contract_scheduler, &consumers);
+                let mut next_deadline = hotpath::measure_block!("align_and_prime_schedule", {
+                    align_and_prime_schedule(&contract_scheduler, &consumers)
+                });
                 let mut small_bars: Vec<VecDeque<Bar>> = vec![VecDeque::new(); consumers.len()];
                 let mut agg_bars: Vec<HistoricalDataFullKeys> = Vec::with_capacity(consumers.len());
 
                 while is_alive.load(Ordering::Acquire) {
                     let now = Utc::now();
                     // Do all pre-work for next loop b4 slping
-                    let active: Vec<usize> = (0..consumers.len())
-                        .filter(|&i| {
-                            contract_scheduler
-                                .is_trading(&consumers[i].contract, &now)
-                                .expect("Expected schedule to be populated")
-                        })
-                        .collect();
+                    let active: Vec<usize> = hotpath::measure_block!("compute_active_contracts", {
+                        (0..consumers.len())
+                            .filter(|&i| {
+                                contract_scheduler
+                                    .is_trading(&consumers[i].contract, &now)
+                                    .expect("Expected schedule to be populated")
+                            })
+                            .collect()
+                    });
                     let mut received = vec![false; active.len()];
 
-                    sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy.get_name());
+                    hotpath::measure_block!("sleep_until_deadline", {
+                        sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy.get_name());
+                    });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
-                    loop {
-                        let mut all_done = true;
+                    hotpath::measure_block!("bar_receive_spin_loop", {
+                        loop {
+                            let mut all_done = true;
 
-                        for (slot, &idx) in active.iter().enumerate() {
-                            if received[slot] {
-                                continue;
-                            }
-                            match consumers[idx].try_pop() {
-                                Some(bar) => {
-                                    received[slot] = true;
-                                    small_bars[idx].push_back(bar);
-                                    match consumers[idx].get_bar_type() {
-                                        IbkrBarType::Normal => {
-                                            if let Err(e) = Self::dispatch_bar(
-                                                &consumers[idx].contract,
-                                                &consumers[idx].what_to_show,
-                                                &mut small_bars[idx],
-                                                &None,
-                                                strategy_on_bar_update,
-                                                handle_bar_update_outcome,
-                                            ) {
-                                                tracing::error!("Failed to dispatch_bar: {e:?}");
-                                            }
-                                        }
-                                        IbkrBarType::ForexBid => {
-                                            if received[slot + 1] {
-                                                // build bar
+                            for (slot, &idx) in active.iter().enumerate() {
+                                if received[slot] {
+                                    continue;
+                                }
+                                match consumers[idx].try_pop() {
+                                    Some(bar) => {
+                                        received[slot] = true;
+                                        small_bars[idx].push_back(bar);
+                                        match consumers[idx].get_bar_type() {
+                                            IbkrBarType::Normal => {
                                                 if let Err(e) = Self::dispatch_bar(
                                                     &consumers[idx].contract,
                                                     &consumers[idx].what_to_show,
                                                     &mut small_bars[idx],
-                                                    &Some(&agg_bars[slot + 1]),
+                                                    &None,
                                                     strategy_on_bar_update,
                                                     handle_bar_update_outcome,
                                                 ) {
@@ -220,73 +214,90 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                         "Failed to dispatch_bar: {e:?}"
                                                     );
                                                 }
-                                            } else {
-                                                let mut big_bars = aggregate_bars(
-                                                    &consumers[idx].contract,
-                                                    &consumers[idx].what_to_show,
-                                                    &mut small_bars[idx],
-                                                    60,
-                                                );
-                                                if big_bars.is_empty() {
-                                                    continue;
-                                                }
-                                                if big_bars.len() > 1 {
-                                                    tracing::error!(
-                                                        "aggregate_bars output more than 1 bar"
-                                                    );
-                                                }
-                                                agg_bars[slot] = big_bars.pop().unwrap();
                                             }
-                                        }
-                                        IbkrBarType::ForexAsk => {
-                                            if received[slot - 1] {
-                                                // build bar
-                                                if let Err(e) = Self::dispatch_bar(
-                                                    &consumers[idx].contract,
-                                                    &consumers[idx].what_to_show,
-                                                    &mut small_bars[idx],
-                                                    &Some(&agg_bars[slot - 1]),
-                                                    strategy_on_bar_update,
-                                                    handle_bar_update_outcome,
-                                                ) {
-                                                    tracing::error!(
-                                                        "Failed to dispatch_bar: {e:?}"
+                                            IbkrBarType::ForexBid => {
+                                                if received[slot + 1] {
+                                                    // build bar
+                                                    if let Err(e) = Self::dispatch_bar(
+                                                        &consumers[idx].contract,
+                                                        &consumers[idx].what_to_show,
+                                                        &mut small_bars[idx],
+                                                        &Some(&agg_bars[slot + 1]),
+                                                        strategy_on_bar_update,
+                                                        handle_bar_update_outcome,
+                                                    ) {
+                                                        tracing::error!(
+                                                            "Failed to dispatch_bar: {e:?}"
+                                                        );
+                                                    }
+                                                } else {
+                                                    let mut big_bars = aggregate_bars(
+                                                        &consumers[idx].contract,
+                                                        &consumers[idx].what_to_show,
+                                                        &mut small_bars[idx],
+                                                        60,
                                                     );
+                                                    if big_bars.is_empty() {
+                                                        continue;
+                                                    }
+                                                    if big_bars.len() > 1 {
+                                                        tracing::error!(
+                                                            "aggregate_bars output more than 1 bar"
+                                                        );
+                                                    }
+                                                    agg_bars[slot] = big_bars.pop().unwrap();
                                                 }
-                                            } else {
-                                                let mut big_bars = aggregate_bars(
-                                                    &consumers[idx].contract,
-                                                    &consumers[idx].what_to_show,
-                                                    &mut small_bars[idx],
-                                                    60,
-                                                );
-                                                if big_bars.is_empty() {
-                                                    continue;
-                                                }
-                                                if big_bars.len() > 1 {
-                                                    tracing::error!(
-                                                        "aggregate_bars output more than 1 bar"
+                                            }
+                                            IbkrBarType::ForexAsk => {
+                                                if received[slot - 1] {
+                                                    // build bar
+                                                    if let Err(e) = Self::dispatch_bar(
+                                                        &consumers[idx].contract,
+                                                        &consumers[idx].what_to_show,
+                                                        &mut small_bars[idx],
+                                                        &Some(&agg_bars[slot - 1]),
+                                                        strategy_on_bar_update,
+                                                        handle_bar_update_outcome,
+                                                    ) {
+                                                        tracing::error!(
+                                                            "Failed to dispatch_bar: {e:?}"
+                                                        );
+                                                    }
+                                                } else {
+                                                    let mut big_bars = aggregate_bars(
+                                                        &consumers[idx].contract,
+                                                        &consumers[idx].what_to_show,
+                                                        &mut small_bars[idx],
+                                                        60,
                                                     );
+                                                    if big_bars.is_empty() {
+                                                        continue;
+                                                    }
+                                                    if big_bars.len() > 1 {
+                                                        tracing::error!(
+                                                            "aggregate_bars output more than 1 bar"
+                                                        );
+                                                    }
+                                                    agg_bars[slot] = big_bars.pop().unwrap();
                                                 }
-                                                agg_bars[slot] = big_bars.pop().unwrap();
                                             }
                                         }
                                     }
+                                    None => all_done = false,
                                 }
-                                None => all_done = false,
+                            }
+
+                            if all_done || Instant::now() >= spin_deadline {
+                                break;
+                            }
+
+                            if SPIN_BACKOFF.is_zero() {
+                                std::hint::spin_loop();
+                            } else {
+                                std::thread::sleep(SPIN_BACKOFF);
                             }
                         }
-
-                        if all_done || Instant::now() >= spin_deadline {
-                            break;
-                        }
-
-                        if SPIN_BACKOFF.is_zero() {
-                            std::hint::spin_loop();
-                        } else {
-                            std::thread::sleep(SPIN_BACKOFF);
-                        }
-                    }
+                    });
 
                     // Anything still marked not-received missed its window
                     // this cycle — surface that instead of silently dropping it.

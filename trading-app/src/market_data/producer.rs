@@ -28,6 +28,7 @@ impl Drop for MarketDataProducer {
     }
 }
 
+#[hotpath::measure]
 pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: usize>(
     weak_client: Weak<Client>,
     contract: Contract,
@@ -44,6 +45,17 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     );
     let is_alive = Arc::new(AtomicBool::new(true));
     let cloned_is_alive = is_alive.clone();
+
+    let symbol_key = format!("{}_{}", contract.symbol, contract.security_type);
+    let metric_push_retries = format!("{symbol_key}_push_retries");
+    let metric_is_trading = format!("{symbol_key}_is_trading");
+    let metric_missed_bar = format!("{symbol_key}_missed_bars");
+    let metric_sub_errors = format!("{symbol_key}_sub_errors");
+    hotpath::gauge!(&metric_push_retries).set(0);
+    hotpath::gauge!(&metric_is_trading).set(1.0);
+    hotpath::gauge!(&metric_missed_bar).set(0);
+    hotpath::gauge!(&metric_sub_errors).set(0);
+
     std::thread::Builder::new()
         .name(
             format!(
@@ -64,7 +76,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                 if time_since_last_sub < Duration::from_secs(20) {
                     std::thread::sleep(Duration::from_secs(20) - time_since_last_sub);
                 }
-                let subscription_res = {
+                let subscription_res = hotpath::measure_block!("realtime_bars_subscribe", {
                     let client = weak_client.upgrade().expect("Expected client to be alive");
                     client.realtime_bars(
                         &contract,
@@ -72,7 +84,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                         what_to_show,
                         ibapi::market_data::TradingHours::Regular,
                     )
-                };
+                });
                 last_sub = Instant::now();
 
                 // Subscription loop
@@ -86,6 +98,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                     "Expected contract for producer sub to be in tracked contracts!",
                                 )
                             {
+                                hotpath::gauge!(&metric_is_trading).set(0.0);
                                 let deadline = contract_scheduler
                                     .get_next_earliest_available_data(&contracts, &Utc::now())
                                     .expect(
@@ -104,29 +117,35 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                 }
                             }
 
-                            match subscription.next_timeout(Duration::from_secs(20)) {
+                            hotpath::gauge!(&metric_is_trading).set(1.0);
+                            match hotpath::measure_block!("bar_next_timeout_wait", {
+                                subscription.next_timeout(Duration::from_secs(20))
+                            }) {
                                 Some(mut bar) => {
                                     // Basically try_push() MAX_SUB_TRY_TIMES, if not fail
                                     let mut try_times = 0;
-                                    'try_push_loop: loop {
-                                        match producer.try_push(bar) {
-                                            Ok(()) => break 'try_push_loop,
-                                            Err(returned_bar) => {
-                                                bar = returned_bar;
-                                                try_times += 1;
-                                                if try_times == MAX_SUB_TRY_TIMES {
-                                                    tracing::error!(
-                                                        "Consumer either too slow \
-                                                        or is stalled or something: \
-                                                        Caused producer for ({}, {}) to miss",
-                                                        contract.symbol,
-                                                        contract.security_type
-                                                    );
-                                                    break 'try_push_loop;
+                                    hotpath::measure_block!("try_push_bar_loop", {
+                                        'try_push_loop: loop {
+                                            match producer.try_push(bar) {
+                                                Ok(()) => break 'try_push_loop,
+                                                Err(returned_bar) => {
+                                                    bar = returned_bar;
+                                                    try_times += 1;
+                                                    hotpath::gauge!(&metric_push_retries).inc(1);
+                                                    if try_times == MAX_SUB_TRY_TIMES {
+                                                        tracing::error!(
+                                                            "Consumer either too slow \
+                                                            or is stalled or something: \
+                                                            Caused producer for ({}, {}) to miss",
+                                                            contract.symbol,
+                                                            contract.security_type
+                                                        );
+                                                        break 'try_push_loop;
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
+                                    });
                                 }
                                 None => {
                                     // Only Alert if contract is trading, else start of next 'inner_loop
@@ -139,12 +158,14 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                             to be in tracked contracts!",
                                         )
                                     {
+                                        hotpath::gauge!(&metric_missed_bar).inc(1);
                                         if let Some(e) = subscription.error() {
                                             tracing::error!(
                                                 "Subscription for ({}, {}) errored out ({e:?}): retrying...",
                                                 contract.symbol,
                                                 contract.security_type
                                             );
+                                            hotpath::gauge!(&metric_sub_errors).inc(1);
                                             // go to outer loop to try to re-subscribe
                                             break 'inner_loop;
                                         }
