@@ -32,6 +32,7 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy local dependencies and migrations (needed at compile time)
 COPY crud_insertable ./crud_insertable
+COPY crud_insertable_macro ./crud_insertable_macro
 COPY crud_models ./crud_models
 COPY spmc-ring ./spmc-ring
 COPY .sqlx ./.sqlx
@@ -40,7 +41,7 @@ COPY migrations ./migrations
 # Create a dummy main.rs to build dependencies
 RUN mkdir src && \
     echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release --features="${CARGO_FEATURES}" && \
     rm -rf src
 
 # Now copy the actual source code
@@ -49,7 +50,7 @@ COPY src ./src
 # Build the real application
 # Touch src/main.rs to force rebuild of the application code
 RUN touch src/main.rs && \
-    cargo build --locked --release && \
+    cargo build --locked --release --features="${CARGO_FEATURES}" && \
     cp target/release/$APP_NAME /bin/server
 
 ################################################################################
