@@ -4,7 +4,7 @@ use chrono_tz::{America::New_York, Tz};
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use ordered_float::OrderedFloat;
 use rust_decimal::{
-    Decimal,
+    Decimal, dec,
     prelude::{FromPrimitive, ToPrimitive},
 };
 use sqlx::{PgPool, prelude::FromRow};
@@ -125,9 +125,7 @@ impl HistoricalDataFullKeys {
                     high,
                     low,
                     close,
-                    volume: Decimal::from_f64(volume).expect(&format!(
-                        "Expected volume ({volume}) to be convertible to Dec"
-                    )),
+                    volume: Decimal::from_f64(volume).unwrap_or(dec!(-1.0)),
                 })
             }
             AssetType::Option => HistoricalDataFullKeys::Options(HistoricalOptionsDataFullKeys {
@@ -144,7 +142,7 @@ impl HistoricalDataFullKeys {
                 high,
                 low,
                 close,
-                volume: Decimal::from_f64(volume).expect("Expected volume ({volume}) to be convertible to Dec"),
+                volume: Decimal::from_f64(volume).unwrap_or(dec!(-1.0)),
             }),
             AssetType::ForexPair => match what_to_show {
                 WhatToShow::Bid => Self::Forex(HistoricalForexDataFullKeys {
