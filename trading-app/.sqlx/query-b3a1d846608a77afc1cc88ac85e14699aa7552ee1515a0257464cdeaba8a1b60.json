@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO trading.current_stock_positions (\n                        strategy, \n                        stock, \n                        primary_exchange,\n                        currency,\n                        quantity, \n                        avg_price\n                    )\n                    VALUES ($1, $2, $3, $4, $5, $6)\n                    ON CONFLICT (stock, primary_exchange, currency, strategy)\n                    DO UPDATE SET \n                    avg_price = CASE \n                        -- Avoid division by zero if total quantity becomes 0\n                        WHEN (current_stock_positions.quantity + EXCLUDED.quantity) = 0 THEN 0\n                        WHEN SIGN(current_stock_positions.quantity) != SIGN(EXCLUDED.quantity) THEN current_stock_positions.avg_price\n                        ELSE (\n                            (current_stock_positions.quantity * current_stock_positions.avg_price) + \n                            (EXCLUDED.quantity * EXCLUDED.avg_price)\n                        ) / (current_stock_positions.quantity + EXCLUDED.quantity)\n                    END,\n                    quantity = current_stock_positions.quantity + EXCLUDED.quantity;\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b3a1d846608a77afc1cc88ac85e14699aa7552ee1515a0257464cdeaba8a1b60"
+}

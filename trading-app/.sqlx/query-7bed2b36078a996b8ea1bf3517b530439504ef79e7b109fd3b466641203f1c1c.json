@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                time_bucket(make_interval(mins => $2), time) AS bucket,\n                pair,\n                first(bid_open, time) AS bid_open,\n                max(bid_high)         AS bid_high,\n                min(bid_low)          AS bid_low,\n                last(bid_close, time) AS bid_close,\n                first(ask_open, time) AS ask_open,\n                max(ask_high)         AS ask_high,\n                min(ask_low)          AS ask_low,\n                last(ask_close, time) AS ask_close,\n                count(*)              AS bar_count\n            FROM market_data.historical_forex_data\n            WHERE pair = $1\n              AND bid_open IS NOT NULL\n              AND ask_open IS NOT NULL\n            GROUP BY bucket, pair\n            ORDER BY bucket DESC\n            LIMIT $3;\n            ",
+  "query": "\n                    SELECT\n                        time_bucket(make_interval(mins => $2), time) AS bucket,\n                        pair,\n                        first(bid_open, time) AS bid_open,\n                        max(bid_high)         AS bid_high,\n                        min(bid_low)          AS bid_low,\n                        last(bid_close, time) AS bid_close,\n                        first(ask_open, time) AS ask_open,\n                        max(ask_high)         AS ask_high,\n                        min(ask_low)          AS ask_low,\n                        last(ask_close, time) AS ask_close,\n                        count(*)              AS bar_count\n                    FROM market_data.historical_forex_data\n                    WHERE pair = $1\n                      AND bid_open IS NOT NULL\n                      AND ask_open IS NOT NULL\n                    GROUP BY bucket, pair\n                    ORDER BY bucket DESC\n                    LIMIT $3;\n                    ",
   "describe": {
     "columns": [
       {
@@ -80,5 +80,5 @@
       null
     ]
   },
-  "hash": "f45bdb0f5ddda330eadb576d3086ee69232cf365eaca1511f95e5196acec10a3"
+  "hash": "7bed2b36078a996b8ea1bf3517b530439504ef79e7b109fd3b466641203f1c1c"
 }

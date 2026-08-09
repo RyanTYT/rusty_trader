@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT \n                        stock AS \"stock!\", \n                        primary_exchange AS \"primary_exchange!\", \n                        currency AS \"currency!\", \n                        COALESCE(SUM(quantity), 0) AS \"quantity!\", \n                        COALESCE(AVG(avg_price), 0) as \"avg_price!\",\n                        COALESCE((ARRAY_AGG(strategy))[1], '') AS \"strategy!\",\n                        (ARRAY_AGG(last_updated))[1]  AS \"last_updated!\"\n                    FROM trading.current_stock_positions\n                    GROUP BY stock, primary_exchange, currency;\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "currency!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "quantity!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "avg_price!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "strategy!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_updated!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "2bbd42b26c04b425bd148bd7d3e33a788f9bdf18611b5d302cc9266d96644734"
+}

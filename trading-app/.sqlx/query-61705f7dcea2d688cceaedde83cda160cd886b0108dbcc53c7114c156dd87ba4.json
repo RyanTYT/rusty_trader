@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO trading.current_option_positions (\n                        strategy, \n                        stock, \n                        primary_exchange,\n                        currency,\n                        expiry,\n                        strike,\n                        multiplier,\n                        option_type,\n                        quantity, \n                        avg_price\n                    )\n                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n                    ON CONFLICT (stock, primary_exchange, currency, expiry, strike, multiplier, option_type, strategy)\n                    DO UPDATE SET \n                    avg_price = CASE \n                        -- Avoid division by zero if total quantity becomes 0\n                        WHEN (current_option_positions.quantity + EXCLUDED.quantity) = 0 THEN 0\n                        ELSE (\n                            (current_option_positions.quantity * current_option_positions.avg_price) + \n                            (EXCLUDED.quantity * EXCLUDED.avg_price)\n                        ) / (current_option_positions.quantity + EXCLUDED.quantity)\n                    END,\n                    quantity = current_option_positions.quantity + EXCLUDED.quantity;\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Varchar",
+        {
+          "Custom": {
+            "name": "option_type",
+            "kind": {
+              "Enum": [
+                "C",
+                "P"
+              ]
+            }
+          }
+        },
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "61705f7dcea2d688cceaedde83cda160cd886b0108dbcc53c7114c156dd87ba4"
+}

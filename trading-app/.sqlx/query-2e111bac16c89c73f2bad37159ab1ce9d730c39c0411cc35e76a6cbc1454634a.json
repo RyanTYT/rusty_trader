@@ -1,51 +1,51 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT \n                order_perm_id,\n                order_id,\n                strategy,\n                stock,\n                primary_exchange,\n                currency,\n                expiry,\n                strike,\n                multiplier,\n                option_type AS \"option_type!:OptionType\",\n                time,\n                quantity,\n                executions,\n                filled\n            FROM trading.open_option_orders\n            WHERE strategy = $1;\n            ",
+  "query": "\n                    SELECT \n                        order_perm_id as \"order_perm_id!\",\n                        order_id as \"order_id!\",\n                        strategy as \"strategy!\",\n                        stock as \"stock!\",\n                        primary_exchange as \"primary_exchange!\",\n                        currency as \"currency!\",\n                        expiry as \"expiry!\",\n                        strike as \"strike!\",\n                        multiplier as \"multiplier!\",\n                        option_type AS \"option_type!:OptionType\",\n                        time as \"time!\",\n                        quantity as \"quantity!\",\n                        executions as \"executions!\",\n                        filled as \"filled!\"\n                    FROM trading.open_option_orders\n                    WHERE strategy = $1;\n                    ",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "order_perm_id",
+        "name": "order_perm_id!",
         "type_info": "Int4"
       },
       {
         "ordinal": 1,
-        "name": "order_id",
+        "name": "order_id!",
         "type_info": "Int4"
       },
       {
         "ordinal": 2,
-        "name": "strategy",
+        "name": "strategy!",
         "type_info": "Varchar"
       },
       {
         "ordinal": 3,
-        "name": "stock",
+        "name": "stock!",
         "type_info": "Varchar"
       },
       {
         "ordinal": 4,
-        "name": "primary_exchange",
+        "name": "primary_exchange!",
         "type_info": "Varchar"
       },
       {
         "ordinal": 5,
-        "name": "currency",
+        "name": "currency!",
         "type_info": "Varchar"
       },
       {
         "ordinal": 6,
-        "name": "expiry",
+        "name": "expiry!",
         "type_info": "Varchar"
       },
       {
         "ordinal": 7,
-        "name": "strike",
+        "name": "strike!",
         "type_info": "Float8"
       },
       {
         "ordinal": 8,
-        "name": "multiplier",
+        "name": "multiplier!",
         "type_info": "Varchar"
       },
       {
@@ -65,22 +65,22 @@
       },
       {
         "ordinal": 10,
-        "name": "time",
+        "name": "time!",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 11,
-        "name": "quantity",
+        "name": "quantity!",
         "type_info": "Float8"
       },
       {
         "ordinal": 12,
-        "name": "executions",
+        "name": "executions!",
         "type_info": "TextArray"
       },
       {
         "ordinal": 13,
-        "name": "filled",
+        "name": "filled!",
         "type_info": "Float8"
       }
     ],
@@ -106,5 +106,5 @@
       false
     ]
   },
-  "hash": "513e06b95ebf491e8d8a6582cd260ee11b901cf3aae360a73991f91b02354208"
+  "hash": "2e111bac16c89c73f2bad37159ab1ce9d730c39c0411cc35e76a6cbc1454634a"
 }

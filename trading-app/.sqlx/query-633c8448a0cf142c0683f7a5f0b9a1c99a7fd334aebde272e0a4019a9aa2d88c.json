@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT day as \"day!\", open as \"open!\", close as \"close!\"\n            FROM market_data.daily_ohlcv\n            WHERE stock = $1\n                AND primary_exchange = $2\n                AND currency = $3\n                AND day < $4\n            ORDER BY day DESC\n            LIMIT 1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 1,
+        "name": "open!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 2,
+        "name": "close!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "633c8448a0cf142c0683f7a5f0b9a1c99a7fd334aebde272e0a4019a9aa2d88c"
+}

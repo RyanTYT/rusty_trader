@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT \n                        stock as \"stock!\", \n                        primary_exchange as \"primary_exchange!\", \n                        currency as \"currency!\", \n                        strategy as \"strategy!\", \n                        quantity as \"quantity!\", \n                        avg_price as \"avg_price!\",\n                        last_updated as \"last_updated!\"\n                    FROM trading.current_stock_positions\n                    WHERE strategy = $1\n                        AND stock = $2\n                        AND primary_exchange = $3\n                        AND currency = $4;\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stock!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_exchange!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "currency!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "strategy!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "quantity!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "avg_price!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_updated!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "acbc2089785aef70b1cbf450a1a6600e826030f0cf9b1920fb9fdc8a783fbe41"
+}

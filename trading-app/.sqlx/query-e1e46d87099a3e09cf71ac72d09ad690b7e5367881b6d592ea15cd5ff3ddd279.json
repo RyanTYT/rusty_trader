@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    DELETE\n                    FROM trading.target_stock_positions t\n                    WHERE strategy = $1;\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e1e46d87099a3e09cf71ac72d09ad690b7e5367881b6d592ea15cd5ff3ddd279"
+}

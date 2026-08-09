@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT * \n            FROM trading.stock_transactions\n            WHERE stock = $1\n                AND primary_exchange = $2\n                AND currency = $3\n            ORDER BY time DESC\n            LIMIT 1;\n            ",
+  "query": "\n                    SELECT * \n                    FROM trading.stock_transactions\n                    WHERE stock = $1\n                        AND primary_exchange = $2\n                        AND currency = $3\n                    ORDER BY time DESC\n                    LIMIT 1;\n                    ",
   "describe": {
     "columns": [
       {
@@ -74,5 +74,5 @@
       false
     ]
   },
-  "hash": "54b6e9e6dfdaa7086fd7cb538816f6aee18ba84108a5a14064ba3b0e05b2816f"
+  "hash": "7f3aea9897bc7a35f6d9ce7ed1165bcc5ba210c593ea46c19895ff2fd191dc8c"
 }
