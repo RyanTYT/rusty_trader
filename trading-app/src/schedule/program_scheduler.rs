@@ -37,6 +37,8 @@ async fn sleep_until(dt: &DateTime<Utc>) {
     }
 }
 
+use tokio::signal::unix::{SignalKind, signal};
+
 pub async fn run_program<F, Fut>(
     init_application: F,
     interrupt_rcx: &mut tokio::sync::mpsc::Receiver<ConnectionAlert>,
@@ -48,7 +50,12 @@ pub async fn run_program<F, Fut>(
     let scheduler = IbkrStateService {
         ibkr_region: IbkrRegion::Apac,
     };
-    loop {
+
+    // Register once, outside the loop, so we never miss a signal between iterations.
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+
+    'outer: loop {
         match scheduler.get_current_state() {
             BrokerState::Available => {
                 let app_state = {
@@ -99,22 +106,15 @@ pub async fn run_program<F, Fut>(
                                         continue;
                                     }
                                 }
-                                // this shouldn't be reached actually
-                                ConnectionAlert::UnstableConnectionOutsideMarketHours {
-                                    first_event_time
-                                }=> {
+                                ConnectionAlert::UnstableConnectionOutsideMarketHours { first_event_time } => {
                                     tracing::warn!("🚨 Unstable connection outside market hours at {first_event_time:?}, restarting just in case");
                                     break;
                                 }
-                                ConnectionAlert::BrokenPipe {
-                                    first_event_time: _
-                                }=> {
+                                ConnectionAlert::BrokenPipe { first_event_time: _ } => {
                                     tracing::warn!("🚨 Unstable connection because of broken pipe: restarting now");
                                     break;
                                 }
-                                ConnectionAlert::APACRESET {
-                                    first_event_time: _
-                                }=> {
+                                ConnectionAlert::APACRESET { first_event_time: _ } => {
                                     tracing::warn!("🚨 Unstable connection due to APACRESET! Restarting now!");
                                     break;
                                 }
@@ -125,6 +125,16 @@ pub async fn run_program<F, Fut>(
                                 }
                             }
                         }
+
+                        // Graceful shutdown
+                        _ = sigterm.recv() => {
+                            tracing::info!("SIGTERM received, producing final metrics report before exit");
+                            break 'outer;
+                        }
+                        _ = sigint.recv() => {
+                            tracing::info!("SIGINT received, producing final metrics report before exit");
+                            break 'outer;
+                        }
                     };
                 }
 
@@ -132,7 +142,19 @@ pub async fn run_program<F, Fut>(
             }
             BrokerState::Unavailable => match scheduler.get_next_broker_available() {
                 Ok(next_available) => {
-                    sleep_until(&next_available.to_utc()).await;
+                    // Also watch for shutdown while idle/unavailable, or SIGTERM here would hang
+                    // until the broker window opens again.
+                    let deadline = next_available.to_utc();
+                    tokio::select! {
+                        _ = sleep_until(&deadline) => {}
+                        _ = sigterm.recv() => {
+                            tracing::info!("SIGTERM received while broker unavailable, no state to report, exiting");
+                            break 'outer;
+                        }
+                        _ = sigint.recv() => {
+                            break 'outer;
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Error trying to get seconds to sleep for: {e:?}");
@@ -141,4 +163,6 @@ pub async fn run_program<F, Fut>(
             },
         }
     }
+
+    tracing::info!("run_program exited cleanly after graceful shutdown");
 }
