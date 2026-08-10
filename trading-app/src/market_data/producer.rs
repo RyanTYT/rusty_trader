@@ -1,9 +1,8 @@
 use std::{
-    sync::{
+    pin::Pin, sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
+    }, time::{Duration, Instant},
 };
 
 use chrono::Utc;
@@ -12,7 +11,7 @@ use ibapi::{
     contracts::Contract,
     market_data::realtime::{Bar, WhatToShow},
 };
-use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBuffer;
+use spmc_ring::{bench::RingBuffer, ring_buffer::spmc_ring_buffer::SpmcRingBuffer};
 
 use crate::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
@@ -35,10 +34,10 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     what_to_show: WhatToShow,
     contract_scheduler: Arc<IbkrContractScheduler>,
 ) -> (
-    Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>,
+    Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
     MarketDataProducer,
 ) {
-    let ring_buffer = Arc::new(SpmcRingBuffer::<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new());
+    let ring_buffer = Box::pin(SpmcRingBuffer::<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new());
     let producer = ring_buffer.get_new_producer().expect(
         "Expected to be able to get \
             producer for SPMC ring buffer",

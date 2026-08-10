@@ -13,7 +13,7 @@ use ibapi::{
 };
 use moka::sync::Cache;
 use ordered_float::OrderedFloat;
-use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBuffer;
+use spmc_ring::{bench::RingBuffer, ring_buffer::spmc_ring_buffer::SpmcRingBuffer};
 use sqlx::PgPool;
 
 use crate::{
@@ -113,8 +113,10 @@ impl Eq for DataSubscription {}
 // This struct will basically help manage the lifetimes of consumers and producers
 pub struct MarketDataHandler {
     pool: PgPool,
-    subscriptions:
-        HashMap<DataSubscription, Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
+    subscriptions: HashMap<
+        DataSubscription,
+        std::pin::Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
+    >,
     live_prices: Cache<i32, (DateTime<Utc>, f64)>,
     db_consumers: Vec<MarketDataDbConsumer>,
     client_producers: Vec<MarketDataProducer>,
@@ -208,7 +210,7 @@ impl MarketDataHandler {
     pub fn get_subsription(
         &self,
         sub: &DataSubscription,
-    ) -> Option<&Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>> {
+    ) -> Option<&std::pin::Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>> {
         self.subscriptions.get(&sub)
     }
 }
