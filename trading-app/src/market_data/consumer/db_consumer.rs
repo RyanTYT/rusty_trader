@@ -195,7 +195,6 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
                             match consumer.try_pop() {
                                 Some(bar) => {
                                     received[idx] = true;
-                                    tracing::error!("DB_CONSUMER: {bar:?}");
                                     small_bars[idx].push_back(bar);
                                     let big_bars = aggregate_bars(
                                         &consumers[idx].contract,

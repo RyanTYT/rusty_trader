@@ -113,7 +113,8 @@ impl Eq for DataSubscription {}
 // This struct will basically help manage the lifetimes of consumers and producers
 pub struct MarketDataHandler {
     pool: PgPool,
-    subscriptions: HashMap<DataSubscription, SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>,
+    subscriptions:
+        HashMap<DataSubscription, Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
     live_prices: Cache<i32, (DateTime<Utc>, f64)>,
     db_consumers: Vec<MarketDataDbConsumer>,
     client_producers: Vec<MarketDataProducer>,
@@ -165,6 +166,8 @@ impl MarketDataHandler {
                     contract_scheduler.clone(),
                 );
                 self.client_producers.push(producer);
+                let a = ring_buffer.get_new_consumer().unwrap().try_pop();
+                tracing::error!("Initial ring buffer result: {a:?}");
                 new_consumers.push(IbkrBarConsumer::<BUFFER_SIZE>::new(
                     subscription.contract.clone(),
                     subscription.what_to_show.clone(),
@@ -205,7 +208,7 @@ impl MarketDataHandler {
     pub fn get_subsription(
         &self,
         sub: &DataSubscription,
-    ) -> Option<&SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>> {
+    ) -> Option<&Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>> {
         self.subscriptions.get(&sub)
     }
 }
