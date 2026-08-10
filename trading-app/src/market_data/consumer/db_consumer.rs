@@ -14,7 +14,7 @@ use crate::database::models_crud::historical_data::historical_data::{
 };
 use crate::market_data::consumer::helper::{aggregate_bars, align_and_prime_schedule};
 use crate::market_data::consumer::strategy_consumer::{IbkrBarConsumer, IbkrBarType};
-use crate::schedule::contract_scheduler::IbkrContractScheduler;
+use crate::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
 const BAR_INTERVAL: Duration = Duration::from_secs(5);
 /// How long to spin-poll around each expected bar arrival before giving up
@@ -179,27 +179,46 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
 
             while is_alive.load(Ordering::Acquire) {
                 // Do all pre-work for next loop b4 slping
-                let mut received = vec![false; consumers.len()];
 
                 sleep_until_system_time(next_deadline - HOT_WINDOW);
+
+                let now = Utc::now();
+                let active_consumers: Vec<usize> = consumers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, consumer)| {
+                        if contract_scheduler
+                            .is_trading(&consumer.contract, &now)
+                            .expect("Expected consumer contract to be in scheduler")
+                        {
+                            Some(idx)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let mut received = vec![false; active_consumers.len()];
 
                 let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
                 hotpath::measure_block!("db_consumer_grouped_spin_loop", {
                     loop {
                         let mut all_done = true;
 
-                        for (idx, consumer) in consumers.iter().enumerate() {
-                            if received[idx] {
+                        for (received_idx, ref_idx) in active_consumers.iter().enumerate() {
+                            if received[received_idx] {
                                 continue;
                             }
+
+                            let idx = *ref_idx;
+                            let consumer = consumers.get(idx).unwrap();
                             match consumer.try_pop() {
                                 Some(bar) => {
-                                    received[idx] = true;
+                                    received[received_idx] = true;
                                     small_bars[idx].push_back(bar);
                                     let big_bars = aggregate_bars(
-                                        &consumers[idx].contract,
-                                        &consumers[idx].what_to_show,
-                                        &mut small_bars[idx],
+                                        &consumer.contract,
+                                        &consumer.what_to_show,
+                                        &mut small_bars.get_mut(idx).unwrap(),
                                         match consumer.get_bar_type() {
                                             IbkrBarType::Normal => 60,
                                             _ => 300,
@@ -260,8 +279,8 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
 
                 // Anything still marked not-received missed its window
                 // this cycle — surface that instead of silently dropping it.
-                for (idx, received_idx) in received.iter().enumerate() {
-                    if !received_idx {
+                for (idx, received_bool) in received.iter().enumerate() {
+                    if !received_bool {
                         tracing::warn!(
                             "Failed to receive bar for {} in db consumer",
                             consumers[idx].contract.symbol
