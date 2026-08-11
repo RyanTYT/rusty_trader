@@ -118,7 +118,7 @@ impl PriceSupplier for Consolidator {
             cloned_client
                 .historical_data(
                     &cloned_contract,
-                    None,
+                    Some(time::OffsetDateTime::now_utc()),
                     duration,
                     bar_size.clone(),
                     what_to_show.clone(),
@@ -398,6 +398,9 @@ impl Consolidator {
         subscription: &Subscription<TickTypes>,
     ) -> PriceExtraction {
         match tick {
+            ibapi::prelude::TickTypes::PriceSize(tick_price) => {
+                PriceExtraction::Price(tick_price.price)
+            }
             ibapi::prelude::TickTypes::Price(tick_price) => {
                 PriceExtraction::Price(tick_price.price)
             }
