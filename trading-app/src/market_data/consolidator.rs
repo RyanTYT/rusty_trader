@@ -4,6 +4,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{
     Client,
+    market_data::historical::ToDuration,
     prelude::{Contract, SecurityType},
 };
 use nyse_holiday_cal::HolidayCal;
@@ -293,11 +294,11 @@ impl Consolidator {
         {
             Ok(passed) => {
                 let config = HistoricalDataConfig::new(
-                    ibapi::market_data::historical::Duration::days(if passed {
-                        1
+                    if passed {
+                        1.days()
                     } else {
-                        days as i32
-                    }),
+                        (days as i32).days()
+                    },
                     if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
                         ibapi::market_data::historical::BarSize::Min
                     } else {

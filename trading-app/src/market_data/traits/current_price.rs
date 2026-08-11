@@ -398,24 +398,20 @@ impl Consolidator {
         subscription: &Subscription<TickTypes>,
     ) -> PriceExtraction {
         match tick {
-            ibapi::prelude::TickTypes::PriceSize(tick_price) => {
-                PriceExtraction::Price(tick_price.price)
-            }
-            ibapi::prelude::TickTypes::Price(tick_price) => {
-                PriceExtraction::Price(tick_price.price)
-            }
-            ibapi::prelude::TickTypes::SnapshotEnd => {
+            TickTypes::PriceSize(tick_price) => PriceExtraction::Price(tick_price.price),
+            TickTypes::Price(tick_price) => PriceExtraction::Price(tick_price.price),
+            TickTypes::SnapshotEnd => {
                 subscription.cancel();
                 PriceExtraction::Err(format!(
                     "Got SnapshotEnd from request for market data: {}",
                     contract.symbol
                 ))
             }
-            ibapi::prelude::TickTypes::RequestParameters(_) => PriceExtraction::Err(format!(
+            TickTypes::RequestParameters(_) => PriceExtraction::Err(format!(
                 "Got RequestParameters ticker from request for mkt data: {}:",
                 contract.symbol
             )),
-            ibapi::prelude::TickTypes::String(msg) => PriceExtraction::Err(format!(
+            TickTypes::String(msg) => PriceExtraction::Err(format!(
                 "Got string from request for market data: {}",
                 msg.value
             )),
@@ -423,10 +419,10 @@ impl Consolidator {
             // Message text overlaps between "you have no access" (fatal, e.g.
             // 10089) and "confirming delayed data is now streaming" (10167,
             // informational), so string-matching alone can't tell them apart.
-            ibapi::prelude::TickTypes::Notice(notice) if notice.code == 10167 => {
+            TickTypes::Notice(notice) if notice.code == 10167 => {
                 PriceExtraction::DelayedDataConfirmed
             }
-            ibapi::prelude::TickTypes::Notice(notice) => PriceExtraction::Err(format!(
+            TickTypes::Notice(notice) => PriceExtraction::Err(format!(
                 "Got notice {} from request for market data: {}: {}",
                 notice.code, contract.symbol, notice.message
             )),
