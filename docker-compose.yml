@@ -34,6 +34,9 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@db:5432/${DB_DB}
       - ASYNC_DATABASE_URL=postgresql+asyncpg://${DB_USER}:${DB_PW}@db:5432/${DB_DB}
+      - DB_USERNAME=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
       - DATABASE_HOST=db
       # - HOST=127.0.0.1
       # - SERVER_HOST=127.0.0.1
