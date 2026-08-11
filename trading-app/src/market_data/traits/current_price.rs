@@ -2,9 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, Utc};
 use ibapi::{
-    Client,
-    client::Subscription,
-    prelude::{Contract, SecurityType, TickTypes},
+    Client, client::Subscription, market_data::MarketDataType, prelude::{Contract, SecurityType, TickTypes},
 };
 use rust_decimal::str;
 use yfinance_rs::{Ticker, YfClient};
@@ -416,7 +414,11 @@ impl Consolidator {
     ///     - Note: Each live_data subscription is wrapped behind a std::sync::Mutex so this
     ///     function could be potentially blocking for a longer period of time than expected
     /// - if requested the data in the last 20s, returns that
-    /// - else, requests from IBKR
+    /// - else, requests from IBKR, falling back to delayed data (if live is unavailable) and
+    ///   then yfinance (if IBKR access is denied outright)
+    ///
+    /// Always switches the client's market data type back to Live before returning, regardless
+    /// of whether the delayed-data fallback was triggered or the request succeeded/failed.
     ///
     /// - if you want to pass generic_ticks, vwap MUST be false
     pub(crate) fn _get_current_price(
@@ -426,17 +428,34 @@ impl Consolidator {
         generic_ticks: &[&str],
         is_second_try: bool,
     ) -> Result<f64, String> {
-        // Request data as last resort
-        let generic_ticks = if vwap {
-            &["233"]
-        } else if contract.security_type == SecurityType::ForexPair && generic_ticks.len() == 0 {
-            // &["2"] // ask price by default
-            generic_ticks
-        } else {
-            generic_ticks
-        };
+        let result = Self::_get_current_price_inner(
+            client.clone(),
+            contract,
+            vwap,
+            generic_ticks,
+            is_second_try,
+            false,
+        );
+
+        if let Err(e) = client.switch_market_data_type(MarketDataType::Realtime) {
+            tracing::warn!("Failed to switch market data type back to live: {e:?}");
+        }
+
+        result
+    }
+
+    fn _get_current_price_inner(
+        client: Arc<Client>,
+        contract: &Contract,
+        vwap: bool,
+        generic_ticks: &[&str],
+        is_second_try: bool,
+        is_delayed_retry: bool,
+    ) -> Result<f64, String> {
+        let generic_ticks = if vwap { &["233"] } else { generic_ticks };
+
         let subscription = client
-            .market_data(&contract)
+            .market_data(contract)
             .generic_ticks(generic_ticks)
             .snapshot()
             .subscribe()
@@ -445,68 +464,80 @@ impl Consolidator {
                 format!("Failed to request current price from IBKR: {e:?}")
             })?;
 
-        let mut num_iter = 0;
         let mut cum_err = Vec::new();
-        loop {
-            if let Some(latest_tick) = subscription.next_timeout(Duration::from_secs(5)) {
-                match Self::_extract_price(latest_tick, &contract, &subscription) {
-                    Ok(price) => {
-                        return Ok(price);
-                    }
-                    Err(e) => {
-                        // ── yfinance fallback: only on access/subscription errors ──
-                        if Self::is_ibkr_market_data_error(&e) {
-                            if contract.security_type == SecurityType::ForexPair && !is_second_try {
-                                return Self::_get_current_price(
-                                    client,
-                                    &Contract {
-                                        symbol: contract.currency.to_string().into(),
-                                        currency: contract.symbol.to_string().into(),
-                                        ..contract.clone()
-                                    },
-                                    vwap,
-                                    generic_ticks,
-                                    true,
-                                )
-                                .map(|v| 1.0 / v);
-                            }
-                            match Self::yahoo_ticker_from_contract(contract) {
-                                Some(yt) => {
-                                    tracing::warn!(
-                                        "IBKR market data access denied for {} ({}), \
-                                 falling back to yfinance-rs with ticker '{}'",
-                                        contract.symbol,
-                                        e,
-                                        yt
-                                    );
-                                    return match Self::get_price_from_yfinance(&yt) {
-                                        Ok(Some(price)) => Ok(price),
-                                        Ok(None) => {
-                                            Err(format!("yfinance returned no price data for {yt}"))
-                                        }
-                                        Err(err) => Err(format!("yfinance error for {yt}: {err}")),
-                                    };
-                                }
-                                None => {
-                                    // No Yahoo mapping — fall through to normal retry/error path
-                                    return Err("Failed to fetch data from yfinance".to_string());
-                                }
-                            }
-                        }
-
-                        num_iter += 1;
-                        if num_iter >= 15 {
-                            cum_err.push(format!("Final try for price data for {} failed due to {e:?}.\nFunction has failed and is returning Error!", contract.symbol.clone()));
-                            return Err(cum_err.join("\n"));
-                        }
-                        cum_err.push(format!("{num_iter:?}th try for price data for {} failed due to {e:?}\ntrying again!", contract.symbol.clone()));
-                    }
-                }
-            } else {
-                num_iter += 1;
+        for attempt in 1..=3 {
+            let Some(tick) = subscription.next_timeout(Duration::from_secs(5)) else {
                 cum_err.push("Timed out!".to_string());
+                continue;
+            };
+
+            let err = match Self::_extract_price(tick, contract, &subscription) {
+                Ok(price) => return Ok(price),
+                Err(e) => e,
+            };
+
+            // ── delayed-data fallback: only once, and only on the specific notice ──
+            if !is_delayed_retry && err.contains("Delayed market data is available") {
+                tracing::warn!(
+                    "Live market data unavailable for {}, switching to delayed data: {err}",
+                    contract.symbol
+                );
+                client
+                    .switch_market_data_type(MarketDataType::Delayed)
+                    .map_err(|e| format!("Failed to switch to delayed market data: {e:?}"))?;
+                return Self::_get_current_price_inner(
+                    client,
+                    contract,
+                    vwap,
+                    generic_ticks,
+                    is_second_try,
+                    true,
+                );
             }
+
+            // ── yfinance fallback: only on access/subscription errors ──
+            if Self::is_ibkr_market_data_error(&err) {
+                if contract.security_type == SecurityType::ForexPair && !is_second_try {
+                    return Self::_get_current_price_inner(
+                        client,
+                        &Contract {
+                            symbol: contract.currency.to_string().into(),
+                            currency: contract.symbol.to_string().into(),
+                            ..contract.clone()
+                        },
+                        vwap,
+                        generic_ticks,
+                        true,
+                        is_delayed_retry,
+                    )
+                    .map(|v| 1.0 / v);
+                }
+
+                return match Self::yahoo_ticker_from_contract(contract) {
+                    Some(yt) => {
+                        tracing::warn!(
+                            "IBKR market data access denied for {} ({err}), falling back to yfinance-rs with ticker '{yt}'",
+                            contract.symbol,
+                        );
+                        Self::get_price_from_yfinance(&yt)
+                            .map_err(|e| format!("yfinance error for {yt}: {e}"))?
+                            .ok_or_else(|| format!("yfinance returned no price data for {yt}"))
+                    }
+                    None => Err("Failed to fetch data from yfinance".to_string()),
+                };
+            }
+
+            cum_err.push(format!(
+                "{attempt}th try for price data for {} failed due to {err}",
+                contract.symbol
+            ));
         }
+
+        cum_err.push(format!(
+            "Final try for price data for {} failed. Function has failed and is returning Error!",
+            contract.symbol
+        ));
+        Err(cum_err.join("\n"))
     }
 
     async fn fetch_dukascopy_day(
