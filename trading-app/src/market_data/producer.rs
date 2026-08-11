@@ -125,7 +125,6 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                                     let mut try_times = 0;
                                     hotpath::measure_block!("try_push_bar_loop", {
                                         'try_push_loop: loop {
-                                            tracing::error!("Bar: {bar:?}");
                                             match producer.try_push(bar) {
                                                 Ok(()) => break 'try_push_loop,
                                                 Err(returned_bar) => {
