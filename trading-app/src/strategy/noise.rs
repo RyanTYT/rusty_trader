@@ -110,14 +110,18 @@ impl StrategyExecutor for Noise {
 
     fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
         let consolidator = consolidator.clone();
+        let contract_opt = consolidator.validate_contract(
+            Contract::stock("QQQ")
+                .on_exchange("SMART")
+                .primary("NASDAQ")
+                .in_currency("USD")
+                .build(),
+            Duration::from_secs(10),
+        );
         self.tokio_handle.block_on(async move {
             consolidator
                 .update_at_least_n_days_data(
-                    &Contract::stock("QQQ")
-                        .on_exchange("SMART")
-                        .primary("NASDAQ")
-                        .in_currency("USD")
-                        .build(),
+                    &contract_opt.expect("Expected QQQ contract"),
                     20,
                     true,
                 )
