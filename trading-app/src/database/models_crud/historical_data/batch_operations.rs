@@ -68,6 +68,7 @@ macro_rules! impl_bulk_insertable {
             table: $table_name:expr,
             pk_type: $pk_type:ty,
             pk_fields: ($self_ident:ident) -> [$($pk_field:expr),+ $(,)?],
+            pk_field_names: [$($pk_field_name:expr),+ $(,)?],
             columns: [
                 $(
                     $field:ident : $pg_type_str:expr => $pg_type:path $([$is_pk:ident])?
@@ -110,7 +111,7 @@ macro_rules! impl_bulk_insertable {
 
             fn merge_sql(staging_table: &str) -> String {
                 let all_cols = vec![ $( stringify!($field) ),+ ];
-                let pk_cols = vec![ $( stringify!($pk_field) ),+ ];
+                let pk_cols = vec![ $( stringify!($pk_field_name) ),+ ];
 
                 // Filter non-primary key columns for DO UPDATE clause
                 let non_pk_cols: Vec<&str> = all_cols
@@ -225,6 +226,7 @@ impl_bulk_insertable! {
             self.currency.clone(),
             self.time.clone()
         ],
+        pk_field_names: [stock, primary_exchange, currency, time],
         columns: [
             stock: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             primary_exchange: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
@@ -244,6 +246,7 @@ impl_bulk_insertable! {
         table: "market_data.daily_ohlcv",
         pk_type: (String, DateTime<Utc>),
         pk_fields: (self) -> [self.stock.clone(), self.time.clone()],
+        pk_field_names: [stock, time],
         columns: [
             stock: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             primary_exchange: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
@@ -272,6 +275,7 @@ impl_bulk_insertable! {
             self.option_type.clone(),
             self.time.clone()
         ],
+        pk_field_names: [stock, primary_exchange, currency, expiry, strike, multiplier, option_type, time],
         columns: [
             stock: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             primary_exchange: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
@@ -295,6 +299,7 @@ impl_bulk_insertable! {
         table: "market_data.historical_forex_data",
         pk_type: (String, DateTime<Utc>),
         pk_fields: (self) -> [self.pair.clone(), self.time.clone()],
+        pk_field_names: [pair, time],
         columns: [
             pair: "VARCHAR(30) NOT NULL" => Type::VARCHAR [pk],
             time: "TIMESTAMPTZ NOT NULL" => Type::TIMESTAMPTZ [pk],
