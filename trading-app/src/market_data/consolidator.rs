@@ -157,44 +157,43 @@ impl Consolidator {
         }
     }
 
-    fn refresh_if_stale(&self, contract: &Contract, config: &HistoricalDataConfig) {
+    async fn refresh_if_stale(&self, contract: &Contract, config: &HistoricalDataConfig) {
         let asset_type = AssetType::from_str(&contract.security_type);
         let target = last_bar_available(Utc::now().with_timezone(&New_York), &asset_type)
             .expect("Expected a bar");
 
         let historical_data_crud = HistoricalDataCRUD::from(&asset_type, self.pool.clone());
-        tokio::runtime::Handle::current().block_on(async move {
-            match historical_data_crud
-                .read_last_n(
-                    HistoricalDataPrimaryKeysWoTime::from_contract(&contract),
-                    if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
-                        1
-                    } else {
-                        5
-                    },
-                    1,
-                )
-                .await
-            {
-                Ok(bars) => {
-                    if bars.full.is_empty() {
-                        tracing::error!("Full bars is empty on fetch last bar")
-                    } else {
-                        let bar = bars.full.first().unwrap();
-                        if bar.get_time() != target {
-                            if let Err(e) = self.populate_historical_data(contract, config).await {
-                                tracing::error!(
-                                    "Failed to populate_historical_data in refresh_if_stale: {e:?}"
-                                );
-                            };
-                        }
+
+        match historical_data_crud
+            .read_last_n(
+                HistoricalDataPrimaryKeysWoTime::from_contract(&contract),
+                if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
+                    1
+                } else {
+                    5
+                },
+                1,
+            )
+            .await
+        {
+            Ok(bars) => {
+                if bars.full.is_empty() {
+                    tracing::error!("Full bars is empty on fetch last bar")
+                } else {
+                    let bar = bars.full.first().unwrap();
+                    if bar.get_time() != target {
+                        if let Err(e) = self.populate_historical_data(contract, config).await {
+                            tracing::error!(
+                                "Failed to populate_historical_data in refresh_if_stale: {e:?}"
+                            );
+                        };
                     }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to fetch last available bar: {e:?}");
-                }
-            };
-        });
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch last available bar: {e:?}");
+            }
+        };
     }
 
     /// Assumes that each day has 78 5-min bars
@@ -310,7 +309,7 @@ impl Consolidator {
                     use_batching,
                 );
                 if passed {
-                    self.refresh_if_stale(&contract, &config);
+                    self.refresh_if_stale(&contract, &config).await;
                 } else {
                     if let Err(e) = self.populate_historical_data(&contract, &config).await {
                         tracing::error!(
