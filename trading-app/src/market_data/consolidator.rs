@@ -52,7 +52,6 @@ pub struct Consolidator {
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
-    pub(super) handle: tokio::runtime::Handle,
 }
 
 impl Consolidator {
@@ -121,7 +120,6 @@ impl Consolidator {
             market_data_handler,
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
-            handle,
         }
     }
 
@@ -184,7 +182,7 @@ impl Consolidator {
                     } else {
                         let bar = bars.full.first().unwrap();
                         if bar.get_time() != target {
-                            if let Err(e) = self.populate_historical_data(contract, config) {
+                            if let Err(e) = self.populate_historical_data(contract, config).await {
                                 tracing::error!(
                                     "Failed to populate_historical_data in refresh_if_stale: {e:?}"
                                 );
@@ -314,7 +312,7 @@ impl Consolidator {
                 if passed {
                     self.refresh_if_stale(&contract, &config);
                 } else {
-                    if let Err(e) = self.populate_historical_data(&contract, &config) {
+                    if let Err(e) = self.populate_historical_data(&contract, &config).await {
                         tracing::error!(
                             "Failed to populate_historical_data in update_at_least_n_days_data: {e:?}"
                         );

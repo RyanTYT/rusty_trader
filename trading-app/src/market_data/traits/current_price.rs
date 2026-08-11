@@ -55,6 +55,7 @@ impl HistoricalDataConfig {
     }
 }
 
+#[async_trait::async_trait]
 pub trait PriceSupplier {
     fn get_current_price(
         &self,
@@ -62,13 +63,14 @@ pub trait PriceSupplier {
         vwap: bool,
         generic_ticks: &[&str],
     ) -> Result<f64, String>;
-    fn populate_historical_data(
+    async fn populate_historical_data(
         &self,
         contract: &Contract,
         config: &HistoricalDataConfig,
     ) -> Result<(), String>;
 }
 
+#[async_trait::async_trait]
 impl PriceSupplier for Consolidator {
     fn get_current_price(
         &self,
@@ -101,7 +103,7 @@ impl PriceSupplier for Consolidator {
     }
 
     // If is_forex is true, what_to_show is ignored - takes both bid and ask
-    fn populate_historical_data(
+    async fn populate_historical_data(
         &self,
         contract: &Contract,
         config: &HistoricalDataConfig,
@@ -144,7 +146,7 @@ impl PriceSupplier for Consolidator {
             latest_request_timestamp - (latest_request_timestamp % bar_interval);
 
         let batch_creator_opt = if config.use_batching {
-            Some(self.handle.block_on(async {
+            Some(
                 match AssetType::from_str(&contract.security_type) {
                     AssetType::Stock | AssetType::CFD | AssetType::Future => {
                         BatchDbCreatorEnum::Stock(
@@ -164,7 +166,7 @@ impl PriceSupplier for Consolidator {
                         panic!("Tried to init batch channel for Unknown Asset Type")
                     }
                 }
-            }))
+            )
         } else {
             None
         };
@@ -191,7 +193,7 @@ impl PriceSupplier for Consolidator {
 
             let cloned_batch_creator_opt = batch_creator_opt.clone();
             let cloned_asset_type = asset_type.clone();
-            let insert_thread = self.handle.spawn(async move {
+            let insert_thread = tokio::spawn(async move {
                 match cloned_batch_creator_opt {
                     Some(batch_creator) => {
                         if let Err(e) = batch_creator
@@ -214,9 +216,7 @@ impl PriceSupplier for Consolidator {
             join_handles.push(insert_thread);
         }
 
-        self.handle.block_on(async {
-            futures::future::join_all(join_handles).await;
-        });
+        futures::future::join_all(join_handles).await;
 
         if asset_type == AssetType::ForexPair
             && what_to_show == ibapi::market_data::historical::WhatToShow::Bid
@@ -229,7 +229,8 @@ impl PriceSupplier for Consolidator {
                     what_to_show: ibapi::market_data::historical::WhatToShow::Ask,
                     use_batching: config.use_batching,
                 },
-            )?;
+            )
+            .await?;
         }
 
         Ok(())
