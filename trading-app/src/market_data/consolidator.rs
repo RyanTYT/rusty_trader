@@ -299,9 +299,9 @@ impl Consolidator {
                         days as i32
                     }),
                     if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
-                        ibapi::prelude::HistoricalBarSize::Min
+                        ibapi::market_data::historical::BarSize::Min
                     } else {
-                        ibapi::prelude::HistoricalBarSize::Min5
+                        ibapi::market_data::historical::BarSize::Min5
                     },
                     if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
                         ibapi::market_data::historical::WhatToShow::Bid
