@@ -387,6 +387,10 @@ where
 {
     fn drop(&mut self) {
         let sender = {
+            if Arc::strong_count(&self.shutdown_sender) > 1 {
+                // there is still another one out there still not done
+                return;
+            }
             let opt = self
                 .shutdown_sender
                 .lock()
