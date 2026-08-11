@@ -260,7 +260,7 @@ impl ContractScheduler for IbkrContractScheduler {
                 let dt_now = dt.with_timezone(&tz);
                 match trading_hours_opt {
                     Some(trading_hours) => {
-                        tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
+                        // tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
                         Ok(trading_hours.open <= dt_now && dt_now <= trading_hours.close)
                     }
                     None => Ok(false),
@@ -277,7 +277,7 @@ impl ContractScheduler for IbkrContractScheduler {
                 let dt_now = dt.with_timezone(&tz);
                 match trading_hours_opt {
                     Some(trading_hours) => {
-                        tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
+                        // tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
                         Ok(trading_hours.open <= dt_now && dt_now <= trading_hours.close)
                     }
                     None => Ok(false),
