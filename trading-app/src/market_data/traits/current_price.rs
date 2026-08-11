@@ -34,7 +34,7 @@ const DUKASCOPY_BASE_URL: &str = "https://jetta.dukascopy.com/v1/candles/minute"
 
 pub struct HistoricalDataConfig {
     duration: ibapi::market_data::historical::Duration,
-    bar_size: ibapi::prelude::HistoricalBarSize,
+    bar_size: ibapi::market_data::historical::BarSize,
     what_to_show: ibapi::market_data::historical::WhatToShow,
     use_batching: bool,
 }
@@ -42,7 +42,7 @@ pub struct HistoricalDataConfig {
 impl HistoricalDataConfig {
     pub fn new(
         duration: ibapi::market_data::historical::Duration,
-        bar_size: ibapi::prelude::HistoricalBarSize,
+        bar_size: ibapi::market_data::historical::BarSize,
         what_to_show: ibapi::market_data::historical::WhatToShow,
         use_batching: bool,
     ) -> Self {
