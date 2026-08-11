@@ -156,9 +156,34 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
     let is_alive = Arc::new(AtomicBool::new(true));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
+    let actual_consumers = consumers
+        .iter()
+        .map(|consumer| {
+            format!(
+                "    ({}, {})",
+                consumer.contract.symbol.clone(),
+                consumer.contract.security_type.clone()
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    tracing::error!(
+        "{}_{}_GROUPED_CONSUMER:\n{}",
+        consumers
+            .first()
+            .expect("Expected consumers argument to not be empty")
+            .contract
+            .symbol,
+        consumers
+            .first()
+            .expect("Expected consumers argument to not be empty")
+            .contract
+            .security_type,
+        actual_consumers
+    );
     std::thread::Builder::new()
         .name(format!(
-            "{}_{}_consumer",
+            "{}_{}_grouped_consumer",
             consumers
                 .first()
                 .expect("Expected consumers argument to not be empty")
