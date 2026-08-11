@@ -36,6 +36,7 @@ COPY crud_insertable ./crud_insertable
 COPY crud_insertable_macro ./crud_insertable_macro
 COPY crud_models ./crud_models
 COPY spmc-ring ./spmc-ring
+COPY rust-ibapi-v2.12.0 ./rust-ibapi-v2.12.0
 COPY .sqlx ./.sqlx
 COPY migrations ./migrations
 
