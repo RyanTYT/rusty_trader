@@ -2,7 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, Utc};
 use ibapi::{
-    Client, client::Subscription, market_data::MarketDataType, prelude::{Contract, SecurityType, TickTypes},
+    Client,
+    client::Subscription,
+    market_data::MarketDataType,
+    prelude::{Contract, SecurityType, TickTypes},
 };
 use rust_decimal::str;
 use yfinance_rs::{Ticker, YfClient};
@@ -233,6 +236,22 @@ impl PriceSupplier for Consolidator {
     }
 }
 
+/// Outcome of attempting to extract a price from a single tick.
+enum PriceExtraction {
+    /// A usable price. Live and delayed ticks both arrive as `TickTypes::Price`
+    /// — IBKR distinguishes them only via `tick_price.tick_type`
+    /// (Bid/Ask/Last vs DelayedBid/DelayedAsk/DelayedLast); the wrapper and
+    /// `price` field are identical either way, so no special-casing is needed.
+    Price(f64),
+    /// Non-fatal: TWS error code 10167, confirming the client is now
+    /// receiving delayed data. The actual delayed price tick follows
+    /// separately on this same subscription — caller should keep listening,
+    /// not treat this as a failure or retry-budget consumer.
+    DelayedDataConfirmed,
+    /// Anything else: SnapshotEnd, RequestParameters, unrelated notices, etc.
+    Err(String),
+}
+
 impl Consolidator {
     /// Derives the Yahoo Finance ticker symbol from an IBKR Contract.
     ///
@@ -377,35 +396,41 @@ impl Consolidator {
         tick: TickTypes,
         contract: &Contract,
         subscription: &Subscription<TickTypes>,
-    ) -> Result<f64, String> {
+    ) -> PriceExtraction {
         match tick {
-            ibapi::prelude::TickTypes::Price(tick_price) => return Ok(tick_price.price),
+            ibapi::prelude::TickTypes::Price(tick_price) => {
+                PriceExtraction::Price(tick_price.price)
+            }
             ibapi::prelude::TickTypes::SnapshotEnd => {
                 subscription.cancel();
-
-                return Err(format!(
+                PriceExtraction::Err(format!(
                     "Got SnapshotEnd from request for market data: {}",
                     contract.symbol
-                ));
+                ))
             }
-            ibapi::prelude::TickTypes::RequestParameters(_) => {
-                return Err(format!(
-                    "Got RequestParameters ticker from request for mkt data: {}:",
-                    contract.symbol
-                ));
+            ibapi::prelude::TickTypes::RequestParameters(_) => PriceExtraction::Err(format!(
+                "Got RequestParameters ticker from request for mkt data: {}:",
+                contract.symbol
+            )),
+            ibapi::prelude::TickTypes::String(msg) => PriceExtraction::Err(format!(
+                "Got string from request for market data: {}",
+                msg.value
+            )),
+            // ── notices: disambiguate by numeric code, not message text ──
+            // Message text overlaps between "you have no access" (fatal, e.g.
+            // 10089) and "confirming delayed data is now streaming" (10167,
+            // informational), so string-matching alone can't tell them apart.
+            ibapi::prelude::TickTypes::Notice(notice) if notice.code == 10167 => {
+                PriceExtraction::DelayedDataConfirmed
             }
-            ibapi::prelude::TickTypes::String(msg) => {
-                return Err(format!(
-                    "Got string from request for market data: {}",
-                    msg.value
-                ));
-            }
-            _ => {
-                return Err(format!(
-                    "Got unknown ticker from request for market data: {}: {:?}",
-                    contract.symbol, tick
-                ));
-            }
+            ibapi::prelude::TickTypes::Notice(notice) => PriceExtraction::Err(format!(
+                "Got notice {} from request for market data: {}: {}",
+                notice.code, contract.symbol, notice.message
+            )),
+            other => PriceExtraction::Err(format!(
+                "Got unknown ticker from request for market data: {}: {:?}",
+                contract.symbol, other
+            )),
         }
     }
 
@@ -472,11 +497,18 @@ impl Consolidator {
             };
 
             let err = match Self::_extract_price(tick, contract, &subscription) {
-                Ok(price) => return Ok(price),
-                Err(e) => e,
+                PriceExtraction::Price(price) => return Ok(price),
+                PriceExtraction::DelayedDataConfirmed => {
+                    tracing::debug!(
+                        "Delayed market data confirmed for {}, awaiting tick",
+                        contract.symbol
+                    );
+                    continue; // doesn't consume a retry, doesn't trip fallback logic
+                }
+                PriceExtraction::Err(e) => e,
             };
 
-            // ── delayed-data fallback: only once, and only on the specific notice ──
+            // ── delayed-data fallback: only once, and only when live access is denied ──
             if !is_delayed_retry && err.contains("Delayed market data is available") {
                 tracing::warn!(
                     "Live market data unavailable for {}, switching to delayed data: {err}",
