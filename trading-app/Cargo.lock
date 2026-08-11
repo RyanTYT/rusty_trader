@@ -1356,8 +1356,6 @@ dependencies = [
 [[package]]
 name = "ibapi"
 version = "2.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a4d71fd1aabf319819f9d174f86e2737b142c6ee7d4e7718be9153bbe8d722"
 dependencies = [
  "byteorder",
  "crossbeam",
@@ -3893,6 +3891,7 @@ dependencies = [
  "serde_json",
  "spmc-ring",
  "sqlx",
+ "time",
  "tokio",
  "tokio-postgres",
  "tracing",

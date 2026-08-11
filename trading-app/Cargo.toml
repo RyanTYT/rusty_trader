@@ -34,8 +34,12 @@ spmc-ring = { version = "0.1.0", path = "spmc-ring" }
 redb = "4.1.0"
 postcard = { version = "1.1.3", features = ["alloc"] }
 hotpath = "0.23.1"
+time = "0.3.55"
 
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+
+[patch.crates-io]
+ibapi = { path = "./rust-ibapi-v2.12.0" }
