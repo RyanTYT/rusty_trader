@@ -122,7 +122,7 @@ impl PriceSupplier for Consolidator {
                     duration,
                     bar_size.clone(),
                     what_to_show.clone(),
-                    ibapi::prelude::TradingHours::Regular,
+                    ibapi::market_data::TradingHours::Regular,
                 )
                 .map_err(|e| {
                     format!(
