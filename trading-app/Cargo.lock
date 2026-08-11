@@ -3893,7 +3893,6 @@ dependencies = [
  "serde_json",
  "spmc-ring",
  "sqlx",
- "time",
  "tokio",
  "tokio-postgres",
  "tracing",

@@ -118,7 +118,7 @@ impl PriceSupplier for Consolidator {
             cloned_client
                 .historical_data(
                     &cloned_contract,
-                    Some(time::OffsetDateTime::now_utc()),
+                    None,
                     duration,
                     bar_size.clone(),
                     what_to_show.clone(),
@@ -493,7 +493,7 @@ impl Consolidator {
             })?;
 
         let mut cum_err = Vec::new();
-        for attempt in 1..=3 {
+        for attempt in 1..=10 {
             let Some(tick) = subscription.next_timeout(Duration::from_secs(5)) else {
                 cum_err.push("Timed out!".to_string());
                 continue;
