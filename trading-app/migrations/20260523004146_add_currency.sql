@@ -58,22 +58,22 @@ ALTER TABLE trading.target_option_positions
     ADD CONSTRAINT target_option_positions_pkey
     PRIMARY KEY (strategy, stock, primary_exchange, currency, expiry, strike, multiplier, option_type);
 
--- open_stock_orders
--- existing PK is (order_perm_id)
-ALTER TABLE trading.open_stock_orders
-    DROP CONSTRAINT open_stock_orders_pkey;
-ALTER TABLE trading.open_stock_orders
-    ADD CONSTRAINT open_stock_orders_pkey
-    PRIMARY KEY (order_perm_id);
--- NOTE: currency is Optional<String> here, so it likely shouldn't be added to the PK
-
--- open_option_orders
-ALTER TABLE trading.open_option_orders
-    DROP CONSTRAINT open_option_orders_pkey;
-ALTER TABLE trading.open_option_orders
-    ADD CONSTRAINT open_option_orders_pkey
-    PRIMARY KEY (order_perm_id);
--- NOTE: same as above, currency is Optional<String>, unsuitable as PK
+-- -- open_stock_orders
+-- -- existing PK is (order_perm_id)
+-- ALTER TABLE trading.open_stock_orders
+--     DROP CONSTRAINT open_stock_orders_pkey;
+-- ALTER TABLE trading.open_stock_orders
+--     ADD CONSTRAINT open_stock_orders_pkey
+--     PRIMARY KEY (order_perm_id, order_id);
+-- -- NOTE: currency is Optional<String> here, so it likely shouldn't be added to the PK
+--
+-- -- open_option_orders
+-- ALTER TABLE trading.open_option_orders
+--     DROP CONSTRAINT open_option_orders_pkey;
+-- ALTER TABLE trading.open_option_orders
+--     ADD CONSTRAINT open_option_orders_pkey
+--     PRIMARY KEY (order_perm_id, order_id);
+-- -- NOTE: same as above, currency is Optional<String>, unsuitable as PK
 
 -- -- historical_data
 -- -- existing PK likely (stock, primary_exchange, time)
@@ -91,19 +91,19 @@ ALTER TABLE market_data.historical_options_data
     ADD CONSTRAINT historical_options_data_pkey
     PRIMARY KEY (stock, primary_exchange, currency, expiry, strike, multiplier, option_type, time);
 
--- stock_transactions
--- existing PK is (execution_id)
-ALTER TABLE trading.stock_transactions
-    DROP CONSTRAINT stock_transactions_pkey;
-ALTER TABLE trading.stock_transactions
-    ADD CONSTRAINT stock_transactions_pkey
-    PRIMARY KEY (execution_id);
--- NOTE: currency is Optional<String> here, unsuitable as PK
+-- -- stock_transactions
+-- -- existing PK is (execution_id)
+-- ALTER TABLE trading.stock_transactions
+--     DROP CONSTRAINT stock_transactions_pkey;
+-- ALTER TABLE trading.stock_transactions
+--     ADD CONSTRAINT stock_transactions_pkey
+--     PRIMARY KEY (execution_id);
+-- -- NOTE: currency is Optional<String> here, unsuitable as PK
 
--- option_transactions
-ALTER TABLE trading.option_transactions
-    DROP CONSTRAINT option_transactions_pkey;
-ALTER TABLE trading.option_transactions
-    ADD CONSTRAINT option_transactions_pkey
-    PRIMARY KEY (execution_id);
--- NOTE: same as above
+-- -- option_transactions
+-- ALTER TABLE trading.option_transactions
+--     DROP CONSTRAINT option_transactions_pkey;
+-- ALTER TABLE trading.option_transactions
+--     ADD CONSTRAINT option_transactions_pkey
+--     PRIMARY KEY (execution_id);
+-- -- NOTE: same as above
