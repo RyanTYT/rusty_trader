@@ -121,7 +121,7 @@ CREATE TABLE trading.open_option_orders (
 
     quantity DOUBLE PRECISION NOT NULL,
     filled DOUBLE PRECISION NOT NULL,
-    executions TEXT[] NOT NULL DEFAULT "{}",
+    executions TEXT[] NOT NULL DEFAULT '{}',
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
