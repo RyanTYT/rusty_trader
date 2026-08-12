@@ -258,9 +258,9 @@ impl SyncOps for SyncerEngine {
         }
 
         if !open_orders.is_empty() {
-            tracing::warn!(
+            tracing::info!(
                 message=%format!(
-                    "The following key-value pairs still remain while syncing open_orders:\n{}",
+                    "Ran full_open_order_received for the following:\n{}",
                     open_orders
                         .iter_mut()
                         .map(|(key, value)| format!(
