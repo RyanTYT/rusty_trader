@@ -23,6 +23,7 @@ use crate::{
         memoise::{AnyMemoized, Memoized},
         traits::current_price::{HistoricalDataConfig, PriceSupplier},
     },
+    schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler},
 };
 
 const NYSE_OPEN_TIME: (u32, u32) = (9, 30);
@@ -52,6 +53,7 @@ pub struct Consolidator {
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
+    contract_scheduler: Arc<IbkrContractScheduler>,
 }
 
 impl Consolidator {
@@ -60,6 +62,7 @@ impl Consolidator {
         pool: PgPool,
         client: Arc<Client>,
         market_data_handler: MarketDataHandler,
+        contract_scheduler: Arc<IbkrContractScheduler>,
     ) -> Self {
         let ttl = Duration::from_secs(60);
         let mut memoisers: HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>> =
@@ -120,6 +123,7 @@ impl Consolidator {
             market_data_handler,
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
+            contract_scheduler,
         }
     }
 
@@ -159,8 +163,21 @@ impl Consolidator {
 
     async fn refresh_if_stale(&self, contract: &Contract, config: &HistoricalDataConfig) {
         let asset_type = AssetType::from_str(&contract.security_type);
-        let target = last_bar_available(Utc::now().with_timezone(&New_York), &asset_type)
-            .expect("Expected a bar");
+        if self
+            .contract_scheduler
+            .is_trading(contract, &Utc::now())
+            .is_ok_and(|is_trading| !is_trading)
+        {
+            return;
+        }
+
+        // if this returns None -> last bar was previous trading day
+        let target = match last_bar_available(Utc::now().with_timezone(&New_York), &asset_type) {
+            Some(v) => v,
+            None => {
+                return;
+            }
+        };
 
         let historical_data_crud = HistoricalDataCRUD::from(&asset_type, self.pool.clone());
 
