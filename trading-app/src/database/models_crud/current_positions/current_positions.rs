@@ -43,6 +43,15 @@ impl<'r> FromRow<'r, PgRow> for CurrentPositionsFullKeys {
     }
 }
 
+impl CurrentPositionsFullKeys {
+    pub fn get_qty(&self) -> f64 {
+        match self {
+            Self::Stock(stk) => stk.quantity,
+            Self::Options(opt) => opt.quantity,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CurrentPositionsPrimaryKeys {
     Options(CurrentOptionPositionsPrimaryKeys),
@@ -84,6 +93,12 @@ impl CurrentPositionsPrimaryKeys {
     //             ),
     //         }
     //     }
+    pub fn get_stock(&self) -> String {
+        match self {
+            Self::Stock(pk) => pk.stock.clone(),
+            Self::Options(pk) => pk.stock.clone(),
+        }
+    }
 
     /// Modifies the underlying struct
     pub fn with_stock(&mut self, stock: &str) {
@@ -161,6 +176,15 @@ impl CurrentPositionsPrimaryKeys {
             ),
         }
     }
+
+    pub fn from_strat_and_contract_currency(strategy: &str, contract: &Contract) -> Self {
+        Self::Stock(CurrentStockPositionsPrimaryKeys {
+            strategy: strategy.to_string(),
+            stock: format!("CASH:{}", contract.currency.to_string()),
+            primary_exchange: "".to_string(),
+            currency: "SGD".to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +230,22 @@ impl CurrentPositionsUpdateKeys {
                 "Tried to construct TransactionsPrimaryKeys from CASH asset_type: should not have been possible to construct from contract: {execution_data:?}"
             ),
         }
+    }
+
+    pub fn from_execution_currency(execution_data: &ExecutionData) -> Self {
+        Self::Stock(CurrentStockPositionsUpdateKeys {
+            quantity: Some(
+                execution_data.execution.price
+                    * execution_data.execution.shares
+                    * if execution_data.execution.side == "SLD" {
+                        1.0
+                    } else {
+                        -1.0
+                    },
+            ),
+            avg_price: Some(0.0),
+            last_updated: None,
+        })
     }
 
     pub fn from(asset_type: &AssetType, quantity: Option<f64>, avg_price: Option<f64>) -> Self {

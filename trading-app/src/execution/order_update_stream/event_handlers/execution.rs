@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, Weak}};
 
-use ibapi::orders::ExecutionData;
+use ibapi::{Client, orders::ExecutionData};
 use sqlx::PgPool;
 
 use crate::{
@@ -22,8 +22,7 @@ use crate::{
                 TransactionsCRUD, TransactionsFullKeys, TransactionsPrimaryKeys,
             },
         },
-    },
-    strategy::strategy::{StrategyEnum, StrategyExecutor},
+    }, execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine}, strategy::strategy::{StrategyEnum, StrategyExecutor},
 };
 
 /// Should be triggered by ExecutionUpdate(ExecutionData) events
@@ -39,6 +38,8 @@ pub fn on_execution_update(
     strategy_map: Arc<HashMap<String, StrategyEnum>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
+    weak_client: &Weak<Client>,
+    backed_up_orders: Arc<OrderStore>,
 ) -> Result<(), String> {
     let asset_type = AssetType::from_str(&execution_data.contract.security_type);
     match asset_type {
@@ -63,8 +64,18 @@ pub fn on_execution_update(
         _ => {}
     }
 
-    let default_strategy = default_strategy.to_string();
-    tokio::spawn(async move {
+    let strategy_name = execution_data.execution.order_reference.clone();
+    let strategy = strategy_map
+        .get(&strategy_name)
+        .unwrap_or(
+            strategy_map
+                .get(default_strategy)
+                .expect("Expected default strategy to be defined in strategy map"),
+        )
+        .clone();
+
+    let weak_client = weak_client.clone();
+    handle.spawn(async move {
         // Check if transaction is valid
         // - not a duplicate
         let transactions_crud = TransactionsCRUD::from(&asset_type, pool.clone());
@@ -100,18 +111,18 @@ pub fn on_execution_update(
 
         // If No previous Open Order
         if let None = open_order_opt {
-            let strategy = {
-                let strat = &execution_data.execution.order_reference;
-                if strat == "" {
-                    &default_strategy
-                } else {
-                    strat
-                }
-            };
+            // let strategy = {
+            //     let strat = &execution_data.execution.order_reference;
+            //     if strat == "" {
+            //         &default_strategy
+            //     } else {
+            //         strat
+            //     }
+            // };
 
             tracing::warn!("OpenStockOrders does not contain required row");
             let transaction_fk =
-                TransactionsFullKeys::from_strat_and_exec(&strategy, &execution_data);
+                TransactionsFullKeys::from_strat_and_exec(&strategy_name, &execution_data);
             // Update Transaction with default strategy
             tokio::spawn(async move {
                 if let Err(e) = transactions_crud.create(&transaction_fk).await {
@@ -121,9 +132,17 @@ pub fn on_execution_update(
                 };
             });
 
-            // Update Current Positions under default strategy
+            // Update Current Positions - Currency & Stock
+            let current_positions_crud_cloned = current_positions_crud.clone();
+            let currency_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract_currency(
+                &strategy_name,
+                &execution_data.contract,
+            );
+            let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
+            update_currency_and_place_backed_up_orders(&weak_client, current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name);
+            
             let current_positions_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract(
-                &strategy,
+                &strategy_name,
                 &execution_data.contract,
             );
             let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
@@ -137,6 +156,8 @@ pub fn on_execution_update(
                     )
                 };
             });
+
+            // if backed_up_orders.load_orders(&strategy_name)
             return;
         }
 
@@ -145,7 +166,7 @@ pub fn on_execution_update(
 
         // ===== Update Open Orders =====
         let open_order = open_order_opt.unwrap();
-        let (mut executions, filled, quantity, strategy, stock) = match &open_order {
+        let (mut executions, filled, quantity, strategy_name, stock) = match &open_order {
             &OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
                 ref executions,
                 filled,
@@ -255,7 +276,8 @@ pub fn on_execution_update(
         }
 
         // ===== Update Transactions =====
-        let transaction_fk = TransactionsFullKeys::from_strat_and_exec(&strategy, &execution_data);
+        let transaction_fk =
+            TransactionsFullKeys::from_strat_and_exec(&strategy_name, &execution_data);
         tokio::spawn(async move {
             if let Err(e) = transactions_crud.create(&transaction_fk).await {
                 tracing::error!("Error occured while inserting into Transactions: {e:?}")
@@ -263,16 +285,8 @@ pub fn on_execution_update(
         });
 
         // ===== Update Positions =====
-        let strategy_enum = strategy_map.get(&strategy).unwrap_or({
-            tracing::warn!("Strategy ({strategy:?}) is not in strategy_map - using default strat");
-            strategy_map.get(&default_strategy).expect(
-                "Expected valid default strategy to be used\
-                - i.e. default_strategy should be in strategy_map",
-            )
-        });
-
         let mut current_positions_pk = CurrentPositionsPrimaryKeys::from_open_order(&open_order);
-        let stock = if strategy_enum.is_fx_strategy() {
+        let stock = if strategy.is_fx_strategy() {
             stock
         } else {
             match stock.strip_prefix("FX:") {
@@ -282,8 +296,9 @@ pub fn on_execution_update(
         };
         current_positions_pk.with_stock(&stock);
         let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
+        let current_positions_crud_cloned = current_positions_crud.clone();
 
-        handle.spawn(async move {
+        tokio::spawn(async move {
             if let Err(e) = current_positions_crud
                 .update_positions_additive(current_positions_pk, current_positions_uk)
                 .await
@@ -291,7 +306,62 @@ pub fn on_execution_update(
                 tracing::error!("Failed to update positions in new execution update: {e:?}");
             };
         });
+        let currency_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract_currency(
+            &strategy_name,
+            &execution_data.contract,
+        );
+        let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
+        update_currency_and_place_backed_up_orders(&weak_client,current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name);
     });
 
     Ok(())
+}
+
+
+async fn update_currency_and_place_backed_up_orders(
+    weak_client: &Weak<Client>,
+    current_positions_crud: CurrentPositionsCRUD,
+    pk: CurrentPositionsPrimaryKeys,
+    uk: CurrentPositionsUpdateKeys,
+    backed_up_orders: Arc<OrderStore>,
+    strategy_name: &str,
+) {
+    if let Err(e) = current_positions_crud
+        .update_positions_additive(pk.clone(), uk)
+        .await
+    {
+        tracing::error!(
+            "Error inserting into CurrentPositions for unknown strategy: {e:?}"
+        );
+        return;
+    };
+
+    let strat_orders = backed_up_orders.load_orders(strategy_name).unwrap().unwrap();
+    if !strat_orders.is_empty() {
+        let current_positions_currency = 
+            match current_positions_crud.read(&pk).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("Failed to fetch current currency position, ignoring backed_up_orders! Err: {e:?}");
+                    return;
+                }
+        };
+
+        let mut currency_value = current_positions_currency.expect("Expected current positions of currency not to be None").get_qty();
+        if currency_value > 0.0 {
+            for mut strat_order in strat_orders {
+                if !(strat_order.contract.currency.to_string() == pk.get_stock().strip_prefix("CASH:").expect("Expected currency stock to have CASH: prefix")) {
+                    continue;
+                }
+                let price: f64 = strat_order.order.order_ref.strip_prefix(format!("{}:", strategy_name).as_str()).expect("Expected strategy of execution update to be same as strat_order").parse().expect("Expected f64 string in order_ref");
+
+                let required_currency = strat_order.order.total_quantity * price;
+                if required_currency < currency_value {
+                    currency_value -= required_currency;
+                    strat_order.order.order_ref = strategy_name.to_string();
+                    OrderEngine::place_order(&weak_client, strat_order);
+                }
+            }
+        }
+    }
 }

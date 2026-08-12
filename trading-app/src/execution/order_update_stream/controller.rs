@@ -10,7 +10,10 @@ use sqlx::PgPool;
 use tokio::sync::oneshot::error::TryRecvError;
 use tracing::{info, warn};
 
-use crate::{execution::order_update_stream, strategy::strategy::StrategyEnum};
+use crate::{
+    execution::{fx_backed_up_order::OrderStore, order_update_stream},
+    strategy::strategy::StrategyEnum,
+};
 
 static ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
 
@@ -63,7 +66,8 @@ impl OrderUpdateStreamController {
         weak_client: Weak<Client>,
         strategy_map: Arc<HashMap<String, StrategyEnum>>,
         default_strategy: Option<String>,
-        handle: tokio::runtime::Handle
+        handle: tokio::runtime::Handle,
+        backed_up_orders: Arc<OrderStore>,
     ) -> Option<Self> {
         // https://ibridgepy.com/ib-api-knowledge-base/#step1-1-17
         // openOrder( ) is triggered twice automatically. When the order is initially accepted and when the order is fully executed. When the order is initially accepted, you would get an openOrder( ) and orderStatus( ) call back. Then if there are partial fills or any other status changes you would receive additional orderStatus( ) call back. Then if you receive additional orderStatus( ) call back, when the order fully executes you would get a final orderStatus( ) followed by an openOrder( ) and then receive the execDetails( ) and commissionReport( ). If you invoke reqOpenOrders( ), it will only relay the last orderStatus( ) of any current working order.
@@ -88,9 +92,10 @@ impl OrderUpdateStreamController {
 
         // spawn a new os blocking thread to await for updates synchronously
         // - send updates via channel back to async runtime
+        let weak_client_cloned = weak_client.clone();
         std::thread::spawn(move || {
             let mut event_subscription = {
-                let client_opt = weak_client.upgrade();
+                let client_opt = weak_client_cloned.upgrade();
                 if client_opt.is_none() {
                     tracing::error!("client is dead before init! could not subscribe!");
                     return;
@@ -114,7 +119,7 @@ impl OrderUpdateStreamController {
                         \nRetrying subscription!"
                     );
                     event_subscription = {
-                        let client_opt = weak_client.upgrade();
+                        let client_opt = weak_client_cloned.upgrade();
                         if client_opt.is_none() {
                             warn!("client is dead! could not resubscribe!");
                             return;
@@ -164,6 +169,8 @@ impl OrderUpdateStreamController {
         let def_strat = default_strategy.unwrap_or("unknown".to_string());
         let strategy_map = strategy_map.clone();
         let cloned_handle = handle.clone();
+        let weak_client = weak_client.clone();
+        let backed_up_orders = backed_up_orders.clone();
         handle.spawn(async move {
             loop {
                 match rx.recv().await {
@@ -174,7 +181,9 @@ impl OrderUpdateStreamController {
                             pool.clone(),
                             order_update,
                             def_strat.as_str(),
-                            cloned_handle.clone()
+                            cloned_handle.clone(),
+                            &weak_client,
+                            backed_up_orders.clone(),
                         )
                         .await
                         {
@@ -217,6 +226,8 @@ async fn on_order_update_received(
     order_update: OrderUpdate,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
+    weak_client: &Weak<Client>,
+    backed_up_orders: Arc<OrderStore>,
 ) -> Result<(), String> {
     match order_update {
         OrderUpdate::OrderStatus(status) => {
@@ -294,6 +305,8 @@ async fn on_order_update_received(
                 strategy_map.clone(),
                 default_strategy,
                 handle,
+                weak_client,
+                backed_up_orders,
             ) {
                 return Err(format!("Error while running on_execution_update: {e:?}"));
             };

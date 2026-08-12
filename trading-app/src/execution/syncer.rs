@@ -29,7 +29,7 @@ use crate::{
             },
         },
     },
-    execution::order_update_stream,
+    execution::{fx_backed_up_order::OrderStore, order_update_stream},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from, get_local_symbol},
     init_app::StrategyParameters,
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
@@ -99,8 +99,9 @@ impl SyncerEngine {
 pub trait SyncOps {
     fn sync_executions(
         &self,
-        client: &Client,
+        client: &Arc<Client>,
         default_strategy: Option<String>,
+        backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String>;
     fn sync_open_orders(
         &self,
@@ -123,8 +124,9 @@ impl SyncOps for SyncerEngine {
     // - luckily for this, we can simply reuse live order event handles
     fn sync_executions(
         &self,
-        client: &Client,
+        client: &Arc<Client>,
         default_strategy: Option<String>,
+        backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String> {
         let subscription = client
             .executions(ibapi::orders::ExecutionFilter {
@@ -160,6 +162,8 @@ impl SyncOps for SyncerEngine {
                             self.strategy_map.clone(),
                             &def_strat,
                             self.handle.clone(),
+                            &Arc::downgrade(&client),
+                            backed_up_orders.clone(),
                         )
                     {
                         tracing::error!(

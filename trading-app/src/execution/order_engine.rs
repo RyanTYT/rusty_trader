@@ -141,7 +141,7 @@ impl OrderEngine {
     pub fn place_orders(weak_client: &Weak<Client>, orders: impl IntoIterator<Item = OrderIBKR>) {
         let orders_iter = orders.into_iter();
         let (lower_bound, _) = orders_iter.size_hint();
-        let mut order_ids = Vec::with_capacity(lower_bound);
+        let mut order_ids = vec![-1;lower_bound];
         for (idx, mut order_ibkr) in orders_iter.enumerate() {
             // let order = order_ibkr.order;
             if order_ibkr.references_parent_order >= 0 {
@@ -277,8 +277,7 @@ impl OrderEngine {
 
                                     let symbol = contract.symbol.clone();
                                     tracing::info!("Fetching price for {}", symbol);
-                                    let required_currency = qty_diff
-                                        * strong_consolidator.get_current_price(
+                                    let price = strong_consolidator.get_current_price(
                                             contract,
                                             false,
                                             &[],
@@ -286,6 +285,7 @@ impl OrderEngine {
                                             tracing::warn!("Could not get current price of contract in order_engine!");
                                             0.0
                                         });
+                                    let required_currency = qty_diff * price;
                                     tracing::info!("Fetched price for {}", symbol);
 
                                     let available_funds = funds.get(&currency).unwrap_or(&0.0);
@@ -297,8 +297,10 @@ impl OrderEngine {
                                         continue;
                                     }
 
-                                    insufficient_funds
-                                        .insert(hash_contract, required_currency - available_funds);
+                                    insufficient_funds.insert(
+                                        hash_contract,
+                                        ((qty_diff, price), required_currency - available_funds),
+                                    );
                                     funds.insert(currency.clone(), 0.0);
                                 }
                             }
@@ -369,6 +371,7 @@ impl OrderEngine {
                             )
                         };
                         order.order_ref = strat;
+                        order.transmit = true;
                         let order_ibkr = OrderIBKR::new(contract, order, -1);
                         orders.push_back(order_ibkr);
 
@@ -377,10 +380,14 @@ impl OrderEngine {
                             .contracts_sold_to_fx_orders
                             .remove(&hash_contract)
                         {
-                            for mut fx_order in fx_orders {
-                                fx_order.references_parent_order = 0;
-                                orders.push_back(fx_order);
+                            orders[0].order.transmit = false;
+                            if let Some(last) = fx_orders.last_mut() {
+                                last.order.transmit = true;
                             }
+                            for order in &mut fx_orders {
+                                order.references_parent_order = 0;
+                            }
+                            orders.extend(fx_orders);
                         }
 
                         if let Err(e) = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders) {
