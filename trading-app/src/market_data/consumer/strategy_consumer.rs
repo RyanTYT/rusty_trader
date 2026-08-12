@@ -48,6 +48,7 @@ impl<const BUFFER_CAPACITY: usize> IbkrBarConsumer<BUFFER_CAPACITY> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum IbkrBarType {
     Normal,
     ForexBid,
@@ -101,8 +102,8 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                 is_fx_a,
                 &a.contract.symbol.to_string(),
                 match &a.what_to_show {
-                    WhatToShow::Ask => 0,
-                    WhatToShow::Bid => 1,
+                    WhatToShow::Bid => 0,
+                    WhatToShow::Ask => 1,
                     _ => 2,
                 },
             )
@@ -110,8 +111,8 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                     is_fx_b,
                     &b.contract.symbol.to_string(),
                     match &b.what_to_show {
-                        WhatToShow::Ask => 0,
-                        WhatToShow::Bid => 1,
+                        WhatToShow::Bid => 0,
+                        WhatToShow::Ask => 1,
                         _ => 2,
                     },
                 ))
@@ -197,6 +198,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                     Some(bar) => {
                                         received[slot] = true;
                                         small_bars[idx].push_back(bar);
+                                        tracing::error!("{idx}, {}", consumers[idx].get_bar_type());
                                         match consumers[idx].get_bar_type() {
                                             IbkrBarType::Normal => {
                                                 if let Err(e) = Self::dispatch_bar(
