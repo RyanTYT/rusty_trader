@@ -200,6 +200,47 @@ pub enum OpenOrdersUpdateKeys {
     Options(OpenOptionOrdersUpdateKeys),
 }
 
+impl OpenOrdersUpdateKeys {
+    pub fn new(asset_type: &AssetType, contract: &Contract, order: &Order) -> Self {
+        match asset_type {
+            AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
+                Self::Stock(OpenStockOrdersUpdateKeys {
+                    strategy: Some(order.order_ref.to_string()),
+                    stock: Some(get_local_symbol(&contract)),
+                    primary_exchange: Some(contract.primary_exchange.to_string()),
+                    currency: Some(contract.currency.to_string()),
+                    time: Some(Utc::now()),
+                    quantity: Some(order.total_quantity),
+                    executions: None,
+                    filled: Some(0.0),
+                })
+            }
+            AssetType::Option => Self::Options(OpenOptionOrdersUpdateKeys {
+                strategy: Some(order.order_ref.to_string()),
+                stock: Some(get_local_symbol(&contract)),
+                primary_exchange: Some(contract.primary_exchange.to_string()),
+                currency: Some(contract.currency.to_string()),
+                expiry: Some(contract.last_trade_date_or_contract_month.to_string()),
+                strike: Some(contract.strike),
+                multiplier: Some(contract.multiplier.to_string()),
+                option_type: Some(
+                    OptionType::from_str(&contract.security_type.to_string()).unwrap(),
+                ),
+                time: Some(Utc::now()),
+                quantity: Some(order.total_quantity),
+                executions: None,
+                filled: Some(0.0),
+            }),
+            AssetType::CASH => {
+                panic!("Tried to construct OpenOrdersPrimaryKeys from CASH asset_type")
+            }
+            AssetType::Unknown => {
+                panic!("Tried to construct OpenOrdersPrimaryKeys from unknown asset_type")
+            }
+        }
+    }
+}
+
 impl OpenOrdersCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {

@@ -75,6 +75,7 @@ pub fn on_execution_update(
         .clone();
 
     let weak_client = weak_client.clone();
+    let cloned_handle = handle.clone();
     handle.spawn(async move {
         // Check if transaction is valid
         // - not a duplicate
@@ -139,7 +140,11 @@ pub fn on_execution_update(
                 &execution_data.contract,
             );
             let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
-            update_currency_and_place_backed_up_orders(&weak_client, current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name);
+
+            let strategy_name_cloned = strategy_name.clone();
+            tokio::spawn(async move {
+                update_currency_and_place_backed_up_orders(cloned_handle, pool.clone(), &weak_client, current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name_cloned).await;
+            });
             
             let current_positions_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract(
                 &strategy_name,
@@ -311,7 +316,9 @@ pub fn on_execution_update(
             &execution_data.contract,
         );
         let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
-        update_currency_and_place_backed_up_orders(&weak_client,current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name);
+        tokio::spawn(async move {
+            update_currency_and_place_backed_up_orders(cloned_handle, pool.clone(), &weak_client,current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name).await;
+        });
     });
 
     Ok(())
@@ -319,6 +326,8 @@ pub fn on_execution_update(
 
 
 async fn update_currency_and_place_backed_up_orders(
+    handle: tokio::runtime::Handle,
+    pool: PgPool,
     weak_client: &Weak<Client>,
     current_positions_crud: CurrentPositionsCRUD,
     pk: CurrentPositionsPrimaryKeys,
@@ -359,7 +368,7 @@ async fn update_currency_and_place_backed_up_orders(
                 if required_currency < currency_value {
                     currency_value -= required_currency;
                     strat_order.order.order_ref = strategy_name.to_string();
-                    OrderEngine::place_order(&weak_client, strat_order);
+                    OrderEngine::place_order(handle.clone(), pool.clone(), &weak_client, strat_order);
                 }
             }
         }

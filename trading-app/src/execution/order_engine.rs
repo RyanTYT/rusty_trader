@@ -37,6 +37,7 @@ use crate::{
         models_crud::{
             open_orders::open_orders::{
                 OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersOps, OpenOrdersPrimaryKeys,
+                OpenOrdersUpdateKeys,
             },
             target_positions::{
                 target_positions::{
@@ -103,7 +104,12 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_order(weak_client: &Weak<Client>, order_ibkr: OrderIBKR) -> i32 {
+    pub fn place_order(
+        handle: tokio::runtime::Handle,
+        pool: PgPool,
+        weak_client: &Weak<Client>,
+        order_ibkr: OrderIBKR,
+    ) -> i32 {
         let client_opt = weak_client.upgrade();
         if client_opt.is_none() {
             tracing::error!("Client is dead when trying to place order");
@@ -131,6 +137,16 @@ impl OrderEngine {
                         )
                     );
                 }
+                let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
+                let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
+                let uk =
+                    OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
+                handle.spawn(async move {
+                    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+                    if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
+                        tracing::error!("Failed to create or update open order for place_order (Optimistic Open Order): {e:?}");
+                    };
+                });
             });
         });
 
@@ -138,16 +154,22 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_orders(weak_client: &Weak<Client>, orders: impl IntoIterator<Item = OrderIBKR>) {
+    pub fn place_orders(
+        handle: tokio::runtime::Handle,
+        pool: PgPool,
+        weak_client: &Weak<Client>,
+        orders: impl IntoIterator<Item = OrderIBKR>,
+    ) {
         let orders_iter = orders.into_iter();
         let (lower_bound, _) = orders_iter.size_hint();
-        let mut order_ids = vec![-1;lower_bound];
+        let mut order_ids = vec![-1; lower_bound];
         for (idx, mut order_ibkr) in orders_iter.enumerate() {
             // let order = order_ibkr.order;
             if order_ibkr.references_parent_order >= 0 {
                 order_ibkr.order.parent_id = order_ids[order_ibkr.references_parent_order as usize];
             }
-            let order_id = Self::place_order(&weak_client, order_ibkr);
+            let order_id =
+                Self::place_order(handle.clone(), pool.clone(), &weak_client, order_ibkr);
             order_ids[idx] = order_id;
         }
     }
@@ -161,9 +183,12 @@ impl OrderEngine {
         order_store: &OrderStore,
     ) {
         match bar_update_outcome {
-            BarUpdateOutcome::EmitOrders(orders_ibkr) => {
-                Self::place_orders(weak_client, orders_ibkr)
-            }
+            BarUpdateOutcome::EmitOrders(orders_ibkr) => Self::place_orders(
+                self.tokio_handle.clone(),
+                self.pool.clone(),
+                weak_client,
+                orders_ibkr,
+            ),
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
                     let target_positions_crud =
@@ -587,17 +612,25 @@ impl OrderEngine {
 
             let weak_client_cloned = weak_client;
             orders.push_front(OrderIBKR::new(contract, order, -1));
-            std::thread::spawn(move || Self::place_orders(&weak_client_cloned, orders.into_iter()));
+            let handle = self.tokio_handle.clone();
+            let pool = self.pool.clone();
+            std::thread::spawn(move || {
+                Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
+            });
 
             return Ok(());
         }
 
         // If it's here: Order is in same dirction of qty_diff
         if current_qty_diff.abs() < qty_diff.abs() {
+            let handle = self.tokio_handle.clone();
+            let pool = self.pool.clone();
             let weak_client_cloned = weak_client.clone();
             order.total_quantity = (qty_diff - current_qty_diff).abs();
             orders.push_front(OrderIBKR::new(contract, order, -1));
-            std::thread::spawn(move || Self::place_orders(&weak_client_cloned, orders.into_iter()));
+            std::thread::spawn(move || {
+                Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
+            });
         }
 
         Ok(())
