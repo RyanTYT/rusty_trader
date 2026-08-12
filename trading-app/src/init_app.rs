@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use ibapi::{Client, contracts::Contract, prelude::RealtimeWhatToShow};
+use spmc_ring::bench::RingBuffer;
 use sqlx::PgPool;
 use tokio::time::sleep;
 
@@ -12,7 +13,7 @@ use crate::{
         order_update_stream::controller::OrderUpdateStreamController,
         syncer::{SyncOps, SyncerEngine},
     },
-    ibc::init_ibc_with_retry,
+    ibc::{IBGateway, init_ibc_with_retry},
     market_data::{
         consolidator::Consolidator,
         consumer::strategy_consumer::{IbkrBarConsumer, StrategyDataBundler},
@@ -27,8 +28,13 @@ use crate::{
     },
 };
 
+const BUFFER_CAPACITY: usize = 128;
+
 pub struct IbkrState {
     pub consolidator: Arc<Consolidator>,
+    strategy_handlers: Vec<StrategyDataBundler<BUFFER_CAPACITY>>,
+    order_update_stream_controller: OrderUpdateStreamController,
+    gateway: IBGateway,
 }
 
 pub enum ApplicationState {
@@ -42,7 +48,7 @@ pub struct StrategyParameters {
     pub(crate) subscribed_contracts: Vec<DataSubscription>,
 }
 
-pub fn init_strategies(
+pub async fn init_strategies(
     pool: PgPool,
     client: Arc<Client>,
     handle: tokio::runtime::Handle,
@@ -71,10 +77,10 @@ pub fn init_strategies(
         .clone();
     let manual_params = StrategyParameters {
         strategy: manual.clone(),
-        subscribed_contracts: vec![DataSubscription::new(
-            manual_contract.clone(),
-            RealtimeWhatToShow::Trades,
-        )],
+        subscribed_contracts: vec![
+            DataSubscription::new(manual_contract.clone(), RealtimeWhatToShow::Bid),
+            DataSubscription::new(manual_contract.clone(), RealtimeWhatToShow::Ask),
+        ],
     };
 
     let unknown_contract = unknown
@@ -84,27 +90,25 @@ pub fn init_strategies(
         .clone();
     let unknown_params = StrategyParameters {
         strategy: unknown.clone(),
-        subscribed_contracts: vec![DataSubscription::new(
-            unknown_contract.clone(),
-            RealtimeWhatToShow::Trades,
-        )],
+        subscribed_contracts: vec![
+            DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Bid),
+            DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Ask),
+        ],
     };
 
     let res = vec![noise_strat_params, manual_params, unknown_params];
 
     for strat_param in res.iter() {
         let strategy_crud = StrategyCRUD::new(pool.clone());
-        handle.clone().block_on(async move {
-            if let Err(e) = strategy_crud
-                .create_or_ignore(&StrategyFullKeys {
-                    strategy: strat_param.strategy.get_name(),
-                    status: crate::database::models::Status::Active,
-                })
-                .await
-            {
-                tracing::error!("Error occurred trying to create new Noise strategy: {e:?}")
-            }
-        });
+        if let Err(e) = strategy_crud
+            .create_or_ignore(&StrategyFullKeys {
+                strategy: strat_param.strategy.get_name(),
+                status: crate::database::models::Status::Active,
+            })
+            .await
+        {
+            tracing::error!("Error occurred trying to create new Noise strategy: {e:?}")
+        }
     }
 
     res
@@ -148,7 +152,7 @@ pub async fn init_app(
     // strat_params: Vec<StrategyParameters>,
     default_strategy: String,
 ) -> Result<ApplicationState, String> {
-    let _gateway = init_ibc_with_retry(ibc_log_file, 2).await?;
+    let gateway = init_ibc_with_retry(ibc_log_file, 2).await?;
 
     // ===================================
     // Connect to clients
@@ -169,12 +173,15 @@ pub async fn init_app(
     // ===================================
     // Initialise Consolidator/OrderEngine
     // ===================================
+    let backed_up_orders =
+        Arc::new(OrderStore::open().expect("Expected opening order store to work"));
     let order_engine = OrderEngine::new(pool.clone(), tokio::runtime::Handle::current());
     let strat_params = init_strategies(
         pool.clone(),
         client_1.clone(),
         tokio::runtime::Handle::current(),
-    );
+    )
+    .await;
     let strategy_map = {
         let mut raw_strategy_map = HashMap::new();
         for strat_param in strat_params.iter() {
@@ -185,13 +192,6 @@ pub async fn init_app(
         }
         Arc::new(raw_strategy_map)
     };
-    let _order_update_stream_controller = OrderUpdateStreamController::new(
-        pool.clone(),
-        Arc::downgrade(&master_client),
-        strategy_map,
-        Some(default_strategy.clone()),
-        tokio::runtime::Handle::current(),
-    );
     let mut raw_contract_scheduler = IbkrContractScheduler::new(client_1.clone());
     if let Err(e) = raw_contract_scheduler.add_all_schedules(
         strat_params
@@ -217,16 +217,15 @@ pub async fn init_app(
             .flat_map(|strat_param| strat_param.subscribed_contracts.clone())
             .collect(),
         DbSubscriptionMethod::GroupedPerThread,
+        tokio::runtime::Handle::current(),
     );
     let consolidator = Arc::new(Consolidator::new(
         tokio::runtime::Handle::current(),
         pool.clone(),
         client_1.clone(),
         mkt_data_handler,
+        contract_scheduler.clone(),
     ));
-    let strategy_data_bundler = StrategyDataBundler::new(contract_scheduler);
-    let backed_up_orders =
-        Arc::new(OrderStore::open().expect("Expected opening order store to work"));
 
     let syncer = SyncerEngine::new(
         pool.clone(),
@@ -239,7 +238,11 @@ pub async fn init_app(
         &consolidator,
         Some(default_strategy.clone()),
     );
-    if let Err(e) = syncer.sync_executions(&master_client, Some(default_strategy.clone())) {
+    if let Err(e) = syncer.sync_executions(
+        &master_client,
+        Some(default_strategy.clone()),
+        backed_up_orders.clone(),
+    ) {
         tracing::error!("Failed to sync executions before beginning: {e:?}");
     };
     syncer
@@ -250,47 +253,80 @@ pub async fn init_app(
         )
         .await;
 
-    // warm up the strats first
+    tracing::error!("Finished Syncing");
+
+    let order_update_stream_controller = OrderUpdateStreamController::new(
+        pool.clone(),
+        Arc::downgrade(&master_client),
+        strategy_map,
+        Some(default_strategy.clone()),
+        tokio::runtime::Handle::current(),
+        backed_up_orders.clone(),
+    )
+    .expect("Expected OrderUpdateStreamController initialisation to be ok");
+
+    let mut strategy_threads_res = Vec::new();
     std::thread::scope(|s| {
+        let mut strategy_threads = Vec::new();
         for strat_param in strat_params.iter() {
-            s.spawn(|| {
+            let strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
+            let strategy_thread = s.spawn(|| {
                 if let Err(e) = strat_param.strategy.warm_up_data(&consolidator) {
                     tracing::error!(
                         "Failed to initialise strategy ({}): {e:?}",
                         strat_param.strategy.get_name()
                     )
                 };
+                let consumers = strat_param
+                    .subscribed_contracts
+                    .iter()
+                    .map(|subscription| {
+                        IbkrBarConsumer::new(
+                            subscription.contract.clone(),
+                            subscription.what_to_show,
+                            consolidator
+                                .market_data_handler
+                                .get_subsription(subscription)
+                                .expect("Expected subscription to already exist beforehand")
+                                .get_new_consumer()
+                                .expect("Expected max no. of consumers not to be exceeded"),
+                        )
+                    })
+                    .collect();
+                strategy_data_bundler.hook_strategy(
+                    consumers,
+                    strat_param.strategy.clone(),
+                    order_engine.clone(),
+                    Arc::downgrade(&consolidator),
+                    Arc::downgrade(&client_1),
+                    Arc::downgrade(&backed_up_orders),
+                );
+
+                strategy_data_bundler
             });
+
+            strategy_threads.push(strategy_thread);
+        }
+
+        for thread in strategy_threads.into_iter() {
+            strategy_threads_res.push(
+                thread
+                    .join()
+                    .map_err(|e| format!("Failed to boot strategy: {e:?}")),
+            )
         }
     });
 
-    for strat_param in strat_params.iter() {
-        // strat_param.subscribed_contracts
-        let consumers = strat_param
-            .subscribed_contracts
-            .iter()
-            .map(|subscription| {
-                IbkrBarConsumer::new(
-                    subscription.contract.clone(),
-                    subscription.what_to_show,
-                    consolidator
-                        .market_data_handler
-                        .get_subsription(subscription)
-                        .expect("Expected subscription to already exist beforehand")
-                        .get_new_consumer()
-                        .expect("Expected max no. of consumers not to be exceeded"),
-                )
-            })
-            .collect();
-        strategy_data_bundler.hook_strategy(
-            consumers,
-            strat_param.strategy.clone(),
-            order_engine.clone(),
-            Arc::downgrade(&consolidator),
-            Arc::downgrade(&client_1),
-            Arc::downgrade(&backed_up_orders),
-        );
-    }
+    // propagates the first Err encountered
+    let strategy_handlers = strategy_threads_res
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(ApplicationState::IbkrState(IbkrState { consolidator }))
+    Ok(ApplicationState::IbkrState(IbkrState {
+        consolidator,
+        strategy_handlers,
+        order_update_stream_controller,
+        gateway,
+    }))
 }
+
