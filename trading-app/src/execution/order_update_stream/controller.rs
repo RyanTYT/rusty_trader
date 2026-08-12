@@ -206,6 +206,7 @@ impl OrderUpdateStreamController {
 
 impl Drop for OrderUpdateStreamController {
     fn drop(&mut self) {
+        ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
         if let Err(e) = self
             .stream_killer
             .lock()
