@@ -47,7 +47,7 @@ impl Manual {
     pub fn new(_pool: PgPool) -> Self {
         Self {
             priority: 1,
-            name: "unknown".to_string(),
+            name: "manual".to_string(),
         }
     }
 }
