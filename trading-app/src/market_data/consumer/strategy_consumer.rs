@@ -198,7 +198,6 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                     Some(bar) => {
                                         received[slot] = true;
                                         small_bars[idx].push_back(bar);
-                                        tracing::error!("{idx}, {}", consumers[idx].get_bar_type());
                                         match consumers[idx].get_bar_type() {
                                             IbkrBarType::Normal => {
                                                 if let Err(e) = Self::dispatch_bar(
