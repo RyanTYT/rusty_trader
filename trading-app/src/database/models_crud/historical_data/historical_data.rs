@@ -582,8 +582,8 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     });
 
                     let bar_count = row.bar_count.unwrap() as f64;
-                    if (idx == 0 && bar_count >= timestep_minutes as f64) // MUST HAVE most recent time bar
-                || (idx >= 1 && bar_count >= (timestep_minutes as f64 * 0.93))
+                    if (idx == 0 && bar_count >= timestep_minutes as f64 / 5.0) // MUST HAVE most recent time bar
+                || (idx >= 1 && bar_count >= (timestep_minutes as f64 * 0.93 / 5.0))
                     {
                         full.push(bar);
                     } else {
