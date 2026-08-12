@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use crate::execution::order_engine::OrderIBKR;
 
 const ORDERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("orders_by_FX");
-const ORDERS_FILE_PATH: &str = "orders_state.redb";
 
 pub struct OrderStore {
     db: Database,
@@ -13,6 +12,8 @@ pub struct OrderStore {
 impl OrderStore {
     /// Opens or creates the redb database file on disk
     pub fn open() -> Result<Self, String> {
+        let ORDERS_FILE_PATH: String =
+            std::env::var("ORDERS_FILE_PATH").expect("Expected ORDERS_FILE_PATH env var to be set");
         let db = Database::create(ORDERS_FILE_PATH)
             .map_err(|e| format!("Failed to open redb database: {e}"))?;
 

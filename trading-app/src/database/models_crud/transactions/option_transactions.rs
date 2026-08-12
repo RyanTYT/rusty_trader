@@ -46,7 +46,7 @@ impl OptionTransactionsCRUD {
                 OptionTransactionsFullKeys,
                 OptionTransactionsPrimaryKeys,
                 OptionTransactionsUpdateKeys,
-            >::new(pool, String::from("trading.stock_transactions")),
+            >::new(pool, String::from("trading.option_transactions")),
         }
     }
 }

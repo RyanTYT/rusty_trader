@@ -223,9 +223,7 @@ impl OpenOrdersUpdateKeys {
                 expiry: Some(contract.last_trade_date_or_contract_month.to_string()),
                 strike: Some(contract.strike),
                 multiplier: Some(contract.multiplier.to_string()),
-                option_type: Some(
-                    OptionType::from_str(&contract.security_type.to_string()).unwrap(),
-                ),
+                option_type: Some(OptionType::from_str(&contract.right).unwrap()),
                 time: Some(Utc::now()),
                 quantity: Some(order.total_quantity),
                 executions: None,
