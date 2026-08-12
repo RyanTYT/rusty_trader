@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.41", features = [ "serde", "clock" ]}
-ibapi = { version = "2.12.0", default-features = false, features = ["sync"] }
+# ibapi = { version = "2.12.0", default-features = false, features = ["sync"] }
+ibapi = { git = "https://github.com/RyanTYT/rust-ibapi-fork.git", branch = "ibapi-rtyt", default-features = false, features = ["sync"] }
 serde = "1.0.219"
 sqlx = { version = "0.8.6", features = [ "postgres", "chrono", "runtime-tokio", "macros", "rust_decimal" ] }
 crud_models = { path = "crud_models" }
@@ -41,5 +42,5 @@ hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 
-[patch.crates-io]
-ibapi = { path = "./rust-ibapi-v2.12.0" }
+# [patch.crates-io]
+# ibapi = { path = "./rust-ibapi-v2.12.0" }

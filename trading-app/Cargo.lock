@@ -1356,6 +1356,7 @@ dependencies = [
 [[package]]
 name = "ibapi"
 version = "2.12.0"
+source = "git+https://github.com/RyanTYT/rust-ibapi-fork.git?branch=ibapi-rtyt#f5e1683168eaaab4b07743bfa554b9ee9a1799b6"
 dependencies = [
  "byteorder",
  "crossbeam",
