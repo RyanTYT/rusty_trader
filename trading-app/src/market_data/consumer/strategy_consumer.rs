@@ -165,7 +165,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                     align_and_prime_schedule(&contract_scheduler, &consumers)
                 });
                 let mut small_bars: Vec<VecDeque<Bar>> = vec![VecDeque::new(); consumers.len()];
-                let mut agg_bars: Vec<HistoricalDataFullKeys> = Vec::with_capacity(consumers.len());
+                let mut agg_bars: Vec<Option<HistoricalDataFullKeys>> = vec![None; consumers.len()];
 
                 while is_alive.load(Ordering::Acquire) {
                     let now = Utc::now();
@@ -204,7 +204,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                     &consumers[idx].contract,
                                                     &consumers[idx].what_to_show,
                                                     &mut small_bars[idx],
-                                                    &None,
+                                                    None,
                                                     strategy_on_bar_update,
                                                     handle_bar_update_outcome,
                                                 ) {
@@ -220,7 +220,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
-                                                        &Some(&agg_bars[idx + 1]),
+                                                        agg_bars.get_mut(idx + 1).unwrap().take(),
                                                         strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
@@ -243,7 +243,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                             "aggregate_bars output more than 1 bar"
                                                         );
                                                     }
-                                                    agg_bars[slot] = big_bars.pop().unwrap();
+                                                    agg_bars[slot] = Some(big_bars.pop().unwrap());
                                                 }
                                             }
                                             IbkrBarType::ForexAsk => {
@@ -253,7 +253,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
-                                                        &Some(&agg_bars[idx - 1]),
+                                                        agg_bars.get_mut(idx - 1).unwrap().take(),
                                                         strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
@@ -276,7 +276,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                                                             "aggregate_bars output more than 1 bar"
                                                         );
                                                     }
-                                                    agg_bars[slot] = big_bars.pop().unwrap();
+                                                    agg_bars[slot] = Some(big_bars.pop().unwrap());
                                                 }
                                             }
                                         }
@@ -318,7 +318,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
         contract: &Contract,
         what_to_show: &WhatToShow,
         small_bars: &mut VecDeque<Bar>,
-        other_fx_bar: &Option<&HistoricalDataFullKeys>,
+        other_fx_bar: Option<HistoricalDataFullKeys>,
         strategy_on_bar_update: OnBarUpdate,
         handle_bar_update_outcome: HandleBarUpdate,
     ) -> Result<(), String>
@@ -328,7 +328,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
     {
         match AssetType::from_str(&contract.security_type) {
             AssetType::ForexPair => {
-                let big_bars = aggregate_bars(contract, what_to_show, small_bars, 60);
+                let mut big_bars = aggregate_bars(contract, what_to_show, small_bars, 60);
                 if big_bars.is_empty() {
                     return Ok(());
                 }
@@ -338,12 +338,12 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
 
                 let (bid_bar, ask_bar) = match what_to_show {
                     WhatToShow::Bid => {
-                        let bid_bar = big_bars.first().unwrap();
+                        let bid_bar = big_bars.pop().unwrap();
                         let ask_bar = other_fx_bar.expect("Expected Valid data for other fx bar");
                         (bid_bar, ask_bar)
                     }
                     WhatToShow::Ask => {
-                        let ask_bar = big_bars.first().unwrap();
+                        let ask_bar = big_bars.pop().unwrap();
                         let bid_bar = other_fx_bar.expect("Expected Valid data for other fx bar");
                         (bid_bar, ask_bar)
                     }
