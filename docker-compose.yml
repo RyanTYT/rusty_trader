@@ -48,6 +48,7 @@ services:
       - ALPACA_API_SECRET=${ALPACA_API_SECRET}
       - TRADING_TYPE=paper
       - RUST_BACKTRACE=1
+      - ORDERS_FILE_PATH=orders_state.redb
     ports:
       - 7462:7462
       - 4002:4002
@@ -134,21 +135,22 @@ services:
 
   test-db:
     image: timescale/timescaledb:latest-pg17
-    restart: always
+    restart: "no"
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PW}
       - POSTGRES_DB=${DB_DB}
     ports:
-      - 5432:5432
+      - 5433:5432
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   test-trading-bot:
-    restart: always
+    restart: "no"
     build:
       context: ./trading-app
       dockerfile: Dockerfile.test
@@ -157,15 +159,16 @@ services:
       - ib-volume:/home/tws
     environment:
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=${TEST_TRADING_DB_URL}
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
       - DATABASE_HOST=test-db
-      # - HOST=127.0.0.1
-      # - SERVER_HOST=127.0.0.1
-      # - PORT=8000
+      - DB_USER=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
       - DISPLAY=:99
       - SQLX_OFFLINE=true
-      # - DISPLAY=192.168.1.90:0
-      # - RUST_BACKEND_URL=http://backend:4875
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
       - TRADING_TYPE=paper
     ports:
       - 7462:7462
