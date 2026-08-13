@@ -782,10 +782,10 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                             stock: row.stock.clone(),
                             primary_exchange: row.primary_exchange.clone(),
                             currency: row.currency.clone(),
-                            open: Decimal::from_f64(row.open).unwrap(),
-                            high: Decimal::from_f64(row.high).unwrap(),
-                            low: Decimal::from_f64(row.low).unwrap(),
-                            close: Decimal::from_f64(row.close).unwrap(),
+                            open: row.open,
+                            high: row.high,
+                            low: row.low,
+                            close: row.close,
                             volume: row.volume,
                         });
                     full.push(bar);

@@ -440,10 +440,10 @@ pub struct DailyHistoricalStockData {
     pub primary_exchange: String,
     pub currency: String,
     pub day: DateTime<Utc>,
-    pub open: Option<Decimal>,
-    pub high: Option<Decimal>,
-    pub low: Option<Decimal>,
-    pub close: Option<Decimal>,
+    pub open: Option<f64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub close: Option<f64>,
     pub volume: Option<Decimal>,
 }
 
