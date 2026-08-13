@@ -35,7 +35,7 @@ impl DailyHistoricalStockDataCRUD {
                 DailyHistoricalStockDataFullKeys,
                 DailyHistoricalStockDataPrimaryKeys,
                 DailyHistoricalStockDataUpdateKeys,
-            >::new(pool, String::from("market_data.daily_historical_data")),
+            >::new(pool, String::from("market_data.daily_ohlcv")),
         }
     }
 }
