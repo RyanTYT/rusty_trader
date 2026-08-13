@@ -3,7 +3,7 @@ ARG RUST_VERSION=1.85.1
 # =============================================================================
 # Stage 1: Build the test binaries (unit_tests, integration_tests, smoke_tests)
 # =============================================================================
-FROM --platform=linux/amd64 rust:${RUST_VERSION}-slim AS build
+FROM --platform=linux/amd64 debian:bullseye-slim AS build
 WORKDIR /app
 
 # Install build dependencies (clang/lld for ibapi, pkg-config for openssl,
@@ -23,6 +23,13 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+# Install rustup and Cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable
+
+# Add Cargo to PATH
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install sqlx-cli for running migrations (version pinned to match Cargo)
 RUN cargo install sqlx-cli --no-default-features --features postgres
