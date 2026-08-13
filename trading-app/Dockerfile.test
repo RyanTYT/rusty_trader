@@ -106,12 +106,13 @@ COPY --from=build /app /app
 # Copy the Rust toolchain (cargo + rustc) from the build stage so we can run
 # `cargo test` without reinstalling rust (which would download ~1GB).
 # rust:slim installs to /usr/local/cargo + /usr/local/rustup
-COPY --from=build /usr/local/cargo /usr/local/cargo
-COPY --from=build /usr/local/rustup /usr/local/rustup
-ENV PATH="/usr/local/cargo/bin:${PATH}"
+# FIX: Update paths from /usr/local to /root
+COPY --from=build /root/.cargo /root/.cargo
+COPY --from=build /root/.rustup /root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Copy sqlx-cli binary from the build stage (for migrations)
-COPY --from=build /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
+COPY --from=build /root/.cargo/bin/sqlx /usr/local/bin/sqlx
 
 # Copy the test entrypoint script
 COPY test-entrypoint.sh /test-entrypoint.sh

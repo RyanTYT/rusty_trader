@@ -90,7 +90,7 @@ if [ -x /IBCLinux-3.21.2/scripts/ibcstart.sh ]; then
     echo "[test-entrypoint] ─────────────────────────────────────────"
     echo "[test-entrypoint] Running: cargo test --test smoke_tests -- --ignored --nocapture"
     echo "[test-entrypoint] ─────────────────────────────────────────"
-    if cargo test --test smoke_tests -- --ignored --nocapture 2>&1; then
+    if cargo test --test smoke_tests -- --ignored --nocapture --test-threads=1 2>&1; then
         echo "[test-entrypoint] ✅ smoke_tests: PASSED"
     else
         echo "[test-entrypoint] ❌ smoke_tests: FAILED"
