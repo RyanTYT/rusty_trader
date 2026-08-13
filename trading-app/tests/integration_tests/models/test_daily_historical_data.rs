@@ -4,7 +4,9 @@
 use chrono::Utc;
 use rust_decimal::Decimal;
 use trading_app::database::crud::CRUDTrait;
-use trading_app::database::models::{DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys};
+use trading_app::database::models::{
+    DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys,
+};
 use trading_app::database::models_crud::historical_data::daily_historical_data::DailyHistoricalStockDataCRUD;
 
 use crate::models::init::{TEST_MUTEX, setup_test_db};
@@ -20,7 +22,7 @@ async fn test_daily_historical_data_crud() {
         stock: "AAPL".to_string(),
         primary_exchange: "NASDAQ".to_string(),
         currency: "USD".to_string(),
-        time: now,
+        day: now,
         open: Decimal::new(15000, 2),  // 150.00
         high: Decimal::new(15500, 2),  // 155.00
         low: Decimal::new(14900, 2),   // 149.00
@@ -34,7 +36,7 @@ async fn test_daily_historical_data_crud() {
         stock: "AAPL".to_string(),
         primary_exchange: "NASDAQ".to_string(),
         currency: "USD".to_string(),
-        time: now,
+        day: now,
     };
 
     let data = crud
