@@ -53,7 +53,8 @@ impl Visit for IbMessageVisitor {
 
 #[allow(dead_code)]
 // Helper functions
-fn is_stock_open_hard(dt: &DateTime<Tz>) -> bool {
+// pub(crate) visibility ONLY for testing purposes
+pub(crate) fn is_stock_open_hard(dt: &DateTime<Tz>) -> bool {
     let date = dt.date_naive();
     let time = dt.time();
 
@@ -68,12 +69,14 @@ fn is_stock_open_hard(dt: &DateTime<Tz>) -> bool {
 }
 
 #[allow(dead_code)]
-fn is_autorestart(dt: DateTime<Utc>) -> bool {
+// pub(crate) visibility ONLY for testing purposes
+pub(crate) fn is_autorestart(dt: DateTime<Utc>) -> bool {
     (dt.hour() == 23 && dt.minute() >= 55) || (dt.hour() == 0 && dt.minute() <= 5)
 }
 
 #[allow(dead_code)]
-fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
+// pub(crate) visibility ONLY for testing purposes
+pub(crate) fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
     let now_hkt = now_utc.with_timezone(&Hong_Kong);
     let weekday = now_hkt.weekday();
 
@@ -156,7 +159,8 @@ fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
     is_weekend_window
 }
 
-fn is_any_open(dt: &DateTime<Tz>) -> bool {
+// pub(crate) visibility ONLY for testing purposes
+pub(crate) fn is_any_open(dt: &DateTime<Tz>) -> bool {
     is_fx_trading_datetime(dt) || is_stock_open_hard(dt)
 }
 

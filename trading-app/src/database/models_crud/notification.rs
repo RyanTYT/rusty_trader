@@ -22,7 +22,7 @@ implement_all_crud_methods!(
 );
 
 impl NotificationCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self {
             crud:
                 CRUD::<NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys>::new(

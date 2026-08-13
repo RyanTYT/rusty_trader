@@ -89,7 +89,8 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
         }
     }
 
-    fn sort_consumers(consumers: &mut Vec<IbkrBarConsumer<BUFFER_CAPACITY>>) {
+    /// pub visibility ONLY for testing purposes
+    pub fn sort_consumers(consumers: &mut Vec<IbkrBarConsumer<BUFFER_CAPACITY>>) {
         consumers.sort_by(|a, b| {
             let is_fx_a = AssetType::from_str(&a.contract.security_type) == AssetType::ForexPair;
             let is_fx_b = AssetType::from_str(&b.contract.security_type) == AssetType::ForexPair;

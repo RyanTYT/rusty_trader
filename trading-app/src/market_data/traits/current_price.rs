@@ -270,7 +270,9 @@ impl Consolidator {
     ///   1. currency == USD and exchange is a US venue  → bare symbol, no suffix
     ///   2. exchange/primary_exchange mapped to known Yahoo suffix  → symbol.SUFFIX
     ///   3. Unmappable → None (disables fallback)
-    fn yahoo_ticker_from_contract(contract: &Contract) -> Option<String> {
+    ///
+    ///   pub visibility ONLY for testing purposes
+    pub fn yahoo_ticker_from_contract(contract: &Contract) -> Option<String> {
         let symbol = contract.symbol.as_str();
         let exchange = contract.exchange.as_str();
         let primary = contract.primary_exchange.as_str();
@@ -373,7 +375,9 @@ impl Consolidator {
 
     /// Returns true if the IBKR error string indicates a market data permission/access issue,
     /// as opposed to a connectivity or timeout problem.
-    fn is_ibkr_market_data_error(err: &str) -> bool {
+    ///
+    /// pub visibility ONLY for testing purposes
+    pub fn is_ibkr_market_data_error(err: &str) -> bool {
         // IBKR error 354: "Requested market data is not subscribed"
         // IBKR error 10090: "Part of requested market data is not subscribed"
         // IBKR error 200: "No security definition has been found"
@@ -393,7 +397,9 @@ impl Consolidator {
     /// NOTE: this extracts the first price returned which may NOT be the actual correct data point
     /// - i.e. smth like requesting for ask -> may result in ticktype of high, open, ... to come
     /// first and is returned first
-    fn _extract_price(
+    ///
+    /// pub visibility ONLY for testing purposes
+    pub fn _extract_price(
         tick: TickTypes,
         contract: &Contract,
         subscription: &Subscription<TickTypes>,

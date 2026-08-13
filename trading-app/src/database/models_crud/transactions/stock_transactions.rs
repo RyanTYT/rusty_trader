@@ -42,7 +42,7 @@ implement_all_crud_methods!(
 );
 
 impl StockTransactionsCRUD {
-    pub(super) fn new(pool: PgPool) -> Self {
+    pub(crate) fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<
                 StockTransactionsFullKeys,

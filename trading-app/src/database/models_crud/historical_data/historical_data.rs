@@ -457,7 +457,7 @@ pub enum VwapBarValue {
 }
 
 impl VwapBarValue {
-    fn as_str(&self) -> String {
+    pub fn as_str(&self) -> String {
         match self {
             Self::Open => "open".to_string(),
             Self::Close => "close".to_string(),

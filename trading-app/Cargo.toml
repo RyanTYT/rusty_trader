@@ -41,6 +41,13 @@ time = "0.3.55"
 hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+test-utils = []
+
+[dev-dependencies]
+proptest = "1.7"
+tempfile = "3.0"
+# self-referential to auto build the crate with test-utils feature
+trading-app = { path = ".", features = ["test-utils"] }
 
 # [patch.crates-io]
 # ibapi = { path = "./rust-ibapi-v2.12.0" }

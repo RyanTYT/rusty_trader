@@ -61,7 +61,7 @@ pub enum LocalContractTypes {
     CurrentPosFk(CurrentPositionsFullKeys),
 }
 
-fn build_contract_from_stock(
+pub(crate) fn build_contract_from_stock(
     stock: &String,
     primary_exchange: &String,
     currency: &String,

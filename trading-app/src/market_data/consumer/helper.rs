@@ -221,7 +221,9 @@ pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize>(
 /// Rounds `from` up to the next multiple of `interval` since the Unix
 /// epoch. Used as a fallback when no consumer was trading yet at startup
 /// to anchor `align_and_prime_schedule` against.
-fn next_boundary(from: SystemTime, interval: Duration) -> SystemTime {
+///
+/// pub visibility ONLY for testing purposes
+pub fn next_boundary(from: SystemTime, interval: Duration) -> SystemTime {
     let since_epoch = from.duration_since(UNIX_EPOCH).unwrap();
     let interval_nanos = interval.as_nanos();
     let elapsed_nanos = since_epoch.as_nanos();

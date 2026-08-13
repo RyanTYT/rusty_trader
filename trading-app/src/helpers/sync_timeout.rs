@@ -6,7 +6,7 @@ use std::{
 };
 
 #[derive(Debug)]
-pub(crate) enum TimeoutError<E> {
+pub enum TimeoutError<E> {
     Timeout,
     Function(E),
     WorkerPanic,

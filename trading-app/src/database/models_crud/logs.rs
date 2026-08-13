@@ -22,7 +22,7 @@ implement_all_crud_methods!(
 );
 
 impl LogsCRUD {
-    fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>::new(
                 pool,

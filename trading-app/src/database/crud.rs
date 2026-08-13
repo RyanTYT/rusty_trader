@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use crud_insertable::Insertable;
 use sqlx::{FromRow, PgPool};
 
-fn map_to_placeholder(key: usize, column_name: &str) -> String {
+/// pub(crate) visibility ONLY for testing purposes
+pub(crate) fn map_to_placeholder(key: usize, column_name: &str) -> String {
     match column_name {
         "asset_type" => format!("${}::asset_type", key),
         "status" => format!("${}::status", key),

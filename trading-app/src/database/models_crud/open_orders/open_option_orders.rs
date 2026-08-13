@@ -25,7 +25,7 @@ implement_all_crud_methods!(
 );
 
 impl OpenOptionOrdersCRUD {
-    pub(super) fn new(pool: PgPool) -> Self {
+    pub(crate) fn new(pool: PgPool) -> Self {
         Self {
             crud: CRUD::<
                 OpenOptionOrdersFullKeys,
