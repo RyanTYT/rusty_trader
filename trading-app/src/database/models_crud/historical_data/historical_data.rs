@@ -64,7 +64,7 @@ impl HistoricalDataFullKeys {
             Self::Stock(v) => v.time,
             Self::Forex(v) => v.time,
             Self::Options(v) => v.time,
-            Self::DailyStock(v) => v.time,
+            Self::DailyStock(v) => v.day,
         }
     }
 
@@ -778,7 +778,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 for row in rows.iter() {
                     let bar =
                         HistoricalDataFullKeys::DailyStock(DailyHistoricalStockDataFullKeys {
-                            time: row.day,
+                            day: row.day,
                             stock: row.stock.clone(),
                             primary_exchange: row.primary_exchange.clone(),
                             currency: row.currency.clone(),

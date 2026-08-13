@@ -79,7 +79,9 @@ pub fn extract_primary_keys_wo_time(input: TokenStream) -> TokenStream {
                 if let Some(segment) = type_path.path.segments.last() {
                     if segment.ident != "Option" {
                         let field_name = &field.ident;
-                        if field_name.as_ref().is_some_and(|name| name.to_string() != "time") {
+                        if field_name.as_ref().is_some_and(|name| {
+                            name.to_string() != "time" && name.to_string() != "day"
+                        }) {
                             return Some(quote! {
                                 #(#serde_attrs)*
                                 pub #field_name : #type_path

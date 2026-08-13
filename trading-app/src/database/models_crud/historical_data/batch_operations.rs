@@ -244,14 +244,14 @@ impl_bulk_insertable! {
 impl_bulk_insertable! {
     DailyHistoricalStockDataFullKeys {
         table: "market_data.daily_ohlcv",
-        pk_type: (String, DateTime<Utc>),
-        pk_fields: (self) -> [self.stock.clone(), self.time.clone()],
+        pk_type: (String, String, String, DateTime<Utc>),
+        pk_fields: (self) -> [self.stock.clone(), self.primary_exchange.clone(), self.currency.clone(), self.day.clone()],
         pk_field_names: [stock, time],
         columns: [
             stock: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             primary_exchange: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             currency: "VARCHAR(10) NOT NULL" => Type::VARCHAR [pk],
-            time: "TIMESTAMPTZ NOT NULL" => Type::TIMESTAMPTZ [pk],
+            day: "TIMESTAMPTZ NOT NULL" => Type::TIMESTAMPTZ [pk],
             open: "DOUBLE PRECISION" => Type::FLOAT8,
             high: "DOUBLE PRECISION" => Type::FLOAT8,
             low: "DOUBLE PRECISION" => Type::FLOAT8,
