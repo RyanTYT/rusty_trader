@@ -479,7 +479,8 @@ pub(crate) fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
     }
 }
 
-fn fx_trading_day_start(date: &NaiveDate, tz: &Tz) -> DateTime<Tz> {
+/// pub(crate) instead of private visibility ONLY for testing purposes
+pub(crate) fn fx_trading_day_start(date: &NaiveDate, tz: &Tz) -> DateTime<Tz> {
     const FX_WEEK_OPEN_HOUR: u32 = 17; // Sunday 17:00 NY
     //
     let prev_day = date.pred_opt().unwrap();
