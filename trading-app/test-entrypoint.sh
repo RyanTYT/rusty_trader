@@ -58,7 +58,7 @@ run_test_binary() {
     echo "[test-entrypoint] Running: cargo test --test $name $extra_args"
     echo "[test-entrypoint] ─────────────────────────────────────────"
     # shellcheck disable=SC2086
-    if cargo test --test "$name" $extra_args -- --nocapture 2>&1; then
+    if cargo test --test "$name" $extra_args -- --nocapture --include-ignored 2>&1; then
         echo "[test-entrypoint] ✅ $name: PASSED"
     else
         echo "[test-entrypoint] ❌ $name: FAILED"
