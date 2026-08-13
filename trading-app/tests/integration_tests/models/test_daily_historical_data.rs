@@ -23,11 +23,11 @@ async fn test_daily_historical_data_crud() {
         primary_exchange: "NASDAQ".to_string(),
         currency: "USD".to_string(),
         day: now,
-        open: Decimal::new(15000, 2),  // 150.00
-        high: Decimal::new(15500, 2),  // 155.00
-        low: Decimal::new(14900, 2),   // 149.00
-        close: Decimal::new(15200, 2), // 152.00
-        volume: Decimal::new(1000000, 0),
+        open: 15000.0,  // 150.00
+        high: 15500.0,  // 155.00
+        low: 14900.0,   // 149.00
+        close: 15200.0, // 152.00
+        volume: Decimal::new(1000000, 2),
     };
 
     crud.create(&fk).await.expect("create failed");
@@ -45,7 +45,7 @@ async fn test_daily_historical_data_crud() {
         .expect("read failed")
         .expect("expected row");
     assert_eq!(data.stock, "AAPL");
-    assert_eq!(data.close, Decimal::new(15200, 2));
+    assert_eq!(data.close, 15200.0);
 
     crud.delete(&pk).await.expect("delete failed");
 }
