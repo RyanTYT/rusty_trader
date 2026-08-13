@@ -107,7 +107,7 @@ ENV PATH="/usr/local/cargo/bin:${PATH}"
 COPY --from=build /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
 
 # Copy the test entrypoint script
-COPY --chmod=755 test-entrypoint.sh /test-entrypoint.sh
+COPY test-entrypoint.sh /test-entrypoint.sh
 RUN chmod +x /test-entrypoint.sh
 
 ENV SQLX_OFFLINE=true
