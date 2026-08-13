@@ -265,7 +265,7 @@ CREATE TABLE logs.cancelled_orders (
     reason VARCHAR NOT NULL,
 
     PRIMARY KEY (time, order_perm_id, order_id)
-)
+);
 
 CREATE TABLE trading.threshold_rebalancing (
     time TIMESTAMPTZ NOT NULL,
