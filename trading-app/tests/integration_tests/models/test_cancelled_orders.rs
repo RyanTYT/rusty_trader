@@ -6,12 +6,14 @@ use trading_app::database::crud::CRUDTrait;
 use trading_app::database::models::{CancelledOrdersFullKeys, CancelledOrdersPrimaryKeys};
 use trading_app::database::models_crud::cancelled_orders::CancelledOrdersCRUD;
 
+use crate::init_strat;
 use crate::models::init::{TEST_MUTEX, setup_test_db};
 
 #[tokio::test]
 async fn test_cancelled_orders_crud() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
+    init_strat!(&pool);
     let crud = CancelledOrdersCRUD::new(pool);
 
     let now = Utc::now();
