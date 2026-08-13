@@ -681,7 +681,7 @@ BEGIN
     UPDATE trading.option_transactions
     SET fees = sc.fees
     FROM trading.staged_commissions sc
-    WHERE trading.stock_transactions.execution_id = NEW.execution_id
+    WHERE trading.option_transactions.execution_id = NEW.execution_id
         AND sc.execution_id = NEW.execution_id;
 
     -- Delete the staging row if matched
