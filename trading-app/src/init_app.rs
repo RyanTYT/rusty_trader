@@ -34,7 +34,6 @@ pub struct IbkrState {
     pub consolidator: Arc<Consolidator>,
     strategy_handlers: Vec<StrategyDataBundler<BUFFER_CAPACITY>>,
     order_update_stream_controller: OrderUpdateStreamController,
-    gateway: IBGateway,
 }
 
 pub enum ApplicationState {
@@ -148,12 +147,9 @@ pub async fn init_app(
     api_port_addr: &str,
     account: &'static str,
     pool: PgPool,
-    ibc_log_file: &'static str,
     // strat_params: Vec<StrategyParameters>,
     default_strategy: String,
 ) -> Result<ApplicationState, String> {
-    let gateway = init_ibc_with_retry(ibc_log_file, 2).await?;
-
     // ===================================
     // Connect to clients
     // ===================================
@@ -326,7 +322,6 @@ pub async fn init_app(
         consolidator,
         strategy_handlers,
         order_update_stream_controller,
-        gateway,
     }))
 }
 
