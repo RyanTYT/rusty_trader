@@ -9,6 +9,7 @@ pub mod market_data;
 pub mod strategy;
 pub mod init_app;
 pub mod schedule;
+pub mod server;
 
 /// Test-only re-exports of internal items that are otherwise `pub(crate)` or private.
 /// This module is gated on `test-utils` feature (or `test` cfg for unit tests).
@@ -166,6 +167,26 @@ pub mod test_internals {
     }
     pub fn notification_crud(pool: sqlx::PgPool) -> NotificationCRUD {
         NotificationCRUD::new(pool)
+    }
+    pub use crate::database::models_crud::cancelled_orders::CancelledOrdersCRUD;
+    pub fn cancelled_orders_crud(pool: sqlx::PgPool) -> CancelledOrdersCRUD {
+        CancelledOrdersCRUD::new(pool)
+    }
+    pub use crate::database::models_crud::staged_commissions::StagedCommissionsCRUD;
+    pub fn staged_commissions_crud(pool: sqlx::PgPool) -> StagedCommissionsCRUD {
+        StagedCommissionsCRUD::new(pool)
+    }
+
+    // ─── StrategyParameters constructor (fields are pub(crate) — wrapped here) ──
+    pub use crate::init_app::StrategyParameters;
+    pub fn strategy_parameters(
+        strategy: crate::strategy::strategy::StrategyEnum,
+        subscribed_contracts: Vec<crate::market_data::handler::DataSubscription>,
+    ) -> StrategyParameters {
+        StrategyParameters {
+            strategy,
+            subscribed_contracts,
+        }
     }
 }
 
