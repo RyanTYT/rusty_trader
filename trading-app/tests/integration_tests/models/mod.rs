@@ -1,11 +1,13 @@
-// Per-table CRUD roundtrip integration tests.
+// Per-table CRUD roundtrip + advanced ops integration tests.
 //
-// Each test file exercises the full CRUDTrait lifecycle (create → read → update →
-// delete) for one database table, using the shared infrastructure in `init.rs`.
+// This module mirrors `src/database/models_crud/` — each subdirectory tests the
+// advanced `*Ops` trait methods for one interface CRUD enum.
 //
 // NOTE: These tests require a live Postgres + DATABASE_URL env var.
 
 pub mod init;
+
+// Per-table CRUD roundtrips (existing)
 mod test_strategy;
 mod test_notification;
 mod test_staged_commissions;
@@ -23,3 +25,10 @@ mod test_historical_data;
 mod test_historical_options_data;
 mod test_historical_forex_data;
 mod test_daily_historical_data;
+
+// Advanced ops — organized by interface enum
+mod current_positions;
+mod open_orders;
+mod target_positions;
+mod transactions;
+mod historical_data;
