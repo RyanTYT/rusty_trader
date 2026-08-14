@@ -35,6 +35,15 @@ fn uk(price: Option<f64>, qty: Option<f64>) -> StockTransactionsUpdateKeys {
     }
 }
 
+fn full_uk(price: Option<f64>, qty: Option<f64>) -> StockTransactionsUpdateKeys {
+    StockTransactionsUpdateKeys {
+        strategy: Some(STRATEGY.to_string()),
+        stock: Some(format!("STK_{}", exec_id)), primary_exchange: Some("NASDAQ".to_string()),
+        currency: Some("USD".to_string()), order_perm_id: Some(12345),
+        time: Some(Utc::now()), price, quantity: qty, fees: Some(Decimal::new(50, 2)),
+    }
+}
+
 #[tokio::test]
 async fn test_create_read_delete() {
     let _lock = TEST_MUTEX.lock().await;
@@ -127,7 +136,7 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk("stx_cou_ins");
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(155.0), Some(10.0))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk(Some(155.0), Some(10.0))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.price, 155.0);
     assert_eq!(data.quantity, 10.0);

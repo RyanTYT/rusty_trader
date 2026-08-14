@@ -39,6 +39,10 @@ fn uk(close: Option<f64>, volume: Option<Decimal>) -> HistoricalOptionsDataUpdat
     HistoricalOptionsDataUpdateKeys { open: None, high: None, low: None, close, volume }
 }
 
+fn full_uk(close: Option<f64>, volume: Option<Decimal>) -> HistoricalOptionsDataUpdateKeys {
+    HistoricalOptionsDataUpdateKeys { open: Some(1.0), high: Some(1.0), low: Some(1.0), close, volume }
+}
+
 #[tokio::test]
 async fn test_create_read_delete() {
     let _lock = TEST_MUTEX.lock().await;
@@ -129,7 +133,7 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(&fk.stock, fk.time);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(3.75), Some(Decimal::new(500, 0)))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk(Some(3.75), Some(Decimal::new(500, 0)))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.close, 3.75);
 

@@ -35,6 +35,10 @@ fn uk(close: Option<f64>, volume: Option<Decimal>) -> HistoricalStockDataUpdateK
     HistoricalStockDataUpdateKeys { open: None, high: None, low: None, close, volume }
 }
 
+fn full_uk(close: Option<f64>, volume: Option<Decimal>) -> HistoricalStockDataUpdateKeys {
+    HistoricalStockDataUpdateKeys { open: Some(1.0), high: Some(1.0), low: Some(1.0), close, volume }
+}
+
 #[tokio::test]
 async fn test_create_read_delete() {
     let _lock = TEST_MUTEX.lock().await;
@@ -128,7 +132,7 @@ async fn test_create_or_update_insert_path() {
 
     // Note: create_or_update for HistoricalStockData uses UpdateKeys (no PK fields)
     // We need to call it with the UpdateKeys struct
-    crud.create_or_update(&pk, &uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.close, 152.0);
 
