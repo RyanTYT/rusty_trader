@@ -159,6 +159,32 @@ impl IBGateway {
         // Reap the process to prevent zombies
         let _ = self.child.wait().await;
 
+        // ─── Robust port-release wait ────────────────────────────────────
+        // After killing the child, the IB Gateway may still hold port 4002
+        // for a few seconds while the OS releases the socket. If we return
+        // immediately, the next test's IBGateway::start() will fail to bind.
+        // Poll port 4002 until it's free (or timeout).
+        let api_port = "127.0.0.1:4002";
+        let poll_interval = Duration::from_millis(500);
+        let max_wait = Duration::from_secs(30);
+        let start = std::time::Instant::now();
+
+        loop {
+            let still_bound = tokio::net::TcpStream::connect(api_port).await.is_ok();
+            if !still_bound {
+                tracing::info!("Port 4002 released — IB Gateway fully torn down");
+                break;
+            }
+            if start.elapsed() >= max_wait {
+                tracing::warn!(
+                    "Port 4002 still bound after {:?} — giving up (next boot may fail)",
+                    max_wait
+                );
+                break;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+
         Ok(())
     }
 }
