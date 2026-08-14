@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use ibapi::contracts::Contract;
 use ibapi::prelude::{RealtimeWhatToShow, SecurityType};
+use spmc_ring::bench::RingBuffer;
 use trading_app::market_data::producer::subscribe_to_data;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
