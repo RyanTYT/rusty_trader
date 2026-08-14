@@ -42,7 +42,6 @@ async fn boot_server_and_app() -> Arc<ApplicationState> {
         "127.0.0.1:4002",
         "DU111111",
         state.pool.clone(),
-        "/tmp/ibc_server_app.log",
         "noise".to_string(),
     )
     .await

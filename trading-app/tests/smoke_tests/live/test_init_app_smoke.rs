@@ -19,7 +19,6 @@ async fn test_init_app_smoke_live() {
         "127.0.0.1:4002",
         "DU111111",
         pool,
-        "ibc_smoke.log",
         "noise".to_string(),
     )
     .await
