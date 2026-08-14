@@ -18,6 +18,7 @@ pub trait BrokerStateChecker {
     fn get_current_state(&self) -> BrokerState;
 }
 
+#[derive(Clone, Debug)]
 pub enum IbkrRegion {
     NorthAmerica,
     Europe,
@@ -63,6 +64,7 @@ impl IbkrRegion {
 // Implementations
 // ===============
 
+#[derive(Clone, Debug)]
 pub struct IbkrStateService {
     pub ibkr_region: IbkrRegion,
 }
