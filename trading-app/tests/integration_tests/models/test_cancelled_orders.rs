@@ -30,8 +30,16 @@ fn make_pk(time: chrono::DateTime<Utc>, perm_id: i32, order_id: i32) -> Cancelle
 
 fn uk(filled: Option<f64>, reason: Option<String>) -> CancelledOrdersUpdateKeys {
     CancelledOrdersUpdateKeys {
-        strategy: Some("noise").to_string(), stock: None, primary_exchange: None, currency: None,
+        strategy: None, stock: None, primary_exchange: None, currency: None,
         quantity: None, executions: None, filled, reason,
+    }
+}
+
+fn full_uk(filled: Option<f64>, reason: Option<String>) -> CancelledOrdersUpdateKeys {
+    CancelledOrdersUpdateKeys {
+        strategy: Some("noise".to_string()), stock: Some("QQQ".to_string()), 
+        primary_exchange: Some("NASDAQ".to_string()), currency: Some("USD".to_string()),
+        quantity: Some(0.0), executions: None, filled, reason,
     }
 }
 
@@ -135,7 +143,7 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(fk.time, 70011, 70012);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(0.0), Some("test cancel".to_string()))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk(Some(0.0), Some("test cancel".to_string()))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.reason, "test cancel");
 
