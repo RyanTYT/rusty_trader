@@ -30,7 +30,7 @@ fn make_pk(time: chrono::DateTime<Utc>, perm_id: i32, order_id: i32) -> Cancelle
 
 fn uk(filled: Option<f64>, reason: Option<String>) -> CancelledOrdersUpdateKeys {
     CancelledOrdersUpdateKeys {
-        strategy: None, stock: None, primary_exchange: None, currency: None,
+        strategy: Some("noise").to_string(), stock: None, primary_exchange: None, currency: None,
         quantity: None, executions: None, filled, reason,
     }
 }
