@@ -18,6 +18,7 @@ use std::time::Duration;
 use ibapi::contracts::Contract;
 use ibapi::market_data::realtime::WhatToShow;
 use ibapi::prelude::SecurityType;
+use spmc_ring::bench::RingBuffer;
 use sqlx::PgPool;
 use trading_app::market_data::handler::{
     DataSubscription, DbSubscriptionMethod, MarketDataHandler,
@@ -73,7 +74,10 @@ async fn test_market_data_handler_new() {
     // Verify the handler is usable — call get_subsription on a non-existent sub
     let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
     let result = handler.get_subsription(&sub);
-    assert!(result.is_none(), "get_subsription should return None for unsubscribed contract");
+    assert!(
+        result.is_none(),
+        "get_subsription should return None for unsubscribed contract"
+    );
     println!("✅ get_subsription(AAPL) before load: None (correct — not subscribed yet)");
 }
 
@@ -92,8 +96,14 @@ async fn test_data_subscription_new_and_eq() {
     let sub3 = DataSubscription::new(aapl, WhatToShow::Bid);
 
     // Eq: same contract + same what_to_show → equal
-    assert_eq!(sub1, sub2, "same contract + same WhatToShow should be equal");
-    assert_ne!(sub1, sub3, "same contract + different WhatToShow should NOT be equal");
+    assert_eq!(
+        sub1, sub2,
+        "same contract + same WhatToShow should be equal"
+    );
+    assert_ne!(
+        sub1, sub3,
+        "same contract + different WhatToShow should NOT be equal"
+    );
 
     // Hash: equal subscriptions should have equal hash
     let mut h1 = std::collections::hash_map::DefaultHasher::new();
@@ -101,12 +111,20 @@ async fn test_data_subscription_new_and_eq() {
     use std::hash::{Hash, Hasher};
     sub1.hash(&mut h1);
     sub2.hash(&mut h2);
-    assert_eq!(h1.finish(), h2.finish(), "equal subscriptions should have equal hash");
+    assert_eq!(
+        h1.finish(),
+        h2.finish(),
+        "equal subscriptions should have equal hash"
+    );
 
     // Different WhatToShow → different hash
     let mut h3 = std::collections::hash_map::DefaultHasher::new();
     sub3.hash(&mut h3);
-    assert_ne!(h1.finish(), h3.finish(), "different WhatToShow should have different hash");
+    assert_ne!(
+        h1.finish(),
+        h3.finish(),
+        "different WhatToShow should have different hash"
+    );
 
     println!("✅ DataSubscription::new + Hash/Eq verified");
 }
@@ -124,9 +142,7 @@ async fn test_load_all_subscription_producers_one_per_thread() {
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
     let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-    let subscriptions = vec![
-        DataSubscription::new(aapl_contract(), WhatToShow::Trades),
-    ];
+    let subscriptions = vec![DataSubscription::new(aapl_contract(), WhatToShow::Trades)];
 
     // Load subscriptions with OnePerThread method
     handler.load_all_subscription_producers(
@@ -142,7 +158,10 @@ async fn test_load_all_subscription_producers_one_per_thread() {
     // Verify the subscription was registered
     let sub = &subscriptions[0];
     let ring_buffer = handler.get_subsription(sub);
-    assert!(ring_buffer.is_some(), "subscription should be registered after load");
+    assert!(
+        ring_buffer.is_some(),
+        "subscription should be registered after load"
+    );
     println!("✅ get_subsription(AAPL Trades) after load: Some (registered)");
 
     // Verify idempotency — calling again with the same subscription should be a no-op
@@ -250,12 +269,18 @@ async fn test_get_subsription_nonexistent_returns_none() {
     // Verify get_subsription returns None for a contract that was never subscribed
     let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
     let result = handler.get_subsription(&sub);
-    assert!(result.is_none(), "non-existent subscription should return None");
+    assert!(
+        result.is_none(),
+        "non-existent subscription should return None"
+    );
 
     // Also test with a different contract
     let sub2 = DataSubscription::new(msft_contract(), WhatToShow::Bid);
     let result2 = handler.get_subsription(&sub2);
-    assert!(result2.is_none(), "non-existent MSFT Bid subscription should return None");
+    assert!(
+        result2.is_none(),
+        "non-existent MSFT Bid subscription should return None"
+    );
 
     println!("✅ get_subsription for non-existent subscriptions: None (correct)");
 }
@@ -273,7 +298,10 @@ async fn test_try_get_price_unknown_contract_id() {
 
     // try_get_price for a contract_id that was never cached → None
     let result = handler.try_get_price(99999);
-    assert!(result.is_none(), "try_get_price for unknown contract_id should return None");
+    assert!(
+        result.is_none(),
+        "try_get_price for unknown contract_id should return None"
+    );
 
     println!("✅ try_get_price(unknown_contract_id): None (correct)");
 }
@@ -329,7 +357,10 @@ async fn test_try_get_price_after_subscription() {
         match price {
             Some(p) => {
                 assert!(p > 0.0, "cached price should be positive, got {p}");
-                println!("✅ try_get_price(contract_id={}): ${p}", validated.contract_id);
+                println!(
+                    "✅ try_get_price(contract_id={}): ${p}",
+                    validated.contract_id
+                );
             }
             None => {
                 println!("try_get_price returned None (market may be closed — no bars received)");
@@ -382,8 +413,15 @@ async fn test_market_data_handler_full_lifecycle() {
                 let bar = c.try_pop();
                 match bar {
                     Some(b) => {
-                        assert!(b.close > 0.0, "bar close should be positive, got {}", b.close);
-                        println!("✅ Full lifecycle: consumer popped bar with close={}", b.close);
+                        assert!(
+                            b.close > 0.0,
+                            "bar close should be positive, got {}",
+                            b.close
+                        );
+                        println!(
+                            "✅ Full lifecycle: consumer popped bar with close={}",
+                            b.close
+                        );
                     }
                     None => println!("No bars yet (market may be closed) — acceptable"),
                 }

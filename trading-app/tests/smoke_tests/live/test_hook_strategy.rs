@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use ibapi::contracts::Contract;
 use ibapi::prelude::{RealtimeWhatToShow, SecurityType};
+use spmc_ring::bench::RingBuffer;
 use trading_app::execution::fx_backed_up_order::OrderStore;
 use trading_app::execution::order_engine::OrderEngine;
 use trading_app::market_data::consumer::strategy_consumer::{

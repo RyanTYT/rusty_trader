@@ -11,6 +11,7 @@
 
 use ibapi::contracts::{Contract, SecurityType};
 use ibapi::market_data::realtime::WhatToShow;
+use spmc_ring::bench::RingBuffer;
 use spmc_ring::ring_buffer::spmc_ring_buffer::{SpmcRingBuffer, SpmcRingBufferConsumer};
 
 use ibapi::market_data::realtime::Bar;
