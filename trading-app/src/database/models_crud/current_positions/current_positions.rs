@@ -678,7 +678,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 Ok(())
             }
             _ => {
-                Err("pk enum and uk enum should be aligned when using update_positions".to_string())
+                Err("Invalid key variant combination: pk enum and uk enum should be aligned when using update_positions".to_string())
             }
         }
     }

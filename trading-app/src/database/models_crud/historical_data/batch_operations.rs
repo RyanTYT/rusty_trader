@@ -246,7 +246,7 @@ impl_bulk_insertable! {
         table: "market_data.daily_ohlcv",
         pk_type: (String, String, String, DateTime<Utc>),
         pk_fields: (self) -> [self.stock.clone(), self.primary_exchange.clone(), self.currency.clone(), self.day.clone()],
-        pk_field_names: [stock, time],
+        pk_field_names: [stock, primary_exchange, currency, day],
         columns: [
             stock: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
             primary_exchange: "VARCHAR(50) NOT NULL" => Type::VARCHAR [pk],
