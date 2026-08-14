@@ -63,14 +63,23 @@ macro_rules! init_strat {
 #[macro_export]
 macro_rules! del_strat {
     ($pool:expr) => {
-        trading_app::database::models_crud::strategy::StrategyCRUD::new($pool.clone())
-            .delete(&trading_app::database::models::StrategyPrimaryKeys {
-                strategy: "noise".to_string(),
-            })
+        let strat_crud =
+            trading_app::database::models_crud::strategy::StrategyCRUD::new($pool.clone());
+
+        let strats = strat_crud
+            .read_all()
             .await
-            .expect("expected to be able to delete strategy");
+            .expect("expected to be able to read all strategies");
+        let strat_crud = &strat_crud;
+        futures::future::join_all(strats.into_iter().map(|strat| async move {
+            let pk = trading_app::database::models::StrategyPrimaryKeys {
+                strategy: strat.strategy,
+            };
+            strat_crud.delete(&pk).await
+        }))
+        .await;
         assert!(
-            trading_app::database::models_crud::strategy::StrategyCRUD::new($pool.clone())
+            strat_crud
                 .read_all()
                 .await
                 .expect("expected to be able to read all strategies")
