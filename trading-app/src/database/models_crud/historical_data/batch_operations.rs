@@ -179,7 +179,8 @@ where
     let mut unique_keys = HashSet::new();
     let mut row_buffer = Vec::with_capacity(T::types().len());
 
-    for row in batch {
+    // Prioritise later updates
+    for row in batch.iter().rev() {
         let pk = row.primary_keys();
         if !unique_keys.insert(pk) {
             continue;
