@@ -13,7 +13,6 @@ use crate::{
         order_update_stream::controller::OrderUpdateStreamController,
         syncer::{SyncOps, SyncerEngine},
     },
-    ibc::{IBGateway, init_ibc_with_retry},
     market_data::{
         consolidator::Consolidator,
         consumer::strategy_consumer::{IbkrBarConsumer, StrategyDataBundler},

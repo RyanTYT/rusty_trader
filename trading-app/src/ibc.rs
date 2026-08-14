@@ -39,7 +39,7 @@ impl IBGateway {
     /// reaped before returning `Err`, so callers never leak an orphaned
     /// process on a failed start (this was previously the source of
     /// double-started gateways fighting over port 4002 on retry).
-    async fn start(log_file: &str) -> Result<Self, String> {
+    pub(crate) async fn start(log_file: &str) -> Result<Self, String> {
         let success_pattern = "Login has completed";
         let failure_pattern = "IBC returned exit status";
 
