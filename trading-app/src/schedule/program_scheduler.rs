@@ -127,7 +127,7 @@ pub async fn run_program<F, Fut>(
                 let sigterm = &mut sigterm;
                 let sigint = &mut sigint;
 
-                let app_return_state = with_gateway_retry("...", 3, |_| async {
+                let app_return_state_res = with_gateway_retry("...", 3, |_| async {
                     let app_state = match init_application().await {
                         Ok(app_state_res) => Arc::new(app_state_res),
                         Err(e) => {
@@ -198,6 +198,16 @@ pub async fn run_program<F, Fut>(
                         };
                     }
                 }).await;
+
+                let app_return_state = {
+                    match app_return_state_res {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::error!("Failed to initialise IBC: {e:?}");
+                            continue;
+                        }
+                    }
+                };
 
                 app_return_state.log_state();
                 if app_return_state.is_terminal_state() {
