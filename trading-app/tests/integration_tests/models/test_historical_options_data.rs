@@ -150,7 +150,7 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(&fk.stock, fk.time);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(4.00), Some(Decimal::new(600, 0)))).await.expect("update path failed");
+    crud.create_or_update(&pk, &full_uk(Some(4.00), Some(Decimal::new(600, 0)))).await.expect("update path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.close, 4.00);
 

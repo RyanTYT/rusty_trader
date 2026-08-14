@@ -35,6 +35,10 @@ fn uk(close: Option<f64>, volume: Option<Decimal>) -> DailyHistoricalStockDataUp
     DailyHistoricalStockDataUpdateKeys { open: None, high: None, low: None, close, volume }
 }
 
+fn full_uk(close: Option<f64>, volume: Option<Decimal>) -> DailyHistoricalStockDataUpdateKeys {
+    DailyHistoricalStockDataUpdateKeys { open: Some(1.0), high: Some(1.0), low: Some(1.0), close, volume }
+}
+
 #[tokio::test]
 async fn test_create_read_delete() {
     let _lock = TEST_MUTEX.lock().await;
@@ -126,7 +130,7 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(&fk.stock, fk.day);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.close, 152.0);
 
@@ -143,7 +147,7 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(&fk.stock, fk.day);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(153.0), Some(Decimal::new(200000, 0)))).await.expect("update path failed");
+    crud.create_or_update(&pk, &full_uk(Some(153.0), Some(Decimal::new(200000, 0)))).await.expect("update path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.close, 153.0);
 

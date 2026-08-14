@@ -155,7 +155,7 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk("stx_cou_upd");
     crud.create(&make_fk("stx_cou_upd", 10.0, 150.0)).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(155.0), Some(20.0))).await.expect("update path failed");
+    crud.create_or_update(&pk, &full_uk("stx_cou_upd", Some(155.0), Some(20.0))).await.expect("update path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.price, 155.0);
     assert_eq!(data.quantity, 20.0);

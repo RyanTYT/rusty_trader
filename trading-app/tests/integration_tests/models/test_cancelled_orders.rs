@@ -162,7 +162,7 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(fk.time, 70013, 70014);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(5.0), Some("updated reason".to_string()))).await.expect("update path failed");
+    crud.create_or_update(&pk, &&full_uk(Some(5.0), Some("updated reason".to_string()))).await.expect("update path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.filled, 5.0);
     assert_eq!(data.reason, "updated reason");
