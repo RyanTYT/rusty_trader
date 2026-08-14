@@ -68,7 +68,8 @@ impl<
 
     /// A typical create function - pass in all FullKeys without Option<>
     async fn create(&self, full_keys: &FullKeys) -> Result<(), String> {
-        let all_cols = full_keys.pri_column_names();
+        let mut all_cols = full_keys.pri_column_names();
+        all_cols.extend(full_keys.opt_column_names());
         let all_placeholders = all_cols
             .iter()
             .enumerate()
@@ -83,6 +84,7 @@ impl<
         );
 
         let query = full_keys.bind_pri(&sql);
+        let query = full_keys.bind_opt_to_query(query);
 
         query
             .execute(&self.pool)
@@ -95,7 +97,8 @@ impl<
     /// - NOTE: the query uses inbuilt conflict in the table. i.e. if the conflict doesn't exist on
     /// any unique_index or primary key, it may raise an error with insertion
     async fn create_or_ignore(&self, full_keys: &FullKeys) -> Result<(), String> {
-        let all_cols = full_keys.pri_column_names();
+        let mut all_cols = full_keys.pri_column_names();
+        all_cols.extend(full_keys.opt_column_names());
         let all_placeholders = all_cols
             .iter()
             .enumerate()
@@ -110,6 +113,7 @@ impl<
         );
 
         let query = full_keys.bind_pri(&sql);
+        let query = full_keys.bind_opt_to_query(query);
 
         query
             .execute(&self.pool)
@@ -265,8 +269,7 @@ impl<
 macro_rules! implement_all_crud_methods {
     ($delegator:ident, $FullKeys:ty, $PrimaryKeys:ty, $UpdateKeys:ty, $crud:ident) => {
         #[async_trait::async_trait]
-        impl crate::database::crud::CRUDTrait<$FullKeys,$PrimaryKeys,$UpdateKeys> for $crud
-        {
+        impl crate::database::crud::CRUDTrait<$FullKeys, $PrimaryKeys, $UpdateKeys> for $crud {
             async fn create(&self, raw_item: &$FullKeys) -> Result<(), String> {
                 self.$delegator.create(raw_item).await
             }
