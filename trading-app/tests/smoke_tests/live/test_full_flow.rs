@@ -136,13 +136,10 @@ async fn test_full_place_reverse_zero_flow() {
     let order_engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
-    let strat_params = vec![StrategyParameters {
-        strategy: noise.clone(),
-        subscribed_contracts: vec![trading_app::market_data::handler::DataSubscription::new(
+    let strat_params = vec![trading_app::test_internals::strategy_parameters(noise.clone(), vec![trading_app::market_data::handler::DataSubscription::new(
             contract.clone(),
             ibapi::prelude::RealtimeWhatToShow::Trades,
-        )],
-    }];
+        )])];
 
     let syncer = SyncerEngine::new(
         state.pool.clone(),
@@ -339,13 +336,10 @@ async fn test_edge_case_cancel_open_order() {
         contract_scheduler,
     ));
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
-    let strat_params = vec![StrategyParameters {
-        strategy: noise.clone(),
-        subscribed_contracts: vec![trading_app::market_data::handler::DataSubscription::new(
+    let strat_params = vec![trading_app::test_internals::strategy_parameters(noise.clone(), vec![trading_app::market_data::handler::DataSubscription::new(
             contract,
             ibapi::prelude::RealtimeWhatToShow::Trades,
-        )],
-    }];
+        )])];
     let syncer = SyncerEngine::new(
         state.pool.clone(),
         "DU111111".to_string(),

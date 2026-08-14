@@ -1,6 +1,8 @@
 //! Shared infrastructure for live IBKR smoke tests.
 //!
 //! Boots a persistent IB Gateway via IBC and connects master + client_1.
+//! The `LiveIbkr` guard's `Drop` robustly waits for full teardown (port 4002
+//! release) before returning, so consecutive tests don't race on the port.
 //!
 //! Requires:
 //! - IBC installed at `/IBCLinux-3.21.2/scripts/ibcstart.sh`
@@ -12,6 +14,7 @@ use std::sync::Arc;
 
 use ibapi::Client;
 use sqlx::PgPool;
+use tokio::time::Duration;
 use trading_app::test_internals::{init_ibc_with_retry, IBGateway};
 
 const API_PORT_ADDR: &str = "127.0.0.1:4002";
@@ -53,6 +56,41 @@ pub async fn get_pool() -> Option<PgPool> {
         .connect(&database_url)
         .await
         .ok()
+}
+
+/// Poll port 4002 until it's free (no longer accepting connections).
+/// Returns true if the port was released within the timeout, false otherwise.
+/// Use this after dropping `LiveIbkr` to guarantee the next boot won't race.
+pub async fn wait_for_port_release(max_wait: Duration) -> bool {
+    let poll_interval = Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    loop {
+        let still_bound = tokio::net::TcpStream::connect(API_PORT_ADDR).await.is_ok();
+        if !still_bound {
+            return true;
+        }
+        if start.elapsed() >= max_wait {
+            return false;
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
+/// Wait for port 4002 to be bound (IB Gateway ready to accept connections).
+/// Used during boot to poll until the gateway is ready.
+#[allow(dead_code)]
+pub async fn wait_for_port_bind(max_wait: Duration) -> bool {
+    let poll_interval = Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    loop {
+        if tokio::net::TcpStream::connect(API_PORT_ADDR).await.is_ok() {
+            return true;
+        }
+        if start.elapsed() >= max_wait {
+            return false;
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
 }
 
 pub async fn live_ibkr(_account: &str, ibc_log_file: &str) -> Option<LiveIbkr> {
