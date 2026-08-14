@@ -42,7 +42,7 @@ fn uk(price: Option<f64>, qty: Option<f64>) -> OptionTransactionsUpdateKeys {
     }
 }
 
-fn full_uk(price: Option<f64>, qty: Option<f64>) -> OptionTransactionsUpdateKeys {
+fn full_uk(exec_id: &str, price: Option<f64>, qty: Option<f64>) -> OptionTransactionsUpdateKeys {
     OptionTransactionsUpdateKeys {
         strategy: Some(STRATEGY.to_string()), stock: Some(format!("OTX_{}", exec_id)), 
         primary_exchange: Some("NASDAQ".to_string()),
@@ -146,7 +146,7 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk("otx_cou_ins");
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &full_uk(Some(3.50), Some(5.0))).await.expect("insert path failed");
+    crud.create_or_update(&pk, &full_uk("otx_cou_ins", Some(3.50), Some(5.0))).await.expect("insert path failed");
     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
     assert_eq!(data.price, 3.50);
     assert_eq!(data.quantity, 5.0);
