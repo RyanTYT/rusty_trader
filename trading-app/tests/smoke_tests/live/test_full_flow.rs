@@ -44,7 +44,7 @@ use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 use ibapi::orders::order_builder::market_order;
 use ibapi::orders::Action;
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 fn fixed_contracts() -> Vec<Contract> {
     vec![
@@ -85,9 +85,8 @@ async fn test_find_trading_contracts() {
     let market_open = is_any_open(&now_ny);
     println!("Current time (NY): {now_ny}, market open: {market_open}");
 
-    let state = live_ibkr("DU111111", "ibc_flow.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_flow.log", |state| async move {
+;
 
     let contracts = fixed_contracts();
     let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
@@ -107,16 +106,16 @@ async fn test_find_trading_contracts() {
         .filter(|c| scheduler.is_trading(c, &now).unwrap_or(false))
         .count();
     println!("{trading_count} contracts currently trading");
-}
+    })
+.await;}
 
 // ============================ 2-5. Full place → reverse → 0 flow ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading account + market open — PLACES REAL ORDERS"]
 async fn test_full_place_reverse_zero_flow() {
-    let state = live_ibkr("DU111111", "ibc_flow.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_flow.log", |state| async move {
+;
 
     let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
     let contract = fixed_contracts().into_iter().next().unwrap();
@@ -236,16 +235,16 @@ async fn test_full_place_reverse_zero_flow() {
 
     // Cleanup
     let _ = pos_crud.delete(&pk).await;
-}
+    })
+.await;}
 
 // ============================ Edge cases ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_edge_case_invalid_contract_rejected() {
-    let state = live_ibkr("DU111111", "ibc_flow.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_flow.log", |state| async move {
+;
 
     let market_data_handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -265,14 +264,14 @@ async fn test_edge_case_invalid_contract_rejected() {
     };
     let result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
     assert!(result.is_none(), "invalid contract should return None");
-}
+    })
+.await;}
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + market CLOSED"]
 async fn test_edge_case_market_closed_no_fill() {
-    let state = live_ibkr("DU111111", "ibc_flow.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_flow.log", |state| async move {
+;
 
     let market_data_handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -293,14 +292,14 @@ async fn test_edge_case_market_closed_no_fill() {
         }
         Err(e) => println!("get_current_price when closed returned Err (expected): {e}"),
     }
-}
+    })
+.await;}
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_edge_case_cancel_open_order() {
-    let state = live_ibkr("DU111111", "ibc_flow.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_flow.log", |state| async move {
+;
 
     let contract = fixed_contracts().into_iter().next().unwrap();
     let order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
@@ -350,4 +349,5 @@ async fn test_edge_case_cancel_open_order() {
     syncer.sync_open_orders(&state.client_1, &consolidator, Some("noise".to_string()));
     let _ = syncer.sync_executions(&state.client_1, Some("noise".to_string()), order_store);
     println!("Sync after cancel complete");
-}
+    })
+.await;}

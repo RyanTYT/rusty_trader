@@ -25,7 +25,7 @@ use trading_app::market_data::handler::{
 };
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -64,9 +64,8 @@ fn eur_usd_contract() -> Contract {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_market_data_handler_new() {
-    let state = live_ibkr("DU111111", "ibc_mdh_new.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_new.log", |state| async move {
+;
 
     let handler = MarketDataHandler::new(state.pool.clone());
     println!("✅ MarketDataHandler::new succeeded (no panic)");
@@ -79,17 +78,14 @@ async fn test_market_data_handler_new() {
         "get_subsription should return None for unsubscribed contract"
     );
     println!("✅ get_subsription(AAPL) before load: None (correct — not subscribed yet)");
-}
+    })
+.await;}
 
 // ============================ 2. DataSubscription::new + Hash/Eq ============================
 
 #[tokio::test]
-#[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_data_subscription_new_and_eq() {
-    let _state = live_ibkr("DU111111", "ibc_mdh_sub.log")
-        .await
-        .expect("Failed to boot live IBKR");
-
+    // This test doesn't need IBKR — DataSubscription is a pure struct
     let aapl = aapl_contract();
     let sub1 = DataSubscription::new(aapl.clone(), WhatToShow::Trades);
     let sub2 = DataSubscription::new(aapl.clone(), WhatToShow::Trades);
@@ -134,9 +130,8 @@ async fn test_data_subscription_new_and_eq() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_one_per_thread() {
-    let state = live_ibkr("DU111111", "ibc_mdh_load_one.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_load_one.log", |state| async move {
+;
 
     let mut handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -173,16 +168,16 @@ async fn test_load_all_subscription_producers_one_per_thread() {
         tokio::runtime::Handle::current(),
     );
     println!("✅ idempotent load (calling again with same subscription — no-op)");
-}
+    })
+.await;}
 
 // ============================ 4. load_all_subscription_producers — GroupedPerThread ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_grouped_per_thread() {
-    let state = live_ibkr("DU111111", "ibc_mdh_load_grouped.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_load_grouped.log", |state| async move {
+;
 
     let mut handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -210,16 +205,16 @@ async fn test_load_all_subscription_producers_grouped_per_thread() {
         assert!(ring_buffer.is_some(), "subscription should be registered");
     }
     println!("✅ get_subsription for both AAPL + MSFT after GroupedPerThread load: Some");
-}
+    })
+.await;}
 
 // ============================ 5. load_all_subscription_producers — multiple different WhatToShow ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_multiple_what_to_show() {
-    let state = live_ibkr("DU111111", "ibc_mdh_load_wts.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_load_wts.log", |state| async move {
+;
 
     let mut handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -253,16 +248,16 @@ async fn test_load_all_subscription_producers_multiple_what_to_show() {
         "Bid and Ask subscriptions should be different ring buffers"
     );
     println!("✅ Bid + Ask for same contract are separate subscriptions (different ring buffers)");
-}
+    })
+.await;}
 
 // ============================ 6. get_subsription — non-existent subscription returns None ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_get_subsription_nonexistent_returns_none() {
-    let state = live_ibkr("DU111111", "ibc_mdh_get_none.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_get_none.log", |state| async move {
+;
 
     let handler = MarketDataHandler::new(state.pool.clone());
 
@@ -283,16 +278,16 @@ async fn test_get_subsription_nonexistent_returns_none() {
     );
 
     println!("✅ get_subsription for non-existent subscriptions: None (correct)");
-}
+    })
+.await;}
 
 // ============================ 7. try_get_price — returns None for unknown contract_id ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_try_get_price_unknown_contract_id() {
-    let state = live_ibkr("DU111111", "ibc_mdh_price_none.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_price_none.log", |state| async move {
+;
 
     let handler = MarketDataHandler::new(state.pool.clone());
 
@@ -304,16 +299,16 @@ async fn test_try_get_price_unknown_contract_id() {
     );
 
     println!("✅ try_get_price(unknown_contract_id): None (correct)");
-}
+    })
+.await;}
 
 // ============================ 8. try_get_price — after subscription + price received ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_try_get_price_after_subscription() {
-    let state = live_ibkr("DU111111", "ibc_mdh_price_after.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_price_after.log", |state| async move {
+;
 
     let mut handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -369,16 +364,16 @@ async fn test_try_get_price_after_subscription() {
     } else {
         println!("contract validation failed — skipping price check");
     }
-}
+    })
+.await;}
 
 // ============================ 9. Full lifecycle — load + get_subsription + consumer ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_market_data_handler_full_lifecycle() {
-    let state = live_ibkr("DU111111", "ibc_mdh_lifecycle.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_mdh_lifecycle.log", |state| async move {
+;
 
     let mut handler = MarketDataHandler::new(state.pool.clone());
     let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -429,4 +424,5 @@ async fn test_market_data_handler_full_lifecycle() {
             None => println!("get_new_consumer returned None (max consumers exceeded)"),
         }
     }
-}
+    })
+.await;}

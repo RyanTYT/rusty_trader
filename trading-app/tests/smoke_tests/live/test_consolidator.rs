@@ -27,7 +27,7 @@ use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 fn build_consolidator(
     pool: sqlx::PgPool,
@@ -81,9 +81,8 @@ fn eur_usd_contract() -> Contract {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_new_constructor() {
-    let state = live_ibkr("DU111111", "ibc_cons_new.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_new.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     println!("✅ Consolidator::new succeeded (no panic)");
@@ -97,16 +96,16 @@ async fn test_consolidator_new_constructor() {
         }
         Err(e) => println!("get_current_price returned Err (may need market data subscription): {e}"),
     }
-}
+    })
+.await;}
 
 // ============================ 2. validate_contract — valid contract ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_valid() {
-    let state = live_ibkr("DU111111", "ibc_cons_vc_valid.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_vc_valid.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -129,16 +128,16 @@ async fn test_consolidator_validate_contract_valid() {
     let result = consolidator.validate_contract(eur_usd_contract(), Duration::from_secs(30));
     assert!(result.is_some(), "validate_contract should return Some for EUR/USD");
     println!("✅ validate_contract(EUR/USD): verified");
-}
+    })
+.await;}
 
 // ============================ 3. validate_contract — invalid contract ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_invalid() {
-    let state = live_ibkr("DU111111", "ibc_cons_vc_invalid.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_vc_invalid.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -164,16 +163,16 @@ async fn test_consolidator_validate_contract_invalid() {
     let result = consolidator.validate_contract(bad_forex, Duration::from_secs(30));
     assert!(result.is_none(), "validate_contract should return None for invalid forex pair");
     println!("✅ validate_contract(FAKECUR/USD): correctly returned None");
-}
+    })
+.await;}
 
 // ============================ 4. update_at_least_n_days_data — stock (QQQ) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_update_at_least_n_days_data_stock() {
-    let state = live_ibkr("DU111111", "ibc_cons_update_stock.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_update_stock.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -208,16 +207,16 @@ async fn test_consolidator_update_at_least_n_days_data_stock() {
             println!("update_at_least_n_days_data returned Err (may need market data subscription or market closed): {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 5. update_at_least_n_days_data — forex (EUR/USD) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_update_at_least_n_days_data_forex() {
-    let state = live_ibkr("DU111111", "ibc_cons_update_forex.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_update_forex.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -250,16 +249,16 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
             println!("update_at_least_n_days_data(EUR/USD) returned Err: {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 6. get_current_price — stock (AAPL) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_stock() {
-    let state = live_ibkr("DU111111", "ibc_cons_price_stock.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_price_stock.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -277,16 +276,16 @@ async fn test_consolidator_get_current_price_stock() {
             println!("get_current_price(AAPL) returned Err (may need market data subscription): {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 7. get_current_price — forex (EUR/USD) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_forex() {
-    let state = live_ibkr("DU111111", "ibc_cons_price_forex.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_price_forex.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -304,16 +303,16 @@ async fn test_consolidator_get_current_price_forex() {
             println!("get_current_price(EUR/USD) returned Err (may need market data subscription): {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 8. get_current_price — with VWAP flag ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_vwap() {
-    let state = live_ibkr("DU111111", "ibc_cons_price_vwap.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_price_vwap.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -332,16 +331,16 @@ async fn test_consolidator_get_current_price_vwap() {
             println!("get_current_price(vwap=true) returned Err (may need market data subscription): {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 9. get_current_price — with generic ticks ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_generic_ticks() {
-    let state = live_ibkr("DU111111", "ibc_cons_price_ticks.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_price_ticks.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -356,16 +355,16 @@ async fn test_consolidator_get_current_price_generic_ticks() {
             println!("get_current_price with ticks returned Err (may need specific subscription): {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 10. get_strategy_sgd_value ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_strategy_sgd_value() {
-    let state = live_ibkr("DU111111", "ibc_cons_sgd_value.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_sgd_value.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -393,16 +392,16 @@ async fn test_consolidator_get_strategy_sgd_value() {
             println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
         }
     }
-}
+    })
+.await;}
 
 // ============================ 12\. validate_contract — different contract types ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_multiple_types() {
-    let state = live_ibkr("DU111111", "ibc_cons_vc_types.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_cons_vc_types.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -443,4 +442,5 @@ async fn test_consolidator_validate_contract_multiple_types() {
     let result = consolidator.validate_contract(forex_contract, Duration::from_secs(30));
     assert!(result.is_some(), "GBP/USD should validate");
     println!("✅ validate_contract(GBP/USD forex): verified");
-}
+    })
+.await;}

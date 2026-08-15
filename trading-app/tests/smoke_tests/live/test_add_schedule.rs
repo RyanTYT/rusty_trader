@@ -6,14 +6,13 @@ use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_add_schedule_live() {
-    let state = live_ibkr("DU111111", "ibc_live.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+;
 
     let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
 
@@ -42,4 +41,5 @@ async fn test_add_schedule_live() {
         .is_trading(&contract, &dt)
         .expect("is_trading failed");
     println!("AAPL is_trading at {dt}: {is_trading}");
-}
+    })
+.await;}

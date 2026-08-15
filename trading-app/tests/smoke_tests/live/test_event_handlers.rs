@@ -51,7 +51,7 @@ use trading_app::execution::order_update_stream::event_handlers::order_status;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -110,9 +110,8 @@ fn place_market_order(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_order_status_submitted() {
-    let state = live_ibkr("DU111111", "ibc_eh_submitted.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_submitted.log", |state| async move {
+;
     let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
     let _controller = start_order_update_stream(&state, &order_store);
 
@@ -150,16 +149,16 @@ async fn test_event_order_status_submitted() {
             order_perm_id: s.order_perm_id, order_id: s.order_id,
         })).await;
     }
-}
+    })
+.await;}
 
 // ============================ 2. order_status::cancelled — open order row deleted ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES + CANCELS REAL ORDERS"]
 async fn test_event_order_status_cancelled() {
-    let state = live_ibkr("DU111111", "ibc_eh_cancelled.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_cancelled.log", |state| async move {
+;
     let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
     let _controller = start_order_update_stream(&state, &order_store);
 
@@ -205,16 +204,16 @@ async fn test_event_order_status_cancelled() {
     let result = crud.read(&pk).await.expect("read failed");
     assert!(result.is_none(), "Cancelled event should delete open_order row for perm_id={perm_id}");
     println!("✅ order_status::cancelled — open_order row deleted for perm_id={perm_id}");
-}
+    })
+.await;}
 
 // ============================ 3. execution::on_execution_update — position + transaction created ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_execution_on_fill() {
-    let state = live_ibkr("DU111111", "ibc_eh_exec.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_exec.log", |state| async move {
+;
     let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
     let _controller = start_order_update_stream(&state, &order_store);
 
@@ -261,16 +260,16 @@ async fn test_event_execution_on_fill() {
         // Cleanup: reverse + delete
         let _ = pos_crud.delete(&pk).await;
     }
-}
+    })
+.await;}
 
 // ============================ 4. commission_report::on_commission_update — staged commission created ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_commission_report_on_fill() {
-    let state = live_ibkr("DU111111", "ibc_eh_commission.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_commission.log", |state| async move {
+;
     let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
     let _controller = start_order_update_stream(&state, &order_store);
 
@@ -307,16 +306,16 @@ async fn test_event_commission_report_on_fill() {
     let _ = sqlx::query("DELETE FROM trading.current_stock_positions WHERE strategy = 'noise' AND stock = 'AAPL'")
         .execute(&state.pool)
         .await;
-}
+    })
+.await;}
 
 // ============================ 5. on_commission_update — direct unit-style test ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_on_commission_update_direct() {
-    let state = live_ibkr("DU111111", "ibc_eh_commission_direct.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_commission_direct.log", |state| async move {
+;
 
     // Call on_commission_update directly with a dummy CommissionReport
     let commission_report = CommissionReport {
@@ -347,16 +346,16 @@ async fn test_on_commission_update_direct() {
 
     // Cleanup
     let _ = crud.delete(&pk).await;
-}
+    })
+.await;}
 
 // ============================ 6. on_execution_update — CASH asset type rejected ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_on_execution_update_rejects_unknown_security_type() {
-    let state = live_ibkr("DU111111", "ibc_eh_exec_cash.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_exec_cash.log", |state| async move {
+;
 
     // Build a dummy ExecutionData with unknown security type (Other)
     let mut execution_data = ExecutionData::default();
@@ -382,16 +381,16 @@ async fn test_on_execution_update_rejects_unknown_security_type() {
 
     assert!(result.is_err(), "Unknown security type execution should return Err");
     println!("✅ on_execution_update — Unknown security type rejected: {:?}", result.unwrap_err());
-}
+    })
+.await;}
 
 // ============================ 7. open_order::submitted + cancelled — direct test ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_open_order_submitted_and_cancelled_direct() {
-    let state = live_ibkr("DU111111", "ibc_eh_open_order_direct.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_open_order_direct.log", |state| async move {
+;
 
     let contract = aapl_contract();
     let order = limit_order(Action::Buy, 1.0, 1.0);
@@ -426,16 +425,16 @@ async fn test_open_order_submitted_and_cancelled_direct() {
     let data = crud.read(&pk).await.expect("read failed");
     assert!(data.is_none(), "open_order::cancelled should delete row");
     println!("✅ open_order::cancelled — row deleted for order_id={}", order.order_id);
-}
+    })
+.await;}
 
 // ============================ 8. order_status::submitted + cancelled — direct test ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_order_status_submitted_and_cancelled_direct() {
-    let state = live_ibkr("DU111111", "ibc_eh_order_status_direct.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_eh_order_status_direct.log", |state| async move {
+;
 
     // Pre-create an open order row
     let crud = OpenOrdersCRUD::stock(state.pool.clone());
@@ -474,4 +473,5 @@ async fn test_order_status_submitted_and_cancelled_direct() {
 
     // Cleanup any leftover rows
     let _ = crud.delete(&pk).await;
-}
+    })
+.await;}

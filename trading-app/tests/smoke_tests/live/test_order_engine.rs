@@ -37,7 +37,7 @@ use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractS
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor};
 use trading_app::strategy::noise::Noise;
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -84,9 +84,8 @@ async fn build_consolidator(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_order_engine_new_constructor() {
-    let state = live_ibkr("DU111111", "ibc_oe_new.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_new.log", |state| async move {
+;
 
     let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
     // Verify it doesn't panic — that's the main assertion for a constructor
@@ -103,16 +102,16 @@ async fn test_order_engine_new_constructor() {
     // Test with parent order reference (for combo/bracket orders)
     let order_with_parent = OrderIBKR::new(contract, order, 0);
     println!("✅ OrderIBKR::new with parent reference constructed (no panic)");
-}
+    })
+.await;}
 
 // ============================ 2. place_order — single order ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_place_order_market_buy() {
-    let state = live_ibkr("DU111111", "ibc_oe_place_market.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_place_market.log", |state| async move {
+;
 
     let contract = aapl_contract();
     let order = market_order(Action::Buy, 1.0);
@@ -150,16 +149,16 @@ async fn test_place_order_market_buy() {
             },
         )).await;
     }
-}
+    })
+.await;}
 
 // ============================ 3. place_orders — batch (multiple orders) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_place_orders_batch_multiple() {
-    let state = live_ibkr("DU111111", "ibc_oe_place_batch.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_place_batch.log", |state| async move {
+;
 
     // Place 2 orders: AAPL buy 1 share, MSFT buy 1 share
     let order1 = OrderIBKR::new(aapl_contract(), market_order(Action::Buy, 1.0), -1);
@@ -198,16 +197,16 @@ async fn test_place_orders_batch_multiple() {
         }
     }
     println!("✅ place_orders batch cleanup complete");
-}
+    })
+.await;}
 
 // ============================ 4. place_order with dead client ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_place_order_dead_client_returns_zero() {
-    let state = live_ibkr("DU111111", "ibc_oe_dead_client.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_dead_client.log", |state| async move {
+;
 
     // Create a dead weak client (drop the Arc first)
     let weak_client: Weak<ibapi::Client> = {
@@ -242,16 +241,16 @@ async fn test_place_order_dead_client_returns_zero() {
     // verifies that the function handles a dead Weak gracefully.
     println!("place_order with dead client returned perm_id={order_perm_id} (may log error)");
     // The function should not panic — that's the main assertion
-}
+    })
+.await;}
 
 // ============================ 5. handle_bar_update_outcome — NoAction ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_handle_bar_update_outcome_no_action() {
-    let state = live_ibkr("DU111111", "ibc_oe_noaction.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_noaction.log", |state| async move {
+;
 
     let (consolidator, weak_client) = build_consolidator(state.pool.clone(), state.client_1.clone()).await;
     let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -268,16 +267,16 @@ async fn test_handle_bar_update_outcome_no_action() {
     );
 
     println!("✅ handle_bar_update_outcome(NoAction) completed without error");
-}
+    })
+.await;}
 
 // ============================ 6. handle_bar_update_outcome — EmitOrders ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_emit_orders() {
-    let state = live_ibkr("DU111111", "ibc_oe_emit.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_emit.log", |state| async move {
+;
 
     let (consolidator, weak_client) = build_consolidator(state.pool.clone(), state.client_1.clone()).await;
     let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -317,16 +316,16 @@ async fn test_handle_bar_update_outcome_emit_orders() {
         }
     }
     println!("✅ EmitOrders cleanup complete");
-}
+    })
+.await;}
 
 // ============================ 7. handle_bar_update_outcome — PendingDbQuery ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_pending_db_query() {
-    let state = live_ibkr("DU111111", "ibc_oe_pending.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_pending.log", |state| async move {
+;
 
     let (consolidator, weak_client) = build_consolidator(state.pool.clone(), state.client_1.clone()).await;
     let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -347,16 +346,16 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
     println!("PendingDbQuery path completed");
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("✅ PendingDbQuery completed without error");
-}
+    })
+.await;}
 
 // ============================ 8. Edge case: limit order at unrealistic price (won't fill) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_place_order_limit_unrealistic_price() {
-    let state = live_ibkr("DU111111", "ibc_oe_limit.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_oe_limit.log", |state| async move {
+;
 
     let contract = aapl_contract();
     // Limit buy at $1.00 — won't fill, stays open
@@ -397,4 +396,5 @@ async fn test_place_order_limit_unrealistic_price() {
             },
         )).await;
     }
-}
+    })
+.await;}

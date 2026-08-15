@@ -31,7 +31,7 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
@@ -101,9 +101,8 @@ fn build_scheduler_with_schedules(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_data_bundler_new() {
-    let state = live_ibkr("DU111111", "ibc_bundler_new.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_new.log", |state| async move {
+;
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
     let bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
@@ -114,16 +113,16 @@ async fn test_strategy_data_bundler_new() {
     StrategyDataBundler::sort_consumers(&mut consumers);
     assert!(consumers.is_empty(), "sort_consumers on empty vec should be a no-op");
     println!("✅ sort_consumers(empty) is a no-op");
-}
+    })
+.await;}
 
 // ============================ 2. sort_consumers — stock + forex ordering ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sort_consumers_stock_and_forex_ordering() {
-    let state = live_ibkr("DU111111", "ibc_bundler_sort.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_sort.log", |state| async move {
+;
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
@@ -182,16 +181,16 @@ async fn test_sort_consumers_stock_and_forex_ordering() {
     assert_eq!(consumers[3].contract.symbol.to_string(), "MSFT", "MSFT should come after AAPL");
 
     println!("✅ sort_consumers: forex-first (GBP Bid < GBP Ask), then stocks alphabetical (AAPL < MSFT)");
-}
+    })
+.await;}
 
 // ============================ 3. sort_consumers — multiple stocks alphabetical ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sort_consumers_multiple_stocks_alphabetical() {
-    let state = live_ibkr("DU111111", "ibc_bundler_sort_stocks.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_sort_stocks.log", |state| async move {
+;
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
@@ -228,16 +227,16 @@ async fn test_sort_consumers_multiple_stocks_alphabetical() {
     assert_eq!(consumers[1].contract.symbol.to_string(), "MSFT");
     assert_eq!(consumers[2].contract.symbol.to_string(), "SPY");
     println!("✅ sort_consumers(multiple stocks): AAPL < MSFT < SPY (alphabetical)");
-}
+    })
+.await;}
 
 // ============================ 4. IbkrBarConsumer::new + get_bar_type ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
-    let state = live_ibkr("DU111111", "ibc_bundler_consumer.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_consumer.log", |state| async move {
+;
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
@@ -286,16 +285,16 @@ async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
     );
     assert!(matches!(ask_consumer.get_bar_type(), IbkrBarType::ForexAsk), "forex Ask consumer should be ForexAsk");
     println!("✅ IbkrBarConsumer(forex Ask): get_bar_type() = ForexAsk");
-}
+    })
+.await;}
 
 // ============================ 5. IbkrBarConsumer::try_pop — receive a bar ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_ibkr_bar_consumer_try_pop() {
-    let state = live_ibkr("DU111111", "ibc_bundler_pop.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_pop.log", |state| async move {
+;
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
@@ -323,16 +322,16 @@ async fn test_ibkr_bar_consumer_try_pop() {
         }
         None => println!("try_pop returned None (market may be closed) — acceptable"),
     }
-}
+    })
+.await;}
 
 // ============================ 6. hook_strategy — stock consumer (Noise) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_stock_noise() {
-    let state = live_ibkr("DU111111", "ibc_bundler_hook_stock.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_hook_stock.log", |state| async move {
+;
 
     let contract = aapl_contract();
     let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
@@ -373,16 +372,16 @@ async fn test_hook_strategy_stock_noise() {
     drop(bundler);
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("✅ hook_strategy thread stopped after Drop (is_alive=false)");
-}
+    })
+.await;}
 
 // ============================ 7. hook_strategy — forex consumer (Manual) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_forex_manual() {
-    let state = live_ibkr("DU111111", "ibc_bundler_hook_forex.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_hook_forex.log", |state| async move {
+;
 
     let contract = gbp_usd_contract();
     let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
@@ -436,16 +435,16 @@ async fn test_hook_strategy_forex_manual() {
     drop(bundler);
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("✅ forex hook_strategy thread stopped after Drop");
-}
+    })
+.await;}
 
 // ============================ 8. hook_strategy — idempotency (calling twice is a no-op) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_idempotent() {
-    let state = live_ibkr("DU111111", "ibc_bundler_hook_idem.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_hook_idem.log", |state| async move {
+;
 
     let contract = aapl_contract();
     let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
@@ -511,16 +510,16 @@ async fn test_hook_strategy_idempotent() {
 
     drop(bundler);
     tokio::time::sleep(Duration::from_secs(2)).await;
-}
+    })
+.await;}
 
 // ============================ 9. hook_strategy — full lifecycle with multiple consumers ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
-    let state = live_ibkr("DU111111", "ibc_bundler_lifecycle.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_bundler_lifecycle.log", |state| async move {
+;
 
     // Build 2 stock consumers (AAPL + MSFT) + 1 forex pair (GBP/USD Bid + Ask)
     let contracts = vec![aapl_contract(), msft_contract(), gbp_usd_contract()];
@@ -586,4 +585,5 @@ async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
     drop(bundler);
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("✅ full lifecycle: bundler dropped, thread stopped");
-}
+    })
+.await;}

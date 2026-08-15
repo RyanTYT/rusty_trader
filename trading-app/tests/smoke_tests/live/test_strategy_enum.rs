@@ -42,7 +42,7 @@ use trading_app::strategy::strategy::{
 };
 use trading_app::strategy::unknown::Unknown;
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 /// Build a Consolidator needed by warm_up_data + on_bar_update.
 fn build_consolidator(
@@ -65,9 +65,8 @@ fn build_consolidator(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_get_name_all_variants() {
-    let state = live_ibkr("DU111111", "ibc_strat_name.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_name.log", |state| async move {
+;
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
@@ -84,16 +83,16 @@ async fn test_strategy_get_name_all_variants() {
     assert_eq!(unique_names.len(), 3, "all 3 strategy names should be unique");
 
     println!("✅ get_name: noise='noise', manual='manual', unknown='unknown' (all unique)");
-}
+    })
+.await;}
 
 // ============================ 2. is_fx_strategy — all 3 return false ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_is_fx_strategy_all_variants() {
-    let state = live_ibkr("DU111111", "ibc_strat_fx.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_fx.log", |state| async move {
+;
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
@@ -104,16 +103,16 @@ async fn test_strategy_is_fx_strategy_all_variants() {
     assert!(!unknown.is_fx_strategy(), "Unknown should not be an FX strategy");
 
     println!("✅ is_fx_strategy: all 3 return false");
-}
+    })
+.await;}
 
 // ============================ 3. get_contracts — Noise returns QQQ ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_get_contracts_noise() {
-    let state = live_ibkr("DU111111", "ibc_strat_contracts_noise.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_contracts_noise.log", |state| async move {
+;
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
     let contracts = noise.get_contracts(state.client_1.clone());
@@ -122,16 +121,16 @@ async fn test_strategy_get_contracts_noise() {
     let qqq = &contracts[0];
     assert_eq!(qqq.symbol.to_string(), "QQQ", "Noise contract should be QQQ");
     println!("✅ get_contracts(Noise): QQQ verified");
-}
+    })
+.await;}
 
 // ============================ 4. get_contracts — Manual returns GBP/USD ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_get_contracts_manual() {
-    let state = live_ibkr("DU111111", "ibc_strat_contracts_manual.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_contracts_manual.log", |state| async move {
+;
 
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
     let contracts = manual.get_contracts(state.client_1.clone());
@@ -140,16 +139,16 @@ async fn test_strategy_get_contracts_manual() {
     let gbp = &contracts[0];
     assert_eq!(gbp.symbol.to_string(), "GBP", "Manual contract should be GBP");
     println!("✅ get_contracts(Manual): GBP/USD verified");
-}
+    })
+.await;}
 
 // ============================ 5. get_contracts — Unknown returns GBP/USD ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_get_contracts_unknown() {
-    let state = live_ibkr("DU111111", "ibc_strat_contracts_unknown.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_contracts_unknown.log", |state| async move {
+;
 
     let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
     let contracts = unknown.get_contracts(state.client_1.clone());
@@ -158,16 +157,16 @@ async fn test_strategy_get_contracts_unknown() {
     let gbp = &contracts[0];
     assert_eq!(gbp.symbol.to_string(), "GBP", "Unknown contract should be GBP");
     println!("✅ get_contracts(Unknown): GBP/USD verified");
-}
+    })
+.await;}
 
 // ============================ 6. warm_up_data — Noise (fetches QQQ historical data) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_warm_up_data_noise() {
-    let state = live_ibkr("DU111111", "ibc_strat_warmup_noise.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_warmup_noise.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
@@ -192,16 +191,16 @@ async fn test_strategy_warm_up_data_noise() {
         "warm_up_data should have fetched QQQ bars"
     );
     println!("✅ warm_up_data(Noise): QQQ historical data verified in DB");
-}
+    })
+.await;}
 
 // ============================ 7. warm_up_data — Manual (no-op) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_warm_up_data_manual() {
-    let state = live_ibkr("DU111111", "ibc_strat_warmup_manual.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_warmup_manual.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
@@ -210,16 +209,16 @@ async fn test_strategy_warm_up_data_manual() {
     let result = manual.warm_up_data(&consolidator);
     assert!(result.is_ok(), "Manual warm_up_data should succeed");
     println!("✅ warm_up_data(Manual): no-op completed without error");
-}
+    })
+.await;}
 
 // ============================ 8. warm_up_data — Unknown (no-op) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_warm_up_data_unknown() {
-    let state = live_ibkr("DU111111", "ibc_strat_warmup_unknown.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_warmup_unknown.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
@@ -228,16 +227,16 @@ async fn test_strategy_warm_up_data_unknown() {
     let result = unknown.warm_up_data(&consolidator);
     assert!(result.is_ok(), "Unknown warm_up_data should succeed");
     println!("✅ warm_up_data(Unknown): no-op completed without error");
-}
+    })
+.await;}
 
 // ============================ 9. on_bar_update — Manual returns PendingDbQuery ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_on_bar_update_manual() {
-    let state = live_ibkr("DU111111", "ibc_strat_bar_manual.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_bar_manual.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
@@ -270,16 +269,16 @@ async fn test_strategy_on_bar_update_manual() {
         other => panic!("Manual should return PendingDbQuery, got {:?}", other),
     }
     println!("✅ on_bar_update(Manual): returns PendingDbQuery([Stock, Option])");
-}
+    })
+.await;}
 
 // ============================ 10. on_bar_update — Unknown returns PendingDbQuery ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_on_bar_update_unknown() {
-    let state = live_ibkr("DU111111", "ibc_strat_bar_unknown.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_bar_unknown.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
@@ -311,16 +310,16 @@ async fn test_strategy_on_bar_update_unknown() {
         other => panic!("Unknown should return PendingDbQuery, got {:?}", other),
     }
     println!("✅ on_bar_update(Unknown): returns PendingDbQuery([Stock, Option])");
-}
+    })
+.await;}
 
 // ============================ 11. on_bar_update — Noise (with real QQQ bar data) ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_on_bar_update_noise() {
-    let state = live_ibkr("DU111111", "ibc_strat_bar_noise.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_bar_noise.log", |state| async move {
+;
 
     let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
@@ -383,16 +382,16 @@ async fn test_strategy_on_bar_update_noise() {
     // Cleanup any target position Noise may have created
     let target_crud = TargetPositionsCRUD::stock(state.pool.clone());
     let _ = target_crud.clear_strat_pos("noise").await;
-}
+    })
+.await;}
 
 // ============================ 12. StrategyEnum Ord/PartialOrd/Hash/Clone/Eq ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_enum_ord_hash_clone_eq() {
-    let state = live_ibkr("DU111111", "ibc_strat_traits.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_traits.log", |state| async move {
+;
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
     let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
@@ -424,16 +423,16 @@ async fn test_strategy_enum_ord_hash_clone_eq() {
     assert_eq!(map.get(&unknown), Some(&"unknown_value"));
 
     println!("✅ StrategyEnum: Clone, Eq, Ord (alphabetical), Hash all verified");
-}
+    })
+.await;}
 
 // ============================ 13. StrategyEnum dispatch — all methods route correctly ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_enum_dispatch_all_methods() {
-    let state = live_ibkr("DU111111", "ibc_strat_dispatch.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_strat_dispatch.log", |state| async move {
+;
 
     // Verify that calling methods via StrategyEnum dispatches to the correct inner strategy
     let strategies = vec![
@@ -456,4 +455,5 @@ async fn test_strategy_enum_dispatch_all_methods() {
     }
 
     println!("✅ StrategyEnum dispatch: get_name + is_fx_strategy route correctly for all 3 variants");
-}
+    })
+.await;}

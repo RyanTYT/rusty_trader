@@ -1,12 +1,17 @@
 //! Shared infrastructure for live IBKR smoke tests.
 //!
 //! Uses the new `with_gateway` / `with_gateway_retry` RAII API from `ibc.rs`:
-//! the gateway is booted, a closure runs with `&IBGateway`, and the gateway
-//! is shut down automatically when the closure returns.
+//! the gateway is booted, a closure runs, and the gateway is shut down
+//! automatically when the closure returns. This ensures every test properly
+//! boots + cleanly shuts down the gateway — no port races, no leaked processes.
 //!
-//! `live_ibkr()` uses `start_gateway()` (test-only) to get an owned `IBGateway`
-//! so the gateway stays alive for the test's duration. The gateway is shut
-//! down via `Drop` when the `LiveIbkr` struct is dropped.
+//! `with_live_ibkr(account, log_file, |state| async { ... })` boots the gateway
+//! + connects clients + runs the test body. When the test body returns, the
+//! gateway is shut down automatically.
+//!
+//! The `LiveIbkr` struct does NOT hold a reference to `IBGateway` — the gateway
+//! is owned by `with_gateway_retry` and kept alive for the closure's duration.
+//! Tests only need the clients (which talk to the gateway via TCP on port 4002).
 //!
 //! Requires:
 //! - IBC installed at `/IBCLinux-3.21.2/scripts/ibcstart.sh`
@@ -19,16 +24,17 @@ use std::time::Duration;
 
 use ibapi::Client;
 use sqlx::PgPool;
-use trading_app::test_internals::{start_gateway, IBGateway};
+use trading_app::test_internals::{with_gateway_retry, IBGateway};
 
 const API_PORT_ADDR: &str = "127.0.0.1:4002";
 
+/// Live IBKR state — holds the connected clients + pool.
+/// Does NOT hold a reference to `IBGateway`; the gateway is owned by
+/// `with_gateway_retry` and kept alive for the closure's duration.
 pub struct LiveIbkr {
     pub master_client: Arc<Client>,
     pub client_1: Arc<Client>,
     pub pool: PgPool,
-    /// Owned `IBGateway` — shut down via `Drop` when `LiveIbkr` is dropped.
-    pub _gateway: IBGateway,
 }
 
 async fn connect_to_client_with_retry(
@@ -104,40 +110,51 @@ pub async fn wait_for_port_bind(max_wait: Duration) -> bool {
     }
 }
 
-/// Boot an IB Gateway + connect clients, returning an owned `LiveIbkr`.
+/// Boot an IB Gateway + connect clients + run a closure with `LiveIbkr`.
 ///
-/// The gateway is shut down via `Drop` when the `LiveIbkr` is dropped.
-/// After dropping, call `wait_for_port_release()` to ensure the port is
-/// fully released before the next test boots.
-pub async fn live_ibkr(_account: &str, ibc_log_file: &'static str) -> Option<LiveIbkr> {
+/// Uses `with_gateway_retry` so the gateway is automatically shut down when
+/// the closure returns — no manual cleanup needed, no port races.
+///
+/// The closure receives an owned `LiveIbkr` (clients + pool). The gateway is
+/// kept alive by `with_gateway_retry` for the closure's duration — tests don't
+/// need a reference to `IBGateway` since clients talk to it via TCP.
+///
+/// # Example
+/// ```ignore
+/// with_live_ibkr("DU111111", "ibc_test.log", |state| async {
+///     // state.client_1 is Arc<Client>
+///     // state.pool is PgPool
+///     // ... test body ...
+/// })
+/// .await;
+/// ```
+pub async fn with_live_ibkr<F, Fut, T>(
+    _account: &str,
+    ibc_log_file: &'static str,
+    f: F,
+) -> Option<T>
+where
+    F: FnOnce(LiveIbkr) -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
     let pool = get_pool().await?;
 
-    // Retry logic for gateway start
-    let gateway = {
-        let mut attempt = 0;
-        loop {
-            match start_gateway(ibc_log_file).await {
-                Ok(gw) => break gw,
-                Err(e) => {
-                    attempt += 1;
-                    if attempt > 2 {
-                        tracing::error!("Failed to boot IB Gateway after {attempt} attempts: {e:?}");
-                        return None;
-                    }
-                    tracing::warn!("Retrying gateway start (attempt {attempt}): {e:?}");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            }
-        }
-    };
+    // with_gateway_retry owns the IBGateway and shuts it down when the closure
+    // returns. The closure receives &IBGateway but ignores it (|_|) — the
+    // gateway is alive for the closure's duration, and clients connect to it
+    // via TCP on port 4002.
+    with_gateway_retry(ibc_log_file, 2, |_| async {
+        let master_client = connect_to_client_with_retry(API_PORT_ADDR, 0, 6).await.ok()?;
+        let client_1 = connect_to_client_with_retry(API_PORT_ADDR, 1, 1).await.ok()?;
 
-    let master_client = connect_to_client_with_retry(API_PORT_ADDR, 0, 6).await.ok()?;
-    let client_1 = connect_to_client_with_retry(API_PORT_ADDR, 1, 1).await.ok()?;
+        let live = LiveIbkr {
+            master_client: Arc::new(master_client),
+            client_1: Arc::new(client_1),
+            pool: pool.clone(),
+        };
 
-    Some(LiveIbkr {
-        master_client: Arc::new(master_client),
-        client_1: Arc::new(client_1),
-        pool,
-        _gateway: gateway,
+        Some(f(live).await)
     })
+    .await
+    .ok()?
 }

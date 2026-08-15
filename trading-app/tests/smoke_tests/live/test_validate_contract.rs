@@ -10,47 +10,46 @@ use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_validate_contract_live() {
-    let state = live_ibkr("DU111111", "ibc_live.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+        let contract = Contract {
+            symbol: "AAPL".into(),
+            security_type: SecurityType::Stock,
+            currency: "USD".into(),
+            exchange: "SMART".into(),
+            primary_exchange: "NASDAQ".into(),
+            ..Default::default()
+        };
 
-    let contract = Contract {
-        symbol: "AAPL".into(),
-        security_type: SecurityType::Stock,
-        currency: "USD".into(),
-        exchange: "SMART".into(),
-        primary_exchange: "NASDAQ".into(),
-        ..Default::default()
-    };
+        let contract_scheduler = std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+        let market_data_handler = MarketDataHandler::new(state.pool.clone());
+        let consolidator = Consolidator::new(
+            tokio::runtime::Handle::current(),
+            state.pool.clone(),
+            state.client_1.clone(),
+            market_data_handler,
+            contract_scheduler,
+        );
 
-    let contract_scheduler = std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-    let market_data_handler = MarketDataHandler::new(state.pool.clone());
-    let consolidator = Consolidator::new(
-        tokio::runtime::Handle::current(),
-        state.pool.clone(),
-        state.client_1.clone(),
-        market_data_handler,
-        contract_scheduler,
-    );
+        let result = consolidator.validate_contract(contract.clone(), Duration::from_secs(30));
+        assert!(result.is_some(), "validate_contract should return Some for AAPL");
 
-    let result = consolidator.validate_contract(contract.clone(), Duration::from_secs(30));
-    assert!(result.is_some(), "validate_contract should return Some for AAPL");
+        let validated = result.unwrap();
+        assert!(validated.symbol.to_string() == "AAPL");
+        assert!(validated.contract_id > 0, "contract_id should be populated");
 
-    let validated = result.unwrap();
-    assert!(validated.symbol.to_string() == "AAPL");
-    assert!(validated.contract_id > 0, "contract_id should be populated");
-
-    let bad_contract = Contract {
-        symbol: "NONEXISTENT123XYZ".into(),
-        security_type: SecurityType::Stock,
-        currency: "USD".into(),
-        ..Default::default()
-    };
-    let bad_result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
-    assert!(bad_result.is_none(), "expected None for non-existent contract");
+        let bad_contract = Contract {
+            symbol: "NONEXISTENT123XYZ".into(),
+            security_type: SecurityType::Stock,
+            currency: "USD".into(),
+            ..Default::default()
+        };
+        let bad_result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
+        assert!(bad_result.is_none(), "expected None for non-existent contract");
+    })
+.await;
 }

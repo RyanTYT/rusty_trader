@@ -11,7 +11,7 @@ use spmc_ring::bench::RingBuffer;
 use trading_app::market_data::producer::subscribe_to_data;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
@@ -19,9 +19,8 @@ const MAX_NO_OF_CONSUMERS: usize = 4;
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_subscribe_to_data_live() {
-    let state = live_ibkr("DU111111", "ibc_live.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+;
 
     let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
     let contract = Contract {
@@ -61,4 +60,5 @@ async fn test_subscribe_to_data_live() {
             println!("No bars received (market may be closed) — acceptable");
         }
     }
-}
+    })
+.await;}

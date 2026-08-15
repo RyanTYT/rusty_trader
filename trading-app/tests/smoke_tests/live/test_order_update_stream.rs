@@ -11,14 +11,13 @@ use trading_app::execution::order_update_stream::controller::OrderUpdateStreamCo
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_order_update_stream_live() {
-    let state = live_ibkr("DU111111", "ibc_live.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+;
 
     let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
     let mut strategy_map = HashMap::new();
@@ -44,4 +43,5 @@ async fn test_order_update_stream_live() {
     println!("OrderUpdateStreamController ran for 5 seconds without panic");
 
     drop(controller);
-}
+    })
+.await;}

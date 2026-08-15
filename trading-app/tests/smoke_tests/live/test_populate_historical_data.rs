@@ -9,14 +9,13 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::live_ibkr;
+use crate::live::init::with_live_ibkr;
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_populate_historical_data_live() {
-    let state = live_ibkr("DU111111", "ibc_live.log")
-        .await
-        .expect("Failed to boot live IBKR");
+    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+;
 
     let contract = Contract {
         symbol: "AAPL".into(),
@@ -50,4 +49,5 @@ async fn test_populate_historical_data_live() {
         .expect("populate_historical_data failed");
 
     println!("populate_historical_data succeeded — smoke test passed");
-}
+    })
+.await;}
