@@ -7,12 +7,13 @@
 //! - `last_bar_available` — grid flooring to 5-min, close cap, open-threshold gate
 //! - `fx_trading_day_start` — previous day 17:00 NY
 
-use chrono::{NaiveDate, TimeZone, Utc};
-use chrono::Datelike;
 use chrono::Timelike;
+use chrono::{NaiveDate, TimeZone};
 use chrono_tz::America::New_York;
 use trading_app::database::models::AssetType;
-use trading_app::test_internals::{fx_trading_day_start, is_fx_trading_datetime, last_bar_available};
+use trading_app::test_internals::{
+    fx_trading_day_start, is_fx_trading_datetime, last_bar_available,
+};
 
 /// Helper: build a DateTime<Tz> in New York time.
 fn ny(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> chrono::DateTime<chrono_tz::Tz> {
@@ -163,43 +164,64 @@ fn fx_christmas_sun_observed_mon_closed() {
 fn fx_good_friday_2024_closed() {
     // 2024-03-29 Good Friday
     let t = ny(2024, 3, 29, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2024 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2024 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2025_closed() {
     let t = ny(2025, 4, 18, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2025 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2025 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2026_closed() {
     let t = ny(2026, 4, 3, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2026 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2026 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2027_closed() {
     let t = ny(2027, 3, 26, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2027 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2027 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2028_closed() {
     let t = ny(2028, 4, 14, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2028 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2028 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2029_closed() {
     let t = ny(2029, 3, 30, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2029 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2029 should be a holiday"
+    );
 }
 
 #[test]
 fn fx_good_friday_2030_closed() {
     let t = ny(2030, 4, 19, 12, 0);
-    assert!(!is_fx_trading_datetime(&t), "Good Friday 2030 should be a holiday");
+    assert!(
+        !is_fx_trading_datetime(&t),
+        "Good Friday 2030 should be a holiday"
+    );
 }
 
 #[test]
@@ -219,7 +241,10 @@ fn fx_trading_day_start_returns_previous_day_17_ny() {
     let date = NaiveDate::from_ymd_opt(2024, 11, 6).unwrap();
     let result = fx_trading_day_start(&date, &New_York);
     // Should be 2024-11-05 17:00 NY
-    assert_eq!(result.date_naive(), NaiveDate::from_ymd_opt(2024, 11, 5).unwrap());
+    assert_eq!(
+        result.date_naive(),
+        NaiveDate::from_ymd_opt(2024, 11, 5).unwrap()
+    );
     assert_eq!(result.hour(), 17);
 }
 
@@ -228,7 +253,10 @@ fn fx_trading_day_start_for_monday_returns_sunday_17() {
     // For 2024-11-04 (Monday), FX day starts Sunday 17:00 NY
     let date = NaiveDate::from_ymd_opt(2024, 11, 4).unwrap();
     let result = fx_trading_day_start(&date, &New_York);
-    assert_eq!(result.date_naive(), NaiveDate::from_ymd_opt(2024, 11, 3).unwrap());
+    assert_eq!(
+        result.date_naive(),
+        NaiveDate::from_ymd_opt(2024, 11, 3).unwrap()
+    );
     assert_eq!(result.hour(), 17);
 }
 
@@ -265,5 +293,8 @@ fn last_bar_available_stock_weekend_returns_a_time() {
     // Callers that need weekday gating must check is_busday separately.
     let t = ny(2024, 11, 9, 12, 0);
     let result = last_bar_available(t, &AssetType::Stock);
-    assert!(result.is_some(), "last_bar_available doesn't gate on busday");
+    assert!(
+        result.is_some(),
+        "last_bar_available doesn't gate on busday"
+    );
 }

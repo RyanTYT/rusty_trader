@@ -5,9 +5,8 @@
 //! - `aggregate_bars` — 5-sec bars → N-sec OHLCV aggregation, boundary crossing
 
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
-use chrono::TimeZone;
 use ibapi::contracts::Contract;
 use ibapi::market_data::realtime::{Bar, WhatToShow};
 use ibapi::prelude::SecurityType;
@@ -141,7 +140,10 @@ fn aggregate_bars_boundary_crossed_aggregates() {
     // Should aggregate the two bars in window 60-120 into one OHLCV bar
     assert!(!result.is_empty(), "boundary crossed → should aggregate");
     // The bars should be consumed
-    assert!(bars.is_empty(), "all bars should be consumed after aggregation");
+    assert!(
+        bars.is_empty(),
+        "all bars should be consumed after aggregation"
+    );
     // The aggregated bar should have:
     // open = first bar's open = 100.0
     // high = max(105, 106) = 106
@@ -150,5 +152,8 @@ fn aggregate_bars_boundary_crossed_aggregates() {
     // volume = 1000 + 500 = 1500
     let agg = &result[0];
     let price = agg.get_price();
-    assert!((price - 103.0).abs() < 1e-9, "close should be 103, got {price}");
+    assert!(
+        (price - 103.0).abs() < 1e-9,
+        "close should be 103, got {price}"
+    );
 }

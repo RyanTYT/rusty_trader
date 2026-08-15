@@ -15,15 +15,18 @@ use spmc_ring::bench::RingBuffer;
 use spmc_ring::ring_buffer::spmc_ring_buffer::{SpmcRingBuffer, SpmcRingBufferConsumer};
 
 use ibapi::market_data::realtime::Bar;
-use trading_app::market_data::consumer::strategy_consumer::{IbkrBarConsumer, IbkrBarType};
 use trading_app::market_data::consumer::strategy_consumer::StrategyDataBundler;
-use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
+use trading_app::market_data::consumer::strategy_consumer::{IbkrBarConsumer, IbkrBarType};
 
 const BUFFER_CAPACITY: usize = 128;
 const NUM_CONSUMERS: usize = 10;
 
 /// Build an IbkrBarConsumer with a throwaway ring buffer consumer.
-fn make_consumer(security_type: SecurityType, symbol: &str, what: WhatToShow) -> IbkrBarConsumer<BUFFER_CAPACITY> {
+fn make_consumer(
+    security_type: SecurityType,
+    symbol: &str,
+    what: WhatToShow,
+) -> IbkrBarConsumer<BUFFER_CAPACITY> {
     let ring: SpmcRingBuffer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS> = SpmcRingBuffer::new();
     let consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY> = ring.get_new_consumer().unwrap();
     IbkrBarConsumer::new(
@@ -159,7 +162,11 @@ fn sort_consumers_empty_vec() {
 
 #[test]
 fn sort_consumers_single_element() {
-    let mut consumers = vec![make_consumer(SecurityType::Stock, "AAPL", WhatToShow::Trades)];
+    let mut consumers = vec![make_consumer(
+        SecurityType::Stock,
+        "AAPL",
+        WhatToShow::Trades,
+    )];
     StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
     assert_eq!(consumers.len(), 1);
     assert_eq!(consumers[0].contract.symbol.to_string(), "AAPL");

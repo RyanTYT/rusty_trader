@@ -10,7 +10,7 @@ use trading_app::database::models::{
 
 use crate::models::init::{TEST_MUTEX, setup_test_db};
 
-const PAIR: &str = "EUR/USD";
+const _PAIR: &str = "EUR/USD";
 
 fn make_fk(pair: &str) -> HistoricalForexDataFullKeys {
     HistoricalForexDataFullKeys {

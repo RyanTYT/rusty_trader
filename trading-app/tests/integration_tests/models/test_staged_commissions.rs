@@ -2,7 +2,6 @@
 //! Comprehensively tests all 7 CRUD methods.
 //! Requires: live Postgres + DATABASE_URL.
 
-use chrono::Utc;
 use rust_decimal::Decimal;
 use trading_app::database::crud::CRUDTrait;
 use trading_app::database::models::{
@@ -19,7 +18,9 @@ fn make_fk(exec_id: &str) -> StagedCommissionsFullKeys {
 }
 
 fn make_pk(exec_id: &str) -> StagedCommissionsPrimaryKeys {
-    StagedCommissionsPrimaryKeys { execution_id: exec_id.to_string() }
+    StagedCommissionsPrimaryKeys {
+        execution_id: exec_id.to_string(),
+    }
 }
 
 fn uk(fees: Option<Decimal>) -> StagedCommissionsUpdateKeys {
@@ -36,7 +37,11 @@ async fn test_create_read_delete() {
     let pk = make_pk(&fk.execution_id);
     crud.create(&fk).await.expect("create failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.execution_id, fk.execution_id);
     assert_eq!(data.fees, Decimal::new(50, 2));
 
@@ -54,8 +59,14 @@ async fn test_update() {
     let pk = make_pk(&fk.execution_id);
     crud.create(&fk).await.expect("create failed");
 
-    crud.update(&pk, &uk(Some(Decimal::new(75, 2)))).await.expect("update failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.update(&pk, &uk(Some(Decimal::new(75, 2))))
+        .await
+        .expect("update failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.fees, Decimal::new(75, 2));
 
     crud.delete(&pk).await.expect("delete failed");
@@ -75,7 +86,8 @@ async fn test_read_all() {
     crud.create(&fk_b).await.expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.execution_id == "scm_ra_a" || p.execution_id == "scm_ra_b")
         .collect();
     assert_eq!(ours.len(), 2);
@@ -93,15 +105,31 @@ async fn test_create_or_ignore() {
     let fk = make_fk("scm_coi");
     let pk = make_pk(&fk.execution_id);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.fees, Decimal::new(50, 2));
 
     let mut fk2 = fk.clone();
     fk2.fees = Decimal::new(999, 2);
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.fees, Decimal::new(50, 2), "conflict path should NOT update");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
+    assert_eq!(
+        data.fees,
+        Decimal::new(50, 2),
+        "conflict path should NOT update"
+    );
 
     crud.delete(&pk).await.expect("delete failed");
 }
@@ -116,8 +144,14 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(&fk.execution_id);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(Decimal::new(50, 2)))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(Decimal::new(50, 2))))
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.fees, Decimal::new(50, 2));
 
     crud.delete(&pk).await.expect("delete failed");
@@ -133,8 +167,14 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(&fk.execution_id);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(Decimal::new(75, 2)))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(Decimal::new(75, 2))))
+        .await
+        .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.fees, Decimal::new(75, 2));
 
     crud.delete(&pk).await.expect("delete failed");

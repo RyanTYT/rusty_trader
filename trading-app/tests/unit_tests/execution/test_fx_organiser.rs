@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use ibapi::contracts::Contract;
 use ibapi::orders::Action;
 use trading_app::execution::fx_organiser::FxAttachments;
-use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
+use trading_app::execution::order_engine::OrderEngine;
 use trading_app::test_internals::HashContract;
 
 /// Helper: build a stock HashContract for a given symbol/currency.
@@ -93,7 +93,10 @@ fn shortfall_covered_by_one_sell_proceeds() {
     assert_eq!(fx_orders[0].order.total_quantity, 1000.0);
     assert_eq!(fx_orders[0].order.order_ref, "mystrat");
     // FX contract should be ForexPair with sell_currency/buy_currency
-    assert_eq!(fx_orders[0].contract.security_type, ibapi::prelude::SecurityType::ForexPair);
+    assert_eq!(
+        fx_orders[0].contract.security_type,
+        ibapi::prelude::SecurityType::ForexPair
+    );
 
     // Expect one backed-up buy order for AAPL
     assert_eq!(res.backed_up_orders.len(), 1);
