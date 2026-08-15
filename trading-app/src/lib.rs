@@ -32,9 +32,6 @@ pub mod test_internals {
 
     // ibc
     pub use crate::ibc::{with_gateway, with_gateway_retry};
-    pub async fn start_gateway(ibc_logs_file: &'static str) -> Result<IBGateway, String> {
-        crate::ibc::IBGateway::start(ibc_logs_file).await
-    }
 
     // helpers
     pub fn get_local_symbol(contract: &ibapi::contracts::Contract) -> String {
@@ -214,3 +211,4 @@ pub trait Insertable {
         query: QueryAs<'q, Postgres, T, PgArguments>,
     ) -> QueryAs<'q, Postgres, T, PgArguments>;
 }
+
