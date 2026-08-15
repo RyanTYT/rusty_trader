@@ -39,7 +39,7 @@ impl IBGateway {
     /// reaped before returning `Err`, so callers never leak an orphaned
     /// process on a failed start (this was previously the source of
     /// double-started gateways fighting over port 4002 on retry).
-    pub(crate) async fn start(log_file: &str) -> Result<Self, String> {
+    async fn start(log_file: &str) -> Result<Self, String> {
         let success_pattern = "Login has completed";
         let failure_pattern = "IBC returned exit status";
 
@@ -153,12 +153,15 @@ impl IBGateway {
             return Err("Failure pattern encountered when starting IBC".to_string());
         }
 
-        if let Err(e) = wait_for_port(true, GATEWAY_PORT, Duration::from_secs(5)).await {
+        if let Err(e) = wait_for_port(true, GATEWAY_PORT, Duration::from_secs(10)).await {
             Self::kill_and_reap(&mut child).await;
             return Err(format!(
                 "Failed to connect to port even with success msg: {e:?}"
             ));
         }
+
+        // Sleep for 5 seconds to ensure port is free for connection
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         tracing::info!("✅ IB Gateway successfully started");
         Ok(Self {
@@ -216,6 +219,8 @@ impl IBGateway {
             self.shut_down = true;
             return Err(format!("Ports did not release after shutdown: {e:?}"));
         }
+        // Sleep for 5 seconds to ensure port is free for connection
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         self.shut_down = true;
         Ok(())
