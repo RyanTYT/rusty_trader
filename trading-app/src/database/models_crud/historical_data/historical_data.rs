@@ -1076,6 +1076,8 @@ impl HistoricalDataOps for HistoricalDataCRUD {
 
 #[async_trait]
 impl NoiseOps for HistoricalDataCRUD {
+    /// Today's move will NOT be included in the calculation
+    /// avg move is of the last 15 days
     async fn get_avg_move_since_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,

@@ -71,7 +71,8 @@ async fn test_get_avg_move_since_open_with_data() {
     let expected_moves: Vec<f64> = (1..=15).map(|i| (100.0 + i as f64 * 0.5) / 100.0).collect();
     let expected_avg = expected_moves.iter().map(|m| (m - 1.0).abs()).sum::<f64>() / 15.0;
 
-    for i in 1..=15 {
+    // insert with i == 0 as well to include most recent day data which will be ignored
+    for i in 0..=15 {
         let day = base_date - Duration::days(i);
 
         // Bar 1: 09:30 UTC — the daily open (determines open in daily_ohlcv)
