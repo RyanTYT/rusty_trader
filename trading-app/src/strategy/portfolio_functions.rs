@@ -84,7 +84,7 @@ pub fn proportional_integer_reduce(
     candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     for (pos, cost) in candidates {
         if cost <= caps + eps {
-            if final_qtys[pos] >= 0 {
+            if quantities[pos] >= 0 {
                 final_qtys[pos] += 1;
             } else {
                 final_qtys[pos] -= 1;

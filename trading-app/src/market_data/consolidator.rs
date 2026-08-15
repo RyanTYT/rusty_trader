@@ -406,6 +406,10 @@ pub(crate) fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
         if is_observed_holiday(date, year, 1, 1) {
             return true;
         }
+        // If New Year's Day falls on Sat -> Fri observes Holiday
+        if is_observed_holiday(date, year + 1, 1, 1) {
+            return true;
+        }
 
         // Christmas Day (observed)
         if is_observed_holiday(date, year, 12, 25) {
