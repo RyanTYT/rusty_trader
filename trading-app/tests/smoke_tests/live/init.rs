@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use ibapi::Client;
 use sqlx::PgPool;
-use trading_app::test_internals::{with_gateway_retry, IBGateway};
+use trading_app::test_internals::with_gateway_retry;
 
 const API_PORT_ADDR: &str = "127.0.0.1:4002";
 
@@ -52,7 +52,10 @@ async fn connect_to_client_with_retry(
             Err(e) => {
                 tracing::warn!(
                     "Connection to {} (client {}) failed (attempt {}): {}",
-                    api_port_addr, client_id, retry_time + 1, e
+                    api_port_addr,
+                    client_id,
+                    retry_time + 1,
+                    e
                 );
                 retry_time += 1;
                 if retry_time <= retry_times {
@@ -144,8 +147,12 @@ where
     // gateway is alive for the closure's duration, and clients connect to it
     // via TCP on port 4002.
     with_gateway_retry(ibc_log_file, 2, |_| async {
-        let master_client = connect_to_client_with_retry(API_PORT_ADDR, 0, 6).await.ok()?;
-        let client_1 = connect_to_client_with_retry(API_PORT_ADDR, 1, 1).await.ok()?;
+        let master_client = connect_to_client_with_retry(API_PORT_ADDR, 0, 6)
+            .await
+            .ok()?;
+        let client_1 = connect_to_client_with_retry(API_PORT_ADDR, 1, 1)
+            .await
+            .ok()?;
 
         let live = LiveIbkr {
             master_client: Arc::new(master_client),

@@ -13,12 +13,11 @@
 //!
 //! Requires: live IBC + Postgres + DATABASE_URL. All tests #[ignore]'d.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use trading_app::test_internals::{with_gateway, with_gateway_retry, IBGateway};
+use trading_app::test_internals::{with_gateway, with_gateway_retry};
 
-use crate::live::init::{wait_for_port_release, wait_for_port_bind};
+use crate::live::init::{wait_for_port_bind, wait_for_port_release};
 
 // ============================ with_gateway — basic boot/shutdown ============================
 
@@ -28,7 +27,9 @@ async fn test_with_gateway_basic_boot_shutdown() {
     // Boot the gateway + verify port is bound inside the closure
     let result = with_gateway("/tmp/ibc_lifecycle_1.log", |_gateway| async {
         // Port 4002 should be bound while inside the closure
-        let bound = tokio::net::TcpStream::connect("127.0.0.1:4002").await.is_ok();
+        let bound = tokio::net::TcpStream::connect("127.0.0.1:4002")
+            .await
+            .is_ok();
         assert!(bound, "port 4002 should be bound while gateway is alive");
         println!("✅ with_gateway: port 4002 bound inside closure");
         true
@@ -40,7 +41,10 @@ async fn test_with_gateway_basic_boot_shutdown() {
 
     // After the closure returns, the gateway should be shut down + port released
     let released = wait_for_port_release(Duration::from_secs(10)).await;
-    assert!(released, "port 4002 should be released after with_gateway returns");
+    assert!(
+        released,
+        "port 4002 should be released after with_gateway returns"
+    );
     println!("✅ with_gateway: port 4002 released after closure returns");
 }
 
@@ -50,8 +54,13 @@ async fn test_with_gateway_basic_boot_shutdown() {
 #[ignore = "requires live IBC + Postgres + DATABASE_URL"]
 async fn test_with_gateway_retry_boot_shutdown() {
     let result = with_gateway_retry("/tmp/ibc_lifecycle_2.log", 2, |_gateway| async {
-        let bound = tokio::net::TcpStream::connect("127.0.0.1:4002").await.is_ok();
-        assert!(bound, "port should be bound inside with_gateway_retry closure");
+        let bound = tokio::net::TcpStream::connect("127.0.0.1:4002")
+            .await
+            .is_ok();
+        assert!(
+            bound,
+            "port should be bound inside with_gateway_retry closure"
+        );
         println!("✅ with_gateway_retry: port bound inside closure");
         42
     })
@@ -61,7 +70,10 @@ async fn test_with_gateway_retry_boot_shutdown() {
     assert_eq!(result.unwrap(), 42, "closure return value should propagate");
 
     let released = wait_for_port_release(Duration::from_secs(10)).await;
-    assert!(released, "port should be released after with_gateway_retry returns");
+    assert!(
+        released,
+        "port should be released after with_gateway_retry returns"
+    );
     println!("✅ with_gateway_retry: port released after closure returns");
 }
 
@@ -73,13 +85,18 @@ async fn test_multiple_boot_shutdown_cycles() {
     for i in 1..=3 {
         let log_file: &'static str = Box::leak(format!("/tmp/ibc_cycle_{i}.log").into_boxed_str());
         let result = with_gateway_retry(log_file, 2, |_gw| async {
-            let bound = tokio::net::TcpStream::connect("127.0.0.1:4002").await.is_ok();
+            let bound = tokio::net::TcpStream::connect("127.0.0.1:4002")
+                .await
+                .is_ok();
             assert!(bound, "cycle {i}: port should be bound");
             i
         })
         .await;
 
-        assert!(result.is_ok(), "cycle {i}: with_gateway_retry should succeed");
+        assert!(
+            result.is_ok(),
+            "cycle {i}: with_gateway_retry should succeed"
+        );
         assert_eq!(result.unwrap(), i, "cycle {i}: return value mismatch");
 
         let released = wait_for_port_release(Duration::from_secs(10)).await;
@@ -97,12 +114,18 @@ async fn test_wait_for_port_bind_and_release_helpers() {
     let result = with_gateway("/tmp/ibc_port_helpers.log", |_gw| async {
         // wait_for_port_bind should return true (port is bound)
         let bound = wait_for_port_bind(Duration::from_secs(5)).await;
-        assert!(bound, "wait_for_port_bind should return true while gateway is alive");
+        assert!(
+            bound,
+            "wait_for_port_bind should return true while gateway is alive"
+        );
         println!("✅ wait_for_port_bind: true (port bound)");
 
         // wait_for_port_release should return false (port is still bound)
         let released = wait_for_port_release(Duration::from_secs(2)).await;
-        assert!(!released, "wait_for_port_release should return false while gateway is alive");
+        assert!(
+            !released,
+            "wait_for_port_release should return false while gateway is alive"
+        );
         println!("✅ wait_for_port_release: false (port still bound)");
         true
     })
@@ -112,11 +135,17 @@ async fn test_wait_for_port_bind_and_release_helpers() {
 
     // After the gateway is shut down, wait_for_port_release should return true
     let released = wait_for_port_release(Duration::from_secs(10)).await;
-    assert!(released, "wait_for_port_release should return true after gateway shutdown");
+    assert!(
+        released,
+        "wait_for_port_release should return true after gateway shutdown"
+    );
     println!("✅ wait_for_port_release: true (port released after shutdown)");
 
     // wait_for_port_bind should now return false (port is free)
     let bound = wait_for_port_bind(Duration::from_secs(2)).await;
-    assert!(!bound, "wait_for_port_bind should return false after shutdown");
+    assert!(
+        !bound,
+        "wait_for_port_bind should return false after shutdown"
+    );
     println!("✅ wait_for_port_bind: false (port not bound after shutdown)");
 }

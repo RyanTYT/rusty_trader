@@ -20,45 +20,46 @@ const MAX_NO_OF_CONSUMERS: usize = 4;
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_subscribe_to_data_live() {
     with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
-;
+        let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
+        let contract = Contract {
+            symbol: "AAPL".into(),
+            security_type: SecurityType::Stock,
+            currency: "USD".into(),
+            exchange: "SMART".into(),
+            primary_exchange: "NASDAQ".into(),
+            ..Default::default()
+        };
+        scheduler
+            .add_schedule(&contract)
+            .expect("add_schedule failed");
+        let scheduler = std::sync::Arc::new(scheduler);
 
-    let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
-    let contract = Contract {
-        symbol: "AAPL".into(),
-        security_type: SecurityType::Stock,
-        currency: "USD".into(),
-        exchange: "SMART".into(),
-        primary_exchange: "NASDAQ".into(),
-        ..Default::default()
-    };
-    scheduler.add_schedule(&contract).expect("add_schedule failed");
-    let scheduler = std::sync::Arc::new(scheduler);
+        let (ring_buffer, _producer) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+            std::sync::Arc::downgrade(&state.client_1),
+            contract,
+            RealtimeWhatToShow::Trades,
+            scheduler,
+        );
 
-    let (ring_buffer, _producer) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-        std::sync::Arc::downgrade(&state.client_1),
-        contract,
-        RealtimeWhatToShow::Trades,
-        scheduler,
-    );
+        // Get a consumer to pop bars
+        let consumer = ring_buffer
+            .get_new_consumer()
+            .expect("expected to get a consumer");
 
-    // Get a consumer to pop bars
-    let consumer = ring_buffer
-        .get_new_consumer()
-        .expect("expected to get a consumer");
+        // Wait for a few 5-sec bars
+        tokio::time::sleep(Duration::from_secs(20)).await;
 
-    // Wait for a few 5-sec bars
-    tokio::time::sleep(Duration::from_secs(20)).await;
-
-    // Try to read a bar
-    let bar = consumer.try_pop();
-    match bar {
-        Some(b) => {
-            println!("Received bar: close={}", b.close);
-            assert!(b.close > 0.0, "bar close price should be positive");
+        // Try to read a bar
+        let bar = consumer.try_pop();
+        match bar {
+            Some(b) => {
+                println!("Received bar: close={}", b.close);
+                assert!(b.close > 0.0, "bar close price should be positive");
+            }
+            None => {
+                println!("No bars received (market may be closed) — acceptable");
+            }
         }
-        None => {
-            println!("No bars received (market may be closed) — acceptable");
-        }
-    }
     })
-.await;}
+    .await;
+}

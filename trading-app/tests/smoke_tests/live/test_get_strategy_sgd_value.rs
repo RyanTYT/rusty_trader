@@ -15,37 +15,37 @@ use crate::live::init::with_live_ibkr;
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_get_strategy_sgd_value_live() {
     with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
-;
+        let _contract = Contract {
+            symbol: "AAPL".into(),
+            security_type: SecurityType::Stock,
+            currency: "USD".into(),
+            exchange: "SMART".into(),
+            primary_exchange: "NASDAQ".into(),
+            ..Default::default()
+        };
 
-    let contract = Contract {
-        symbol: "AAPL".into(),
-        security_type: SecurityType::Stock,
-        currency: "USD".into(),
-        exchange: "SMART".into(),
-        primary_exchange: "NASDAQ".into(),
-        ..Default::default()
-    };
+        let contract_scheduler =
+            std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+        let market_data_handler = MarketDataHandler::new(state.pool.clone());
+        let consolidator = Consolidator::new(
+            tokio::runtime::Handle::current(),
+            state.pool.clone(),
+            state.client_1.clone(),
+            market_data_handler,
+            contract_scheduler,
+        );
 
-    let contract_scheduler = std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-    let market_data_handler = MarketDataHandler::new(state.pool.clone());
-    let consolidator = Consolidator::new(
-        tokio::runtime::Handle::current(),
-        state.pool.clone(),
-        state.client_1.clone(),
-        market_data_handler,
-        contract_scheduler,
-    );
+        let result = consolidator.get_strategy_sgd_value("noise");
 
-    let result = consolidator.get_strategy_sgd_value("noise");
-
-    match result {
-        Ok(value) => {
-            assert!(value.is_finite(), "SGD value should be finite, got {value}");
-            println!("Strategy 'noise' SGD value: {value}");
+        match result {
+            Ok(value) => {
+                assert!(value.is_finite(), "SGD value should be finite, got {value}");
+                println!("Strategy 'noise' SGD value: {value}");
+            }
+            Err(e) => {
+                println!("get_strategy_sgd_value returned error (expected if no positions): {e}");
+            }
         }
-        Err(e) => {
-            println!("get_strategy_sgd_value returned error (expected if no positions): {e}");
-        }
-    }
     })
-.await;}
+    .await;
+}
