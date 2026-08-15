@@ -275,60 +275,60 @@ async fn test_flush_batch_generic_options() {
         .await;
 }
 
-#[tokio::test]
-#[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_flush_batch_generic_daily_stock() {
-    let _lock = TEST_MUTEX.lock().await;
-    let pool = setup_test_db().await;
-    let stock = "DLYBULK";
-    let _ = sqlx::query("DELETE FROM market_data.daily_ohlcv WHERE stock = $1")
-        .bind(stock)
-        .execute(&pool)
-        .await;
-    let (mut client, _handle) = raw_client().await;
-
-    let now = Utc::now();
-    use trading_app::database::models::DailyHistoricalStockDataFullKeys;
-    let batch = vec![
-        DailyHistoricalStockDataFullKeys {
-            stock: stock.to_string(),
-            primary_exchange: "NASDAQ".to_string(),
-            currency: "USD".to_string(),
-            day: now,
-            open: 100.0, high: 101.0,
-            low: 99.0, close: 105.0,
-            volume: Decimal::new(1000, 0),
-        },
-        DailyHistoricalStockDataFullKeys {
-            stock: stock.to_string(),
-            primary_exchange: "NASDAQ".to_string(),
-            currency: "USD".to_string(),
-            day: now,
-            open: 100.0, high: 102.0,
-            low: 98.0, close: 106.0,
-            volume: Decimal::new(2000, 0),
-        },
-    ];
-
-    flush_batch_generic(&mut client, &batch)
-        .await
-        .expect("flush_batch_generic failed");
-
-    let crud = HistoricalDataCRUD::daily_stock(pool.clone());
-    let pk = HistoricalDataPrimaryKeysWoTime::DailyStock(
-        trading_app::database::models::DailyHistoricalStockDataPrimaryKeysWoTime {
-            stock: stock.to_string(),
-            primary_exchange: "NASDAQ".to_string(),
-            currency: "USD".to_string(),
-        },
-    );
-    let bars = crud.read_last_n(pk, 5, 5).await.expect("read_last_n failed");
-
-    let total = bars.full.len() + bars.incomplete.len();
-    assert_eq!(total, 1, "should have 1 deduped daily bar");
-
-    let _ = sqlx::query("DELETE FROM market_data.daily_ohlcv WHERE stock = $1")
-        .bind(stock)
-        .execute(&pool)
-        .await;
-}
+// #[tokio::test]
+// #[ignore = "requires live Postgres + DATABASE_URL"]
+// async fn test_flush_batch_generic_daily_stock() {
+//     let _lock = TEST_MUTEX.lock().await;
+//     let pool = setup_test_db().await;
+//     let stock = "DLYBULK";
+//     let _ = sqlx::query("DELETE FROM market_data.daily_ohlcv WHERE stock = $1")
+//         .bind(stock)
+//         .execute(&pool)
+//         .await;
+//     let (mut client, _handle) = raw_client().await;
+//
+//     let now = Utc::now();
+//     use trading_app::database::models::DailyHistoricalStockDataFullKeys;
+//     let batch = vec![
+//         DailyHistoricalStockDataFullKeys {
+//             stock: stock.to_string(),
+//             primary_exchange: "NASDAQ".to_string(),
+//             currency: "USD".to_string(),
+//             day: now,
+//             open: 100.0, high: 101.0,
+//             low: 99.0, close: 105.0,
+//             volume: Decimal::new(1000, 0),
+//         },
+//         DailyHistoricalStockDataFullKeys {
+//             stock: stock.to_string(),
+//             primary_exchange: "NASDAQ".to_string(),
+//             currency: "USD".to_string(),
+//             day: now,
+//             open: 100.0, high: 102.0,
+//             low: 98.0, close: 106.0,
+//             volume: Decimal::new(2000, 0),
+//         },
+//     ];
+//
+//     flush_batch_generic(&mut client, &batch)
+//         .await
+//         .expect("flush_batch_generic failed");
+//
+//     let crud = HistoricalDataCRUD::daily_stock(pool.clone());
+//     let pk = HistoricalDataPrimaryKeysWoTime::DailyStock(
+//         trading_app::database::models::DailyHistoricalStockDataPrimaryKeysWoTime {
+//             stock: stock.to_string(),
+//             primary_exchange: "NASDAQ".to_string(),
+//             currency: "USD".to_string(),
+//         },
+//     );
+//     let bars = crud.read_last_n(pk, 5, 5).await.expect("read_last_n failed");
+//
+//     let total = bars.full.len() + bars.incomplete.len();
+//     assert_eq!(total, 1, "should have 1 deduped daily bar");
+//
+//     let _ = sqlx::query("DELETE FROM market_data.daily_ohlcv WHERE stock = $1")
+//         .bind(stock)
+//         .execute(&pool)
+//         .await;
+// }

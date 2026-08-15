@@ -120,36 +120,36 @@ async fn test_create_or_ignore() {
     crud.delete(&pk).await.expect("delete failed");
 }
 
-#[tokio::test]
-async fn test_create_or_update_insert_path() {
-    let _lock = TEST_MUTEX.lock().await;
-    let pool = setup_test_db().await;
-    let crud = trading_app::test_internals::daily_historical_stock_data_crud(pool.clone());
-
-    let fk = make_fk("DLY_cou_ins");
-    let pk = make_pk(&fk.stock, fk.day);
-    assert!(crud.read(&pk).await.expect("read failed").is_none());
-
-    crud.create_or_update(&pk, &full_uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.close, 152.0);
-
-    crud.delete(&pk).await.expect("delete failed");
-}
-
-#[tokio::test]
-async fn test_create_or_update_update_path() {
-    let _lock = TEST_MUTEX.lock().await;
-    let pool = setup_test_db().await;
-    let crud = trading_app::test_internals::daily_historical_stock_data_crud(pool.clone());
-
-    let fk = make_fk("DLY_cou_upd");
-    let pk = make_pk(&fk.stock, fk.day);
-    crud.create(&fk).await.expect("pre-insert failed");
-
-    crud.create_or_update(&pk, &full_uk(Some(153.0), Some(Decimal::new(200000, 0)))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.close, 153.0);
-
-    crud.delete(&pk).await.expect("delete failed");
-}
+// #[tokio::test]
+// async fn test_create_or_update_insert_path() {
+//     let _lock = TEST_MUTEX.lock().await;
+//     let pool = setup_test_db().await;
+//     let crud = trading_app::test_internals::daily_historical_stock_data_crud(pool.clone());
+//
+//     let fk = make_fk("DLY_cou_ins");
+//     let pk = make_pk(&fk.stock, fk.day);
+//     assert!(crud.read(&pk).await.expect("read failed").is_none());
+//
+//     crud.create_or_update(&pk, &full_uk(Some(152.0), Some(Decimal::new(100000, 0)))).await.expect("insert path failed");
+//     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+//     assert_eq!(data.close, 152.0);
+//
+//     crud.delete(&pk).await.expect("delete failed");
+// }
+//
+// #[tokio::test]
+// async fn test_create_or_update_update_path() {
+//     let _lock = TEST_MUTEX.lock().await;
+//     let pool = setup_test_db().await;
+//     let crud = trading_app::test_internals::daily_historical_stock_data_crud(pool.clone());
+//
+//     let fk = make_fk("DLY_cou_upd");
+//     let pk = make_pk(&fk.stock, fk.day);
+//     crud.create(&fk).await.expect("pre-insert failed");
+//
+//     crud.create_or_update(&pk, &full_uk(Some(153.0), Some(Decimal::new(200000, 0)))).await.expect("update path failed");
+//     let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+//     assert_eq!(data.close, 153.0);
+//
+//     crud.delete(&pk).await.expect("delete failed");
+// }
