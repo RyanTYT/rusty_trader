@@ -3,7 +3,7 @@
 //! Requires: live IB Gateway + Postgres + DATABASE_URL + IBC installed.
 //! Run with: `cargo test --test smoke_tests test_init_app_smoke -- --ignored`
 
-use trading_app::init_app::init_app;
+use trading_app::{ibc::with_gateway_retry, init_app::init_app};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed — full bootstrap"]
@@ -15,16 +15,17 @@ async fn test_init_app_smoke_live() {
         .await
         .expect("Failed to connect to DB");
 
-    let state = init_app(
-        "127.0.0.1:4002",
-        "DU111111",
-        pool,
-        "noise".to_string(),
-    )
-    .await
-    .expect("init_app failed");
+    assert!(
+        with_gateway_retry("/test_init_app_smoke_live.log", 2, |_| async {
+            let state = init_app("127.0.0.1:4002", "DU111111", pool, "noise".to_string())
+                .await
+                .expect("init_app failed");
+            println!("init_app bootstrapped successfully — full smoke test passed");
 
-    println!("init_app bootstrapped successfully — full smoke test passed");
-
-    drop(state);
+            drop(state);
+        })
+        .await
+        .is_ok(),
+        "Initialising IBGateway with App was not smooth - launch IBGateway failed"
+    );
 }
