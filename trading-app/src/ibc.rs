@@ -280,7 +280,7 @@ impl IBGateway {
         if let Err(e) = child.start_kill() {
             // InvalidInput means process alr exited
             if e.kind() != std::io::ErrorKind::InvalidInput {
-                tracing::warn!("Failed to SIGTERM process group {pgid}: {e:?}");
+                tracing::warn!("Failed to kill IBC process: {e:?}");
             }
         }
 
