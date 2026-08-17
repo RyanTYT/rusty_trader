@@ -443,6 +443,7 @@ impl OrderEngine {
         pool: PgPool,
         weak_client: Weak<Client>,
         mut orders: VecDeque<OrderIBKR>,
+        order_store: &OrderStore,
     ) -> Result<(), String> {
         let order_ibkr_opt = orders.pop_front();
         if order_ibkr_opt.is_none() {
@@ -455,18 +456,35 @@ impl OrderEngine {
         let mut order = order_ibkr.order;
 
         let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
-        let open_orders = match hotpath::measure_block!("get_orders_for_strat", {
-            self.tokio_handle.block_on(async {
-                open_orders_crud
-                    .get_orders_for_strat(&order.order_ref)
-                    .await
-            })
-        }) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("Failed to get orders for strategy: {e:?}");
-                return Err("Failed to get orders for strategy".to_string());
+        let open_orders = {
+            let mut open_orders_db = match hotpath::measure_block!("get_orders_for_strat", {
+                self.tokio_handle.block_on(async {
+                    open_orders_crud
+                        .get_orders_for_strat(&order.order_ref)
+                        .await
+                })
+            }) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("Failed to get orders for strategy: {e:?}");
+                    return Err("Failed to get orders for strategy".to_string());
+                }
+            };
+
+            if let Some(backed_up_orders) = order_store
+                .load_orders(&order.order_ref)
+                .expect("Expected load_orders function to work")
+            {
+                backed_up_orders.iter().for_each(|order| {
+                    open_orders_db.push(OpenOrdersFullKeys::from_contract_and_order(
+                        &order.contract,
+                        &order.order,
+                        0.0,
+                    ));
+                });
             }
+
+            open_orders_db
         };
 
         let tot_qty_dir = open_orders
