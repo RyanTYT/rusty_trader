@@ -314,7 +314,7 @@ impl Drop for IBGateway {
              Issuing a non-blocking kill as a last resort; ports may not be released cleanly."
         );
 
-        if let Some(pid) = child.id() {
+        if let Some(pid) = self.child.id() {
             let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
             if let Err(e) = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL) {
                 if e != nix::errno::Errno::ESRCH {
