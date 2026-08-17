@@ -14,6 +14,12 @@ impl OrderStore {
     pub fn open() -> Result<Self, String> {
         let ORDERS_FILE_PATH: String =
             std::env::var("ORDERS_FILE_PATH").expect("Expected ORDERS_FILE_PATH env var to be set");
+
+        if let Some(parent) = std::path::Path::new(&ORDERS_FILE_PATH).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create orders directory: {e}"))?;
+        }
+
         let db = Database::create(ORDERS_FILE_PATH)
             .map_err(|e| format!("Failed to open redb database: {e}"))?;
 

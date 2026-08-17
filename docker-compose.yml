@@ -30,6 +30,7 @@ services:
     platform: linux/amd64
     volumes:
       - ib-volume:/home/tws
+      - orders-data:/data/orders
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@db:5432/${DB_DB}
@@ -48,7 +49,7 @@ services:
       - ALPACA_API_SECRET=${ALPACA_API_SECRET}
       - TRADING_TYPE=paper
       - RUST_BACKTRACE=1
-      - ORDERS_FILE_PATH=${ORDERS_FILE_PATH}
+      - ORDERS_FILE_PATH=/data/orders/orders.redb
     ports:
       - 7462:7462
       - 4002:4002
@@ -157,6 +158,7 @@ services:
     platform: linux/amd64
     volumes:
       - ib-volume:/home/tws
+      - test-orders-data:/data/orders
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
@@ -170,7 +172,7 @@ services:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
       - TRADING_TYPE=paper
-      - ORDERS_FILE_PATH=${ORDERS_FILE_PATH}
+      - ORDERS_FILE_PATH=/data/orders/orders.redb
     ports:
       - 4001:4002
       - 7462:7462
@@ -250,6 +252,11 @@ volumes:
   ib-volume:
     driver: local
 
+  # For storing backed up orders for FX
+  orders-data: 
+    driver: local
+  test-orders-data: 
+    driver: local
   knowledge_base:
     driver: local
     # On the host this lives at: /var/lib/docker/volumes/knowledge_base/_data
