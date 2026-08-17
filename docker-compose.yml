@@ -171,6 +171,7 @@ services:
       - RUST_LOG=info
       - TRADING_TYPE=paper
     ports:
+      - 4001:4002
       - 7462:7462
       - 8000:8000
     depends_on:
