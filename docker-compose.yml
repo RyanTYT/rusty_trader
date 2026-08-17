@@ -48,7 +48,7 @@ services:
       - ALPACA_API_SECRET=${ALPACA_API_SECRET}
       - TRADING_TYPE=paper
       - RUST_BACKTRACE=1
-      - ORDERS_FILE_PATH=orders_state.redb
+      - ORDERS_FILE_PATH=${ORDERS_FILE_PATH}
     ports:
       - 7462:7462
       - 4002:4002
@@ -170,6 +170,7 @@ services:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
       - TRADING_TYPE=paper
+      - ORDERS_FILE_PATH=${ORDERS_FILE_PATH}
     ports:
       - 4001:4002
       - 7462:7462
