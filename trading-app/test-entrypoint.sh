@@ -55,10 +55,10 @@ run_test_binary() {
     local extra_args="$2"
     echo ""
     echo "[test-entrypoint] ─────────────────────────────────────────"
-    echo "[test-entrypoint] Running: cargo test --test $name $extra_args"
+    echo "[test-entrypoint] Running: /app/bin/$name $extra_args"
     echo "[test-entrypoint] ─────────────────────────────────────────"
     # shellcheck disable=SC2086
-    if cargo test --test "$name" $extra_args -- --nocapture --include-ignored 2>&1; then
+    if /app/bin/"$name" $extra_args --nocapture --include-ignored 2>&1; then
         echo "[test-entrypoint] ✅ $name: PASSED"
     else
         echo "[test-entrypoint] ❌ $name: FAILED"
@@ -90,7 +90,7 @@ if [ -x /IBCLinux-3.21.2/scripts/ibcstart.sh ]; then
     echo "[test-entrypoint] ─────────────────────────────────────────"
     echo "[test-entrypoint] Running: cargo test --test smoke_tests -- --ignored --nocapture"
     echo "[test-entrypoint] ─────────────────────────────────────────"
-    if cargo test --test smoke_tests -- --ignored --nocapture --test-threads=1 2>&1; then
+    if /app/bin/smoke_tests --ignored --nocapture --test-threads=1 2>&1; then
         echo "[test-entrypoint] ✅ smoke_tests: PASSED"
     else
         echo "[test-entrypoint] ❌ smoke_tests: FAILED"

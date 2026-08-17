@@ -28,7 +28,6 @@ RUN apt-get update && apt-get install -y \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable
 
-# Add Cargo to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install sqlx-cli for running migrations (version pinned to match Cargo)
@@ -60,13 +59,32 @@ RUN cargo build --tests 2>&1 || true
 COPY src ./src
 COPY tests ./tests
 
-# Build the test binaries (no-run — we'll run them in the final stage)
-# Touch test files to force rebuild of the test code
+# Build the test binaries and capture cargo's JSON output so we can locate
+# the compiled executable paths (they live under target/debug/deps/<name>-<hash>)
 RUN touch tests/unit_tests.rs tests/integration_tests.rs tests/smoke_tests.rs && \
-    cargo build --tests 2>&1
+    cargo test --tests --no-run --message-format=json > /tmp/build.json 2> /tmp/build.stderr; \
+    cat /tmp/build.stderr
+
+# Extract just the three test executables (strip debug symbols to shrink further)
+# and drop them somewhere flat so the final stage doesn't need to know about
+# target/debug/deps hashes or the rest of the build tree.
+RUN mkdir -p /app/bin && \
+    for name in unit_tests integration_tests smoke_tests; do \
+        path=$(grep '"executable"' /tmp/build.json \
+                 | grep "\"target\":{\"[^}]*\"name\":\"${name}\"" \
+                 | tail -1 \
+                 | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p'); \
+        if [ -z "$path" ] || [ ! -f "$path" ]; then \
+            echo "ERROR: could not locate executable for test '${name}'" >&2; \
+            exit 1; \
+        fi; \
+        cp "$path" "/app/bin/${name}"; \
+    done && \
+    strip /app/bin/* && \
+    ls -lh /app/bin
 
 # =============================================================================
-# Stage 2: Final image with IBC + Xvfb + test binaries
+# Stage 2: Final image with IBC + Xvfb + test binaries only (no Rust toolchain)
 # =============================================================================
 FROM --platform=linux/amd64 debian:bullseye-slim AS final
 WORKDIR /app
@@ -100,25 +118,22 @@ COPY IBCMacos-3.20.0/config.ini* /IBCLinux-3.21.2/config.ini
 COPY IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
 RUN chmod -R u+x /IBCLinux-3.21.2/ 2>/dev/null || true
 
-# Copy the compiled test binaries + source (cargo test needs the source + cargo to run)
-COPY --from=build /app /app
+# Copy ONLY the compiled, stripped test binaries — no target/, no src, no
+# Cargo.toml, no Rust toolchain. These are standalone executables.
+COPY --from=build /app/bin /app/bin
 
-# Copy the Rust toolchain (cargo + rustc) from the build stage so we can run
-# `cargo test` without reinstalling rust (which would download ~1GB).
-# rust:slim installs to /usr/local/cargo + /usr/local/rustup
-# FIX: Update paths from /usr/local to /root
-COPY --from=build /root/.cargo /root/.cargo
-COPY --from=build /root/.rustup /root/.rustup
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Copy sqlx-cli binary from the build stage (for migrations)
+# sqlx-cli binary (standalone, ~6MB) is still needed to run migrations —
+# this does NOT require the rest of the toolchain.
 COPY --from=build /root/.cargo/bin/sqlx /usr/local/bin/sqlx
+
+# Migrations are applied at runtime via sqlx-cli
+COPY migrations ./migrations
 
 # Copy the test entrypoint script
 COPY test-entrypoint.sh /test-entrypoint.sh
 RUN chmod +x /test-entrypoint.sh
 
-ENV SQLX_OFFLINE=true
 ENV RUST_BACKTRACE=1
+ENV PATH="/app/bin:${PATH}"
 
 ENTRYPOINT ["sh", "/test-entrypoint.sh"]
