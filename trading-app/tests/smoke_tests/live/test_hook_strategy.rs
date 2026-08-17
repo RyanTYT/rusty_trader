@@ -31,7 +31,7 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::StrategyEnum;
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
@@ -101,7 +101,7 @@ fn build_scheduler_with_schedules(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_strategy_data_bundler_new() {
-    with_live_ibkr("DU111111", "ibc_bundler_new.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_bundler_new.log", |state| async move {
         let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
         let _bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
         println!("✅ StrategyDataBundler::new succeeded (no panic)");
@@ -115,7 +115,8 @@ async fn test_strategy_data_bundler_new() {
         );
         println!("✅ sort_consumers(empty) is a no-op");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 2. sort_consumers — stock + forex ordering ============================
@@ -123,7 +124,7 @@ async fn test_strategy_data_bundler_new() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sort_consumers_stock_and_forex_ordering() {
-    with_live_ibkr("DU111111", "ibc_bundler_sort.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_bundler_sort.log", |state| async move {
 
     let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
@@ -183,7 +184,8 @@ async fn test_sort_consumers_stock_and_forex_ordering() {
 
     println!("✅ sort_consumers: forex-first (GBP Bid < GBP Ask), then stocks alphabetical (AAPL < MSFT)");
     })
-.await;
+.await
+.expect("Failed to boot live IBKR");
 }
 
 // ============================ 3. sort_consumers — multiple stocks alphabetical ============================
@@ -191,8 +193,7 @@ async fn test_sort_consumers_stock_and_forex_ordering() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sort_consumers_multiple_stocks_alphabetical() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_bundler_sort_stocks.log",
         |state| async move {
             let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -240,7 +241,7 @@ async fn test_sort_consumers_multiple_stocks_alphabetical() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
-    with_live_ibkr("DU111111", "ibc_bundler_consumer.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_bundler_consumer.log", |state| async move {
         let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
         // Stock consumer → Normal
@@ -298,7 +299,8 @@ async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
         );
         println!("✅ IbkrBarConsumer(forex Ask): get_bar_type() = ForexAsk");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 5. IbkrBarConsumer::try_pop — receive a bar ============================
@@ -306,7 +308,7 @@ async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_ibkr_bar_consumer_try_pop() {
-    with_live_ibkr("DU111111", "ibc_bundler_pop.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_bundler_pop.log", |state| async move {
         let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
         let (rb, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
@@ -338,7 +340,8 @@ async fn test_ibkr_bar_consumer_try_pop() {
             None => println!("try_pop returned None (market may be closed) — acceptable"),
         }
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 6. hook_strategy — stock consumer (Noise) ============================
@@ -346,8 +349,7 @@ async fn test_ibkr_bar_consumer_try_pop() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_stock_noise() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_bundler_hook_stock.log",
         |state| async move {
             let contract = aapl_contract();
@@ -403,8 +405,7 @@ async fn test_hook_strategy_stock_noise() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_forex_manual() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_bundler_hook_forex.log",
         |state| async move {
             let contract = gbp_usd_contract();
@@ -470,7 +471,7 @@ async fn test_hook_strategy_forex_manual() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_idempotent() {
-    with_live_ibkr("DU111111", "ibc_bundler_hook_idem.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_bundler_hook_idem.log", |state| async move {
 
     let contract = aapl_contract();
     let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
@@ -537,7 +538,8 @@ async fn test_hook_strategy_idempotent() {
     drop(bundler);
     tokio::time::sleep(Duration::from_secs(2)).await;
     })
-.await;
+.await
+.expect("Failed to boot live IBKR");
 }
 
 // ============================ 9. hook_strategy — full lifecycle with multiple consumers ============================
@@ -545,8 +547,7 @@ async fn test_hook_strategy_idempotent() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_bundler_lifecycle.log",
         |state| async move {
             // Build 2 stock consumers (AAPL + MSFT) + 1 forex pair (GBP/USD Bid + Ask)

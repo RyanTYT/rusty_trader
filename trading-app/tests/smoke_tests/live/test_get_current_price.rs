@@ -9,12 +9,12 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_get_current_price_live() {
-    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_live.log", |state| async move {
         let contract = Contract {
             symbol: "AAPL".into(),
             security_type: SecurityType::Stock,
@@ -45,5 +45,6 @@ async fn test_get_current_price_live() {
             "AAPL price {price} out of expected range"
         );
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }

@@ -10,12 +10,12 @@ use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_validate_contract_live() {
-    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_live.log", |state| async move {
         let contract = Contract {
             symbol: "AAPL".into(),
             security_type: SecurityType::Stock,
@@ -51,5 +51,6 @@ async fn test_validate_contract_live() {
         let bad_result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
         assert!(bad_result.is_none(), "expected None for non-existent contract");
     })
-.await;
+.await
+.expect("Failed to boot live IBKR");
 }

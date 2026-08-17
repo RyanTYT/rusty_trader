@@ -11,12 +11,12 @@ use ibapi::prelude::SecurityType;
 use std::sync::{Arc, Weak};
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading account — PLACES A REAL ORDER"]
 async fn test_place_order_live() {
-    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_live.log", |state| async move {
         let contract = Contract {
             symbol: "AAPL".into(),
             security_type: SecurityType::Stock,
@@ -45,5 +45,6 @@ async fn test_place_order_live() {
             println!("place_order returned {order_perm_id} (client may be dead)");
         }
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }

@@ -9,12 +9,12 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_get_strategy_sgd_value_live() {
-    with_live_ibkr("DU111111", "ibc_live.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_live.log", |state| async move {
         let _contract = Contract {
             symbol: "AAPL".into(),
             security_type: SecurityType::Stock,
@@ -47,5 +47,6 @@ async fn test_get_strategy_sgd_value_live() {
             }
         }
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }

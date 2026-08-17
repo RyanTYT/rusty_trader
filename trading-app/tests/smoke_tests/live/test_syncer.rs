@@ -34,7 +34,7 @@ use trading_app::strategy::strategy::StrategyEnum;
 use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
 
-use crate::live::init::with_live_ibkr;
+use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -70,7 +70,7 @@ fn build_syncer(state: &crate::live::init::LiveIbkr, contract: Contract) -> Sync
     )];
     SyncerEngine::new(
         state.pool.clone(),
-        "DU111111".to_string(),
+        ibkr_account(),
         &strat_params,
         tokio::runtime::Handle::current(),
     )
@@ -81,7 +81,7 @@ fn build_syncer(state: &crate::live::init::LiveIbkr, contract: Contract) -> Sync
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_syncer_new_constructor() {
-    with_live_ibkr("DU111111", "ibc_syncer_new.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_new.log", |state| async move {
         let syncer = build_syncer(&state, aapl_contract());
         println!("✅ SyncerEngine::new succeeded (no panic)");
 
@@ -90,7 +90,8 @@ async fn test_syncer_new_constructor() {
         syncer.sync_open_orders(&state.client_1, &consolidator, Some("noise".to_string()));
         println!("✅ SyncerEngine internal state verified — sync_open_orders ran without error");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 2. sync_open_orders — no open orders (empty account) ============================
@@ -98,7 +99,7 @@ async fn test_syncer_new_constructor() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_open_orders_empty_account() {
-    with_live_ibkr("DU111111", "ibc_syncer_oo_empty.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_oo_empty.log", |state| async move {
         let syncer = build_syncer(&state, aapl_contract());
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -125,7 +126,8 @@ async fn test_sync_open_orders_empty_account() {
         assert!(our_orders.is_empty(), "no open orders should exist for AAPL after sync on empty account");
         println!("✅ sync_open_orders(empty): no spurious open orders created");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 3. sync_open_orders — with a real open order ============================
@@ -133,7 +135,7 @@ async fn test_sync_open_orders_empty_account() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_sync_open_orders_with_open_order() {
-    with_live_ibkr("DU111111", "ibc_syncer_oo_with.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_oo_with.log", |state| async move {
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
 
@@ -179,7 +181,8 @@ async fn test_sync_open_orders_with_open_order() {
             )).await;
         }
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 4. sync_executions — no executions (empty) ============================
@@ -187,8 +190,7 @@ async fn test_sync_open_orders_with_open_order() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_executions_empty() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_syncer_exec_empty.log",
         |state| async move {
             let syncer = build_syncer(&state, aapl_contract());
@@ -212,7 +214,7 @@ async fn test_sync_executions_empty() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_sync_executions_with_fill() {
-    with_live_ibkr("DU111111", "ibc_syncer_exec_fill.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_exec_fill.log", |state| async move {
         let syncer = build_syncer(&state, aapl_contract());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
@@ -256,7 +258,8 @@ async fn test_sync_executions_with_fill() {
             .execute(&state.pool).await;
         println!("✅ cleanup complete");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 6. sync_positions — reconcile positions ============================
@@ -264,7 +267,7 @@ async fn test_sync_executions_with_fill() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_positions_reconcile() {
-    with_live_ibkr("DU111111", "ibc_syncer_pos.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_pos.log", |state| async move {
         let syncer = build_syncer(&state, aapl_contract());
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -286,7 +289,8 @@ async fn test_sync_positions_reconcile() {
             positions.len()
         );
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 7. sync_open_orders — default strategy fallback ============================
@@ -294,7 +298,7 @@ async fn test_sync_positions_reconcile() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_open_orders_default_strategy_fallback() {
-    with_live_ibkr("DU111111", "ibc_syncer_default.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_default.log", |state| async move {
         // Build syncer with noise strategy
         let syncer = build_syncer(&state, aapl_contract());
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
@@ -310,7 +314,8 @@ async fn test_sync_open_orders_default_strategy_fallback() {
             .await
             .expect("get_orders_for_strat failed");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 8. sync_executions — default strategy None ============================
@@ -318,8 +323,7 @@ async fn test_sync_open_orders_default_strategy_fallback() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_executions_no_default_strategy() {
-    with_live_ibkr(
-        "DU111111",
+    with_live_ibkr(&ibkr_account(),
         "ibc_syncer_no_default.log",
         |state| async move {
             let syncer = build_syncer(&state, aapl_contract());
@@ -344,7 +348,7 @@ async fn test_sync_executions_no_default_strategy() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_syncer_full_lifecycle() {
-    with_live_ibkr("DU111111", "ibc_syncer_lifecycle.log", |state| async move {
+    with_live_ibkr(&ibkr_account(), "ibc_syncer_lifecycle.log", |state| async move {
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
@@ -393,5 +397,6 @@ async fn test_syncer_full_lifecycle() {
             .execute(&state.pool).await;
         println!("✅ full sync lifecycle cleanup complete");
     })
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
