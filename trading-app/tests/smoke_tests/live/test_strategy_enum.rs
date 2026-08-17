@@ -235,18 +235,20 @@ async fn test_strategy_warm_up_data_noise() {
                 tokio::runtime::Handle::current(),
             ));
 
-            let result_handle = std::thread::spawn(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                noise.warm_up_data(&consolidator)
+            std::thread::scope(|s| {
+                let result_handle = s.spawn(|| {
+                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                    noise.warm_up_data(&consolidator)
+                });
+                let result = result_handle
+                    .join()
+                    .expect("Expected manual warm_up_data thread not to panic");
+                assert!(
+                    result.is_ok(),
+                    "Noise warm_up_data should succeed, got: {:?}",
+                    result.err()
+                );
             });
-            let result = result_handle
-                .join()
-                .expect("Expected noise warm_up_data thread not to panic");
-            assert!(
-                result.is_ok(),
-                "Noise warm_up_data should succeed, got: {:?}",
-                result.err()
-            );
             println!("✅ warm_up_data(Noise): completed without error");
 
             // Verify historical data was actually fetched for QQQ
@@ -286,14 +288,16 @@ async fn test_strategy_warm_up_data_manual() {
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
             // Manual.warm_up_data is a no-op (returns Ok(()))
-            let result_handle = std::thread::spawn(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                manual.warm_up_data(&consolidator)
+            std::thread::scope(|s| {
+                let result_handle = s.spawn(|| {
+                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                    manual.warm_up_data(&consolidator)
+                });
+                let result = result_handle
+                    .join()
+                    .expect("Expected manual warm_up_data thread not to panic");
+                assert!(result.is_ok(), "Manual warm_up_data should succeed");
             });
-            let result = result_handle
-                .join()
-                .expect("Expected manual warm_up_data thread not to panic");
-            assert!(result.is_ok(), "Manual warm_up_data should succeed");
             println!("✅ warm_up_data(Manual): no-op completed without error");
         },
     )
@@ -314,14 +318,16 @@ async fn test_strategy_warm_up_data_unknown() {
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
             // Unknown.warm_up_data is a no-op (returns Ok(()))
-            let result_handle = std::thread::spawn(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                unknown.warm_up_data(&consolidator)
+            std::thread::scope(|s| {
+                let result_handle = s.spawn(|| {
+                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                    unknown.warm_up_data(&consolidator)
+                });
+                let result = result_handle
+                    .join()
+                    .expect("Expected unknown warm_up_data thread not to panic");
+                assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             });
-            let result = result_handle
-                .join()
-                .expect("Expected unknown warm_up_data thread not to panic");
-            assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             println!("✅ warm_up_data(Unknown): no-op completed without error");
         },
     )
@@ -474,13 +480,15 @@ async fn test_strategy_on_bar_update_noise() {
             ));
 
             // Warm up data first so on_bar_update has the historical data it needs
-            let result_handle = std::thread::spawn(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                noise.warm_up_data(&consolidator)
+            std::thread::scope(|s| {
+                let result_handle = s.spawn(|| {
+                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                    noise.warm_up_data(&consolidator)
+                });
+                let result = result_handle
+                    .join()
+                    .expect("Expected noise warm_up_data thread not to panic");
             });
-            let result = result_handle
-                .join()
-                .expect("Expected noise warm_up_data thread not to panic");
 
             let contract = Contract {
                 symbol: "QQQ".into(),
