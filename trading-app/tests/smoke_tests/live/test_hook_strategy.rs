@@ -68,10 +68,10 @@ fn gbp_usd_contract() -> Contract {
     }
 }
 
-fn build_scheduler_and_consolidator(
+fn build_consolidator(
     state: &crate::live::init::LiveIbkr,
-) -> (Arc<IbkrContractScheduler>, Arc<Consolidator>) {
-    let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+    scheduler: Arc<IbkrContractScheduler>,
+) -> Arc<Consolidator> {
     let market_data_handler = MarketDataHandler::new(state.pool.clone());
     let consolidator = Arc::new(Consolidator::new(
         tokio::runtime::Handle::current(),
@@ -80,7 +80,7 @@ fn build_scheduler_and_consolidator(
         market_data_handler,
         scheduler.clone(),
     ));
-    (scheduler, consolidator)
+    consolidator
 }
 
 /// Build a scheduler with schedules pre-added for the given contracts.
@@ -184,8 +184,8 @@ async fn test_sort_consumers_stock_and_forex_ordering() {
 
     println!("✅ sort_consumers: forex-first (GBP Bid < GBP Ask), then stocks alphabetical (AAPL < MSFT)");
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 3. sort_consumers — multiple stocks alphabetical ============================
@@ -361,7 +361,7 @@ async fn test_hook_strategy_stock_noise() {
         |state| async move {
             let contract = aapl_contract();
             let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
-            let consolidator = build_scheduler_and_consolidator(&state).1;
+            let consolidator = build_consolidator(&state, scheduler.clone());
 
             let (rb, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
                 Arc::downgrade(&state.client_1),
@@ -419,7 +419,7 @@ async fn test_hook_strategy_forex_manual() {
         |state| async move {
             let contract = gbp_usd_contract();
             let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
-            let consolidator = build_scheduler_and_consolidator(&state).1;
+            let consolidator = build_consolidator(&state, scheduler.clone());
 
             // Forex needs Bid + Ask pair
             let (rb_bid, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
@@ -485,7 +485,7 @@ async fn test_hook_strategy_idempotent() {
 
     let contract = aapl_contract();
     let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
-    let consolidator = build_scheduler_and_consolidator(&state).1;
+    let consolidator = build_consolidator(&state, scheduler.clone());
 
     let (rb, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
         Arc::downgrade(&state.client_1),
@@ -564,7 +564,7 @@ async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
             // Build 2 stock consumers (AAPL + MSFT) + 1 forex pair (GBP/USD Bid + Ask)
             let contracts = vec![aapl_contract(), msft_contract(), gbp_usd_contract()];
             let scheduler = build_scheduler_with_schedules(&state, &contracts);
-            let consolidator = build_scheduler_and_consolidator(&state).1;
+            let consolidator = build_consolidator(&state, scheduler.clone());
 
             let (rb_aapl, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
                 Arc::downgrade(&state.client_1),
