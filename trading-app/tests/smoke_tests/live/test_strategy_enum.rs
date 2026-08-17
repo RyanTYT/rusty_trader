@@ -344,10 +344,20 @@ async fn test_strategy_on_bar_update_manual() {
                 },
             );
 
-            let outcome =
-                std::thread::scope(|_| manual.on_bar_update(&contract, &bar, &consolidator));
-            assert!(outcome.is_ok(), "Manual on_bar_update should succeed");
-            match outcome.unwrap() {
+            let outcome = std::thread::scope(|s| {
+                let handle = s.spawn(|| manual.on_bar_update(&contract, &bar, &consolidator));
+                handle.join()
+            });
+            assert!(
+                outcome.is_ok(),
+                "Manual on_bar_update scoped handle should succeed"
+            );
+            let outcome_unwrap = outcome.unwrap();
+            assert!(
+                outcome_unwrap.is_ok(),
+                "Manual on_bar_update should succeed"
+            );
+            match outcome_unwrap.unwrap() {
                 BarUpdateOutcome::PendingDbQuery(asset_types) => {
                     assert!(
                         asset_types.contains(&AssetType::Stock),
@@ -401,10 +411,20 @@ async fn test_strategy_on_bar_update_unknown() {
                 },
             );
 
-            let outcome =
-                std::thread::scope(|_| unknown.on_bar_update(&contract, &bar, &consolidator));
-            assert!(outcome.is_ok(), "Unknown on_bar_update should succeed");
-            match outcome.unwrap() {
+            let outcome = std::thread::scope(|s| {
+                let handle = s.spawn(|| unknown.on_bar_update(&contract, &bar, &consolidator));
+                handle.join()
+            });
+            assert!(
+                outcome.is_ok(),
+                "Unknown on_bar_update scoped handle should succeed"
+            );
+            let outcome_unwrap = outcome.unwrap();
+            assert!(
+                outcome_unwrap.is_ok(),
+                "Unknown on_bar_update should succeed"
+            );
+            match outcome_unwrap.unwrap() {
                 BarUpdateOutcome::PendingDbQuery(asset_types) => {
                     assert!(asset_types.contains(&AssetType::Stock));
                     assert!(asset_types.contains(&AssetType::Option));
@@ -482,15 +502,17 @@ async fn test_strategy_on_bar_update_noise() {
             // on_bar_update for Noise queries DB (avg_move, daily_open, daily_vol, vwap) + returns a BarUpdateOutcome
             // It may return Ok(PendingDbQuery), Ok(NoAction), or Ok(EmitOrders)
             // depending on market conditions. We just verify it doesn't error.
-            let outcome =
-                std::thread::scope(|_| noise.on_bar_update(&contract, &bar, &consolidator));
+            let outcome = std::thread::scope(|s| {
+                let handle = s.spawn(|| noise.on_bar_update(&contract, &bar, &consolidator));
+                handle.join()
+            });
             assert!(
                 outcome.is_ok(),
-                "Noise on_bar_update should succeed, got: {:?}",
-                outcome.err()
+                "Noise on_bar_update scope handle should succeed"
             );
-            let outcome = outcome.unwrap();
-            match &outcome {
+            let outcome_unwrap = outcome.unwrap();
+            assert!(outcome_unwrap.is_ok(), "Noise on_bar_update should succeed");
+            match outcome_unwrap.unwrap() {
                 BarUpdateOutcome::NoAction => {
                     println!("✅ on_bar_update(Noise): NoAction (market conditions not met)")
                 }
