@@ -1,7 +1,8 @@
 use std::future::Future;
 
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
     process::{Child, Command},
     sync::{mpsc, oneshot},
     time::{Duration, Instant, timeout},
@@ -10,7 +11,7 @@ use tokio::{
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const GATEWAY_PORT: &str = "localhost:4002";
 const COMMAND_SERVER_ADDR: &str = "127.0.0.1:7462";
@@ -301,6 +302,40 @@ impl Drop for IBGateway {
     }
 }
 
+/// Performs just enough of the TWS/IB Gateway handshake (API\0 + version
+/// negotiation) that Gateway resolves the connection cleanly on close,
+/// instead of leaving a half-open handshake pending. Returns true if the
+/// full negotiation round-trip completed within `probe_timeout`.
+async fn probe_gateway_handshake(addr: &str, probe_timeout: Duration) -> bool {
+    let fut = async {
+        let mut stream = TcpStream::connect(addr).await.ok()?;
+
+        // Step 1: send "API\0" + 4-byte BE length + version-range payload.
+        let payload = b"v100..176\0";
+        let mut msg = Vec::with_capacity(4 + b"API\0".len() + 4 + payload.len());
+        msg.extend_from_slice(b"API\0");
+        msg.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        msg.extend_from_slice(payload);
+        stream.write_all(&msg).await.ok()?;
+
+        // Step 2: read Gateway's 4-byte length prefix, then that many bytes
+        // (server_version\0connection_time\0). We don't need to parse it —
+        // just fully drain it so Gateway considers the negotiation done.
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).await.ok()?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+
+        let mut resp = vec![0u8; resp_len];
+        stream.read_exact(&mut resp).await.ok()?;
+
+        // stream drops here -> clean, orderly close after a resolved
+        // handshake, not an abandoned half-open connection.
+        Some(())
+    };
+
+    matches!(timeout(probe_timeout, fut).await, Ok(Some(())))
+}
+
 /// The only supported way to use an `IBGateway`. Starts the gateway, hands
 /// a reference to `f`, then unconditionally attempts a graceful shutdown
 /// once `f` completes - success or not. There is no code path through this
@@ -382,43 +417,42 @@ async fn wait_for_ports(
 ) -> Result<(), String> {
     let mut settled = vec![false; ports.len()];
     let start = Instant::now();
-    return Ok(());
 
-    // loop {
-    //     let mut all_settled = true;
-    //     for (idx, port) in ports.iter().enumerate() {
-    //         if settled[idx] {
-    //             continue;
-    //         }
-    //
-    //         let is_connected = tokio::net::TcpStream::connect(port).await.is_ok();
-    //         if is_connected == can_be_connected {
-    //             tracing::info!(
-    //                 "Port {port} reached expected state (connectable={can_be_connected})"
-    //             );
-    //             settled[idx] = true;
-    //         } else {
-    //             all_settled = false;
-    //         }
-    //     }
-    //
-    //     if all_settled {
-    //         return Ok(());
-    //     }
-    //
-    //     if Instant::now().duration_since(start) >= timeout_dur {
-    //         return Err(format!(
-    //             "wait_for_ports timed out after {:?}: ports {:?} unsettled",
-    //             timeout_dur,
-    //             ports
-    //                 .iter()
-    //                 .enumerate()
-    //                 .filter(|(i, _)| !settled[*i])
-    //                 .map(|(_, p)| *p)
-    //                 .collect::<Vec<_>>()
-    //         ));
-    //     }
-    //
-    //     tokio::time::sleep(PORT_POLL_INTERVAL).await;
-    // }
+    loop {
+        let mut all_settled = true;
+        for (idx, port) in ports.iter().enumerate() {
+            if settled[idx] {
+                continue;
+            }
+
+            let is_connected = probe_gateway_handshake(port, PORT_WAIT_TIMEOUT).await;
+            if is_connected == can_be_connected {
+                tracing::info!(
+                    "Port {port} reached expected state (connectable={can_be_connected})"
+                );
+                settled[idx] = true;
+            } else {
+                all_settled = false;
+            }
+        }
+
+        if all_settled {
+            return Ok(());
+        }
+
+        if Instant::now().duration_since(start) >= timeout_dur {
+            return Err(format!(
+                "wait_for_ports timed out after {:?}: ports {:?} unsettled",
+                timeout_dur,
+                ports
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !settled[*i])
+                    .map(|(_, p)| *p)
+                    .collect::<Vec<_>>()
+            ));
+        }
+
+        tokio::time::sleep(PORT_POLL_INTERVAL).await;
+    }
 }
