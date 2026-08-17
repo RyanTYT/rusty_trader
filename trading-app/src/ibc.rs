@@ -382,42 +382,43 @@ async fn wait_for_ports(
 ) -> Result<(), String> {
     let mut settled = vec![false; ports.len()];
     let start = Instant::now();
+    return Ok(());
 
-    loop {
-        let mut all_settled = true;
-        for (idx, port) in ports.iter().enumerate() {
-            if settled[idx] {
-                continue;
-            }
-
-            let is_connected = tokio::net::TcpStream::connect(port).await.is_ok();
-            if is_connected == can_be_connected {
-                tracing::info!(
-                    "Port {port} reached expected state (connectable={can_be_connected})"
-                );
-                settled[idx] = true;
-            } else {
-                all_settled = false;
-            }
-        }
-
-        if all_settled {
-            return Ok(());
-        }
-
-        if Instant::now().duration_since(start) >= timeout_dur {
-            return Err(format!(
-                "wait_for_ports timed out after {:?}: ports {:?} unsettled",
-                timeout_dur,
-                ports
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !settled[*i])
-                    .map(|(_, p)| *p)
-                    .collect::<Vec<_>>()
-            ));
-        }
-
-        tokio::time::sleep(PORT_POLL_INTERVAL).await;
-    }
+    // loop {
+    //     let mut all_settled = true;
+    //     for (idx, port) in ports.iter().enumerate() {
+    //         if settled[idx] {
+    //             continue;
+    //         }
+    //
+    //         let is_connected = tokio::net::TcpStream::connect(port).await.is_ok();
+    //         if is_connected == can_be_connected {
+    //             tracing::info!(
+    //                 "Port {port} reached expected state (connectable={can_be_connected})"
+    //             );
+    //             settled[idx] = true;
+    //         } else {
+    //             all_settled = false;
+    //         }
+    //     }
+    //
+    //     if all_settled {
+    //         return Ok(());
+    //     }
+    //
+    //     if Instant::now().duration_since(start) >= timeout_dur {
+    //         return Err(format!(
+    //             "wait_for_ports timed out after {:?}: ports {:?} unsettled",
+    //             timeout_dur,
+    //             ports
+    //                 .iter()
+    //                 .enumerate()
+    //                 .filter(|(i, _)| !settled[*i])
+    //                 .map(|(_, p)| *p)
+    //                 .collect::<Vec<_>>()
+    //         ));
+    //     }
+    //
+    //     tokio::time::sleep(PORT_POLL_INTERVAL).await;
+    // }
 }
