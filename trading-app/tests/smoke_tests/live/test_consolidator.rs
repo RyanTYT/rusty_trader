@@ -268,7 +268,7 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
                     let crud = HistoricalDataCRUD::forex(state.pool.clone());
                     let pk = HistoricalDataPrimaryKeysWoTime::Forex(
                         trading_app::database::models::HistoricalForexDataPrimaryKeysWoTime {
-                            pair: "EUR/USD".to_string(),
+                            pair: "FX:EUR/USD".to_string(),
                         },
                     );
                     let bars = crud

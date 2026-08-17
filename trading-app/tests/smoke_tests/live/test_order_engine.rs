@@ -230,7 +230,7 @@ async fn test_place_orders_batch_multiple() {
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
-async fn test_place_order_dead_client_returns_zero() {
+async fn test_place_order_dead_client_panics() {
     with_live_ibkr(
         &ibkr_account(),
         "ibc_oe_dead_client.log",
@@ -256,19 +256,26 @@ async fn test_place_order_dead_client_returns_zero() {
             let order = market_order(Action::Buy, 1.0);
             let order_ibkr = OrderIBKR::new(contract, order, -1);
 
-            let order_perm_id = OrderEngine::place_order(
-                tokio::runtime::Handle::current(),
-                state.pool.clone(),
-                &dead_weak,
-                order_ibkr,
-            );
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                OrderEngine::place_order(
+                    tokio::runtime::Handle::current(),
+                    state.pool.clone(),
+                    &dead_weak,
+                    order_ibkr,
+                );
+            }));
 
+            assert!(
+                res.is_err(),
+                "place_order with dead client should panic, but returned: {:?}",
+                res
+            );
             // With a dead client, place_order logs an error and returns the order_id from
             // client.next_order_id() (which panics on dead client) — actually this test
             // verifies that the function handles a dead Weak gracefully.
-            println!(
-                "place_order with dead client returned perm_id={order_perm_id} (may log error)"
-            );
+            // println!(
+            //     "place_order with dead client returned perm_id={order_perm_id} (may log error)"
+            // );
             // The function should not panic — that's the main assertion
         },
     )

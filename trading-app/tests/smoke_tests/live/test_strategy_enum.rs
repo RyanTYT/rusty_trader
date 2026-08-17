@@ -20,6 +20,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
+use chrono_tz::US::Eastern;
 use ibapi::prelude::Contract;
 use trading_app::database::models::AssetType;
 use trading_app::database::models_crud::historical_data::historical_data::{
@@ -35,6 +37,7 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor};
 use trading_app::strategy::unknown::Unknown;
+use trading_app::test_internals::is_fx_trading_datetime;
 
 use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
@@ -232,8 +235,13 @@ async fn test_strategy_warm_up_data_noise() {
                 tokio::runtime::Handle::current(),
             ));
 
-            // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-            let result = noise.warm_up_data(&consolidator);
+            let result_handle = std::thread::spawn(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                noise.warm_up_data(&consolidator)
+            });
+            let result = result_handle
+                .join()
+                .expect("Expected noise warm_up_data thread not to panic");
             assert!(
                 result.is_ok(),
                 "Noise warm_up_data should succeed, got: {:?}",
@@ -278,7 +286,13 @@ async fn test_strategy_warm_up_data_manual() {
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
             // Manual.warm_up_data is a no-op (returns Ok(()))
-            let result = manual.warm_up_data(&consolidator);
+            let result_handle = std::thread::spawn(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                manual.warm_up_data(&consolidator)
+            });
+            let result = result_handle
+                .join()
+                .expect("Expected manual warm_up_data thread not to panic");
             assert!(result.is_ok(), "Manual warm_up_data should succeed");
             println!("✅ warm_up_data(Manual): no-op completed without error");
         },
@@ -300,7 +314,13 @@ async fn test_strategy_warm_up_data_unknown() {
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
             // Unknown.warm_up_data is a no-op (returns Ok(()))
-            let result = unknown.warm_up_data(&consolidator);
+            let result_handle = std::thread::spawn(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                unknown.warm_up_data(&consolidator)
+            });
+            let result = result_handle
+                .join()
+                .expect("Expected unknown warm_up_data thread not to panic");
             assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             println!("✅ warm_up_data(Unknown): no-op completed without error");
         },
@@ -454,7 +474,13 @@ async fn test_strategy_on_bar_update_noise() {
             ));
 
             // Warm up data first so on_bar_update has the historical data it needs
-            let _ = noise.warm_up_data(&consolidator);
+            let result_handle = std::thread::spawn(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                noise.warm_up_data(&consolidator)
+            });
+            let result = result_handle
+                .join()
+                .expect("Expected noise warm_up_data thread not to panic");
 
             let contract = Contract {
                 symbol: "QQQ".into(),
