@@ -415,7 +415,7 @@ impl OrderEngine {
                             orders.extend(fx_orders);
                         }
 
-                        if let Err(e) = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders) {
+                        if let Err(e) = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders, order_store) {
                             tracing::error!("Failed to run on_new_qty_diff_for_strat in handle_bar_update_outcome: {e:?}");
                         };
                     });
