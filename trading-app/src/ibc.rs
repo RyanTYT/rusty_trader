@@ -11,7 +11,7 @@ use tokio::{
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 const PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
