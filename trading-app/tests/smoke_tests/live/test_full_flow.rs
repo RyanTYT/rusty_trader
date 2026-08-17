@@ -41,7 +41,7 @@ use trading_app::test_internals::is_any_open;
 use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 fn fixed_contracts() -> Vec<Contract> {
     vec![

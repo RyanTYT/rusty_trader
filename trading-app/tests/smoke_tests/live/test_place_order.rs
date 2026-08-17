@@ -11,7 +11,7 @@ use ibapi::prelude::SecurityType;
 use std::sync::{Arc, Weak};
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading account — PLACES A REAL ORDER"]

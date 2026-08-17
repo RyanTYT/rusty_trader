@@ -10,7 +10,7 @@ use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
@@ -25,7 +25,8 @@ async fn test_validate_contract_live() {
             ..Default::default()
         };
 
-        let contract_scheduler = std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+        let contract_scheduler =
+            std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
         let market_data_handler = MarketDataHandler::new(state.pool.clone());
         let consolidator = Consolidator::new(
             tokio::runtime::Handle::current(),
@@ -36,7 +37,10 @@ async fn test_validate_contract_live() {
         );
 
         let result = consolidator.validate_contract(contract.clone(), Duration::from_secs(30));
-        assert!(result.is_some(), "validate_contract should return Some for AAPL");
+        assert!(
+            result.is_some(),
+            "validate_contract should return Some for AAPL"
+        );
 
         let validated = result.unwrap();
         assert!(validated.symbol.to_string() == "AAPL");
@@ -49,8 +53,11 @@ async fn test_validate_contract_live() {
             ..Default::default()
         };
         let bad_result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
-        assert!(bad_result.is_none(), "expected None for non-existent contract");
+        assert!(
+            bad_result.is_none(),
+            "expected None for non-existent contract"
+        );
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }

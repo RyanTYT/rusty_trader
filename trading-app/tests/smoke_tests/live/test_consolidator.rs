@@ -25,7 +25,7 @@ use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
     let market_data_handler = MarketDataHandler::new(pool.clone());
@@ -103,44 +103,49 @@ async fn test_consolidator_new_constructor() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_valid() {
-    with_live_ibkr(&ibkr_account(), "ibc_cons_vc_valid.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_cons_vc_valid.log",
+        |state| async move {
+            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
-        // Test valid stock contract
-        let result = consolidator.validate_contract(aapl_contract(), Duration::from_secs(30));
-        assert!(
-            result.is_some(),
-            "validate_contract should return Some for AAPL"
-        );
-        let validated = result.unwrap();
-        assert_eq!(validated.symbol.to_string(), "AAPL");
-        assert!(validated.contract_id > 0, "contract_id should be populated");
-        println!(
-            "✅ validate_contract(AAPL): contract_id={}",
-            validated.contract_id
-        );
+            // Test valid stock contract
+            let result = consolidator.validate_contract(aapl_contract(), Duration::from_secs(30));
+            assert!(
+                result.is_some(),
+                "validate_contract should return Some for AAPL"
+            );
+            let validated = result.unwrap();
+            assert_eq!(validated.symbol.to_string(), "AAPL");
+            assert!(validated.contract_id > 0, "contract_id should be populated");
+            println!(
+                "✅ validate_contract(AAPL): contract_id={}",
+                validated.contract_id
+            );
 
-        // Test valid ETF contract
-        let result = consolidator.validate_contract(qqq_contract(), Duration::from_secs(30));
-        assert!(
-            result.is_some(),
-            "validate_contract should return Some for QQQ"
-        );
-        let validated = result.unwrap();
-        assert_eq!(validated.symbol.to_string(), "QQQ");
-        println!(
-            "✅ validate_contract(QQQ): contract_id={}",
-            validated.contract_id
-        );
+            // Test valid ETF contract
+            let result = consolidator.validate_contract(qqq_contract(), Duration::from_secs(30));
+            assert!(
+                result.is_some(),
+                "validate_contract should return Some for QQQ"
+            );
+            let validated = result.unwrap();
+            assert_eq!(validated.symbol.to_string(), "QQQ");
+            println!(
+                "✅ validate_contract(QQQ): contract_id={}",
+                validated.contract_id
+            );
 
-        // Test valid forex contract
-        let result = consolidator.validate_contract(eur_usd_contract(), Duration::from_secs(30));
-        assert!(
-            result.is_some(),
-            "validate_contract should return Some for EUR/USD"
-        );
-        println!("✅ validate_contract(EUR/USD): verified");
-    })
+            // Test valid forex contract
+            let result =
+                consolidator.validate_contract(eur_usd_contract(), Duration::from_secs(30));
+            assert!(
+                result.is_some(),
+                "validate_contract should return Some for EUR/USD"
+            );
+            println!("✅ validate_contract(EUR/USD): verified");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -150,38 +155,42 @@ async fn test_consolidator_validate_contract_valid() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_invalid() {
-    with_live_ibkr(&ibkr_account(), "ibc_cons_vc_invalid.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_cons_vc_invalid.log",
+        |state| async move {
+            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
-        // Test non-existent stock
-        let bad_contract = Contract {
-            symbol: "NONEXISTENT123XYZ".into(),
-            security_type: SecurityType::Stock,
-            currency: "USD".into(),
-            ..Default::default()
-        };
-        let result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
-        assert!(
-            result.is_none(),
-            "validate_contract should return None for non-existent contract"
-        );
-        println!("✅ validate_contract(NONEXISTENT): correctly returned None");
+            // Test non-existent stock
+            let bad_contract = Contract {
+                symbol: "NONEXISTENT123XYZ".into(),
+                security_type: SecurityType::Stock,
+                currency: "USD".into(),
+                ..Default::default()
+            };
+            let result = consolidator.validate_contract(bad_contract, Duration::from_secs(30));
+            assert!(
+                result.is_none(),
+                "validate_contract should return None for non-existent contract"
+            );
+            println!("✅ validate_contract(NONEXISTENT): correctly returned None");
 
-        // Test invalid forex pair
-        let bad_forex = Contract {
-            symbol: "FAKECUR".into(),
-            security_type: SecurityType::ForexPair,
-            currency: "USD".into(),
-            exchange: "IDEALPRO".into(),
-            ..Default::default()
-        };
-        let result = consolidator.validate_contract(bad_forex, Duration::from_secs(30));
-        assert!(
-            result.is_none(),
-            "validate_contract should return None for invalid forex pair"
-        );
-        println!("✅ validate_contract(FAKECUR/USD): correctly returned None");
-    })
+            // Test invalid forex pair
+            let bad_forex = Contract {
+                symbol: "FAKECUR".into(),
+                security_type: SecurityType::ForexPair,
+                currency: "USD".into(),
+                exchange: "IDEALPRO".into(),
+                ..Default::default()
+            };
+            let result = consolidator.validate_contract(bad_forex, Duration::from_secs(30));
+            assert!(
+                result.is_none(),
+                "validate_contract should return None for invalid forex pair"
+            );
+            println!("✅ validate_contract(FAKECUR/USD): correctly returned None");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -235,7 +244,8 @@ async fn test_consolidator_update_at_least_n_days_data_stock() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_update_at_least_n_days_data_forex() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_cons_update_forex.log",
         |state| async move {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
@@ -277,7 +287,8 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
             }
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 6. get_current_price — stock (AAPL) ============================
@@ -393,40 +404,44 @@ async fn test_consolidator_get_current_price_generic_ticks() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_strategy_sgd_value() {
-    with_live_ibkr(&ibkr_account(), "ibc_cons_sgd_value.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_cons_sgd_value.log",
+        |state| async move {
+            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
-        // get_strategy_sgd_value queries current positions + computes SGD value
-        let result = consolidator.get_strategy_sgd_value("noise");
-        match result {
-            Ok(value) => {
-                assert!(value.is_finite(), "SGD value should be finite, got {value}");
-                assert!(
-                    value >= 0.0,
-                    "SGD value should be non-negative, got {value}"
-                );
-                println!("✅ get_strategy_sgd_value('noise'): {value}");
+            // get_strategy_sgd_value queries current positions + computes SGD value
+            let result = consolidator.get_strategy_sgd_value("noise");
+            match result {
+                Ok(value) => {
+                    assert!(value.is_finite(), "SGD value should be finite, got {value}");
+                    assert!(
+                        value >= 0.0,
+                        "SGD value should be non-negative, got {value}"
+                    );
+                    println!("✅ get_strategy_sgd_value('noise'): {value}");
+                }
+                Err(e) => {
+                    println!("get_strategy_sgd_value returned Err (expected if no positions): {e}");
+                }
             }
-            Err(e) => {
-                println!("get_strategy_sgd_value returned Err (expected if no positions): {e}");
-            }
-        }
 
-        // Test with non-existent strategy — should return 0 or Err gracefully
-        let result = consolidator.get_strategy_sgd_value("nonexistent_strategy");
-        match result {
-            Ok(value) => {
-                assert_eq!(
-                    value, 0.0,
-                    "non-existent strategy should have 0 SGD value, got {value}"
-                );
-                println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
+            // Test with non-existent strategy — should return 0 or Err gracefully
+            let result = consolidator.get_strategy_sgd_value("nonexistent_strategy");
+            match result {
+                Ok(value) => {
+                    assert_eq!(
+                        value, 0.0,
+                        "non-existent strategy should have 0 SGD value, got {value}"
+                    );
+                    println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
+                }
+                Err(e) => {
+                    println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
+                }
             }
-            Err(e) => {
-                println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
-            }
-        }
-    })
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -436,47 +451,51 @@ async fn test_consolidator_get_strategy_sgd_value() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_validate_contract_multiple_types() {
-    with_live_ibkr(&ibkr_account(), "ibc_cons_vc_types.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_cons_vc_types.log",
+        |state| async move {
+            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
-        // Test stock contract
-        let stock_contract = Contract {
-            symbol: "MSFT".into(),
-            security_type: SecurityType::Stock,
-            currency: "USD".into(),
-            exchange: "SMART".into(),
-            primary_exchange: "NASDAQ".into(),
-            ..Default::default()
-        };
-        let result = consolidator.validate_contract(stock_contract, Duration::from_secs(30));
-        assert!(result.is_some(), "MSFT should validate");
-        println!("✅ validate_contract(MSFT stock): verified");
+            // Test stock contract
+            let stock_contract = Contract {
+                symbol: "MSFT".into(),
+                security_type: SecurityType::Stock,
+                currency: "USD".into(),
+                exchange: "SMART".into(),
+                primary_exchange: "NASDAQ".into(),
+                ..Default::default()
+            };
+            let result = consolidator.validate_contract(stock_contract, Duration::from_secs(30));
+            assert!(result.is_some(), "MSFT should validate");
+            println!("✅ validate_contract(MSFT stock): verified");
 
-        // Test ETF contract
-        let etf_contract = Contract {
-            symbol: "SPY".into(),
-            security_type: SecurityType::Stock,
-            currency: "USD".into(),
-            exchange: "SMART".into(),
-            primary_exchange: "ARCA".into(),
-            ..Default::default()
-        };
-        let result = consolidator.validate_contract(etf_contract, Duration::from_secs(30));
-        assert!(result.is_some(), "SPY should validate");
-        println!("✅ validate_contract(SPY ETF): verified");
+            // Test ETF contract
+            let etf_contract = Contract {
+                symbol: "SPY".into(),
+                security_type: SecurityType::Stock,
+                currency: "USD".into(),
+                exchange: "SMART".into(),
+                primary_exchange: "ARCA".into(),
+                ..Default::default()
+            };
+            let result = consolidator.validate_contract(etf_contract, Duration::from_secs(30));
+            assert!(result.is_some(), "SPY should validate");
+            println!("✅ validate_contract(SPY ETF): verified");
 
-        // Test forex contract
-        let forex_contract = Contract {
-            symbol: "GBP".into(),
-            security_type: SecurityType::ForexPair,
-            currency: "USD".into(),
-            exchange: "IDEALPRO".into(),
-            ..Default::default()
-        };
-        let result = consolidator.validate_contract(forex_contract, Duration::from_secs(30));
-        assert!(result.is_some(), "GBP/USD should validate");
-        println!("✅ validate_contract(GBP/USD forex): verified");
-    })
+            // Test forex contract
+            let forex_contract = Contract {
+                symbol: "GBP".into(),
+                security_type: SecurityType::ForexPair,
+                currency: "USD".into(),
+                exchange: "IDEALPRO".into(),
+                ..Default::default()
+            };
+            let result = consolidator.validate_contract(forex_contract, Duration::from_secs(30));
+            assert!(result.is_some(), "GBP/USD should validate");
+            println!("✅ validate_contract(GBP/USD forex): verified");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }

@@ -9,7 +9,7 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]

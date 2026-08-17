@@ -48,7 +48,7 @@ use trading_app::execution::order_update_stream::event_handlers::order_status;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -110,54 +110,58 @@ fn place_market_order(
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_order_status_submitted() {
-    with_live_ibkr(&ibkr_account(), "ibc_eh_submitted.log", |state| async move {
-        let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-        let _controller = start_order_update_stream(&state, &order_store);
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_eh_submitted.log",
+        |state| async move {
+            let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
+            let _controller = start_order_update_stream(&state, &order_store);
 
-        // Place a limit order at unrealistic price so it stays open (Submitted status)
-        let contract = aapl_contract();
-        let order = limit_order(Action::Buy, 1.0, 1.0);
-        let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let perm_id = OrderEngine::place_order(
-            tokio::runtime::Handle::current(),
-            state.pool.clone(),
-            &weak_client,
-            order_ibkr,
-        );
-        assert!(perm_id > 0, "order should be placed");
+            // Place a limit order at unrealistic price so it stays open (Submitted status)
+            let contract = aapl_contract();
+            let order = limit_order(Action::Buy, 1.0, 1.0);
+            let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            let perm_id = OrderEngine::place_order(
+                tokio::runtime::Handle::current(),
+                state.pool.clone(),
+                &weak_client,
+                order_ibkr,
+            );
+            assert!(perm_id > 0, "order should be placed");
 
-        // Wait for the Submitted event to be processed by the stream
-        tokio::time::sleep(Duration::from_secs(5)).await;
+            // Wait for the Submitted event to be processed by the stream
+            tokio::time::sleep(Duration::from_secs(5)).await;
 
-        // Verify the open order row exists in the DB
-        let crud = OpenOrdersCRUD::stock(state.pool.clone());
-        let orders = crud
-            .get_orders_for_strat("noise")
-            .await
-            .expect("get_orders_for_strat failed");
-        let our_order = orders
-            .iter()
-            .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == perm_id));
-        assert!(
-            our_order.is_some(),
-            "Submitted event should create open_order row for perm_id={perm_id}"
-        );
-        println!("✅ order_status::submitted — open_order row created for perm_id={perm_id}");
+            // Verify the open order row exists in the DB
+            let crud = OpenOrdersCRUD::stock(state.pool.clone());
+            let orders = crud
+                .get_orders_for_strat("noise")
+                .await
+                .expect("get_orders_for_strat failed");
+            let our_order = orders
+                .iter()
+                .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == perm_id));
+            assert!(
+                our_order.is_some(),
+                "Submitted event should create open_order row for perm_id={perm_id}"
+            );
+            println!("✅ order_status::submitted — open_order row created for perm_id={perm_id}");
 
-        // Cleanup: cancel + delete
-        if let Some(OOFK::Stock(s)) = our_order {
-            if let Some(client) = weak_client.upgrade() {
-                let _ = client.cancel_order(s.order_id, "");
+            // Cleanup: cancel + delete
+            if let Some(OOFK::Stock(s)) = our_order {
+                if let Some(client) = weak_client.upgrade() {
+                    let _ = client.cancel_order(s.order_id, "");
+                }
+                let _ = crud
+                    .delete(&OOInterfacePK::Stock(OpenStockOrdersPrimaryKeys {
+                        order_perm_id: s.order_perm_id,
+                        order_id: s.order_id,
+                    }))
+                    .await;
             }
-            let _ = crud
-                .delete(&OOInterfacePK::Stock(OpenStockOrdersPrimaryKeys {
-                    order_perm_id: s.order_perm_id,
-                    order_id: s.order_id,
-                }))
-                .await;
-        }
-    })
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -167,60 +171,64 @@ async fn test_event_order_status_submitted() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES + CANCELS REAL ORDERS"]
 async fn test_event_order_status_cancelled() {
-    with_live_ibkr(&ibkr_account(), "ibc_eh_cancelled.log", |state| async move {
-        let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-        let _controller = start_order_update_stream(&state, &order_store);
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_eh_cancelled.log",
+        |state| async move {
+            let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
+            let _controller = start_order_update_stream(&state, &order_store);
 
-        // Place a limit order at unrealistic price (stays open)
-        let contract = aapl_contract();
-        let order = limit_order(Action::Buy, 1.0, 1.0);
-        let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let perm_id = OrderEngine::place_order(
-            tokio::runtime::Handle::current(),
-            state.pool.clone(),
-            &weak_client,
-            order_ibkr,
-        );
-        assert!(perm_id > 0);
+            // Place a limit order at unrealistic price (stays open)
+            let contract = aapl_contract();
+            let order = limit_order(Action::Buy, 1.0, 1.0);
+            let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            let perm_id = OrderEngine::place_order(
+                tokio::runtime::Handle::current(),
+                state.pool.clone(),
+                &weak_client,
+                order_ibkr,
+            );
+            assert!(perm_id > 0);
 
-        // Wait for Submitted
-        tokio::time::sleep(Duration::from_secs(3)).await;
+            // Wait for Submitted
+            tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Now cancel the order
-        let crud = OpenOrdersCRUD::stock(state.pool.clone());
-        let orders = crud
-            .get_orders_for_strat("noise")
-            .await
-            .expect("get_orders_for_strat failed");
-        let our_order = orders
-            .iter()
-            .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == perm_id));
-        let order_id = if let Some(OOFK::Stock(s)) = our_order {
-            if let Some(client) = weak_client.upgrade() {
-                let _ = client.cancel_order(s.order_id, "");
-            }
-            s.order_id
-        } else {
-            println!("Order not found in DB — may have already been cancelled");
-            return;
-        };
+            // Now cancel the order
+            let crud = OpenOrdersCRUD::stock(state.pool.clone());
+            let orders = crud
+                .get_orders_for_strat("noise")
+                .await
+                .expect("get_orders_for_strat failed");
+            let our_order = orders
+                .iter()
+                .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == perm_id));
+            let order_id = if let Some(OOFK::Stock(s)) = our_order {
+                if let Some(client) = weak_client.upgrade() {
+                    let _ = client.cancel_order(s.order_id, "");
+                }
+                s.order_id
+            } else {
+                println!("Order not found in DB — may have already been cancelled");
+                return;
+            };
 
-        // Wait for Cancelled event to propagate + handler to delete the row
-        tokio::time::sleep(Duration::from_secs(5)).await;
+            // Wait for Cancelled event to propagate + handler to delete the row
+            tokio::time::sleep(Duration::from_secs(5)).await;
 
-        // Verify the row was deleted by the cancelled handler
-        let pk = OOInterfacePK::Stock(OpenStockOrdersPrimaryKeys {
-            order_perm_id: perm_id,
-            order_id: order_id,
-        });
-        let result = crud.read(&pk).await.expect("read failed");
-        assert!(
-            result.is_none(),
-            "Cancelled event should delete open_order row for perm_id={perm_id}"
-        );
-        println!("✅ order_status::cancelled — open_order row deleted for perm_id={perm_id}");
-    })
+            // Verify the row was deleted by the cancelled handler
+            let pk = OOInterfacePK::Stock(OpenStockOrdersPrimaryKeys {
+                order_perm_id: perm_id,
+                order_id: order_id,
+            });
+            let result = crud.read(&pk).await.expect("read failed");
+            assert!(
+                result.is_none(),
+                "Cancelled event should delete open_order row for perm_id={perm_id}"
+            );
+            println!("✅ order_status::cancelled — open_order row deleted for perm_id={perm_id}");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -334,7 +342,8 @@ async fn test_event_commission_report_on_fill() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_on_commission_update_direct() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_eh_commission_direct.log",
         |state| async move {
             // Call on_commission_update directly with a dummy CommissionReport
@@ -370,7 +379,8 @@ async fn test_on_commission_update_direct() {
             let _ = crud.delete(&pk).await;
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 6. on_execution_update — CASH asset type rejected ============================
@@ -378,41 +388,45 @@ async fn test_on_commission_update_direct() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_on_execution_update_rejects_unknown_security_type() {
-    with_live_ibkr(&ibkr_account(), "ibc_eh_exec_cash.log", |state| async move {
-        // Build a dummy ExecutionData with unknown security type (Other)
-        let mut execution_data = ExecutionData::default();
-        execution_data.contract.security_type = SecurityType::Other("CASH".to_string());
-        execution_data.execution.order_reference = "noise".to_string();
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_eh_exec_cash.log",
+        |state| async move {
+            // Build a dummy ExecutionData with unknown security type (Other)
+            let mut execution_data = ExecutionData::default();
+            execution_data.contract.security_type = SecurityType::Other("CASH".to_string());
+            execution_data.execution.order_reference = "noise".to_string();
 
-        let noise = StrategyEnum::Noise(Noise::new(
-            state.pool.clone(),
-            tokio::runtime::Handle::current(),
-        ));
-        let mut strategy_map = HashMap::new();
-        strategy_map.insert(noise.get_name(), noise);
-        let strategy_map = Arc::new(strategy_map);
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.master_client);
-        let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
+            let noise = StrategyEnum::Noise(Noise::new(
+                state.pool.clone(),
+                tokio::runtime::Handle::current(),
+            ));
+            let mut strategy_map = HashMap::new();
+            strategy_map.insert(noise.get_name(), noise);
+            let strategy_map = Arc::new(strategy_map);
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.master_client);
+            let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
-        let result = on_execution_update(
-            state.pool.clone(),
-            execution_data,
-            strategy_map,
-            "noise",
-            tokio::runtime::Handle::current(),
-            &weak_client,
-            order_store,
-        );
+            let result = on_execution_update(
+                state.pool.clone(),
+                execution_data,
+                strategy_map,
+                "noise",
+                tokio::runtime::Handle::current(),
+                &weak_client,
+                order_store,
+            );
 
-        assert!(
-            result.is_err(),
-            "Unknown security type execution should return Err"
-        );
-        println!(
-            "✅ on_execution_update — Unknown security type rejected: {:?}",
-            result.unwrap_err()
-        );
-    })
+            assert!(
+                result.is_err(),
+                "Unknown security type execution should return Err"
+            );
+            println!(
+                "✅ on_execution_update — Unknown security type rejected: {:?}",
+                result.unwrap_err()
+            );
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -422,7 +436,8 @@ async fn test_on_execution_update_rejects_unknown_security_type() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_open_order_submitted_and_cancelled_direct() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_eh_open_order_direct.log",
         |state| async move {
             let contract = aapl_contract();
@@ -467,7 +482,8 @@ async fn test_open_order_submitted_and_cancelled_direct() {
             );
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 8. order_status::submitted + cancelled — direct test ============================
@@ -475,7 +491,8 @@ async fn test_open_order_submitted_and_cancelled_direct() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_order_status_submitted_and_cancelled_direct() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_eh_order_status_direct.log",
         |state| async move {
             // Pre-create an open order row
@@ -518,5 +535,6 @@ async fn test_order_status_submitted_and_cancelled_direct() {
             let _ = crud.delete(&pk).await;
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }

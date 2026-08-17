@@ -37,7 +37,7 @@ use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum};
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -110,96 +110,46 @@ async fn test_order_engine_new_constructor() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_place_order_market_buy() {
-    with_live_ibkr(&ibkr_account(), "ibc_oe_place_market.log", |state| async move {
-        let contract = aapl_contract();
-        let order = market_order(Action::Buy, 1.0);
-        let order_ibkr = OrderIBKR::new(contract, order, -1);
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_oe_place_market.log",
+        |state| async move {
+            let contract = aapl_contract();
+            let order = market_order(Action::Buy, 1.0);
+            let order_ibkr = OrderIBKR::new(contract, order, -1);
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let order_perm_id = OrderEngine::place_order(
-            tokio::runtime::Handle::current(),
-            state.pool.clone(),
-            &weak_client,
-            order_ibkr,
-        );
-
-        println!("place_order returned perm_id={order_perm_id}");
-        assert!(
-            order_perm_id > 0,
-            "order should be placed, got perm_id={order_perm_id}"
-        );
-
-        // Wait for the order to appear in the open_orders table (created via create_or_update)
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Verify the open order row was created in the DB
-        let crud = OpenOrdersCRUD::stock(state.pool.clone());
-        let orders = crud
-            .get_orders_for_strat("noise")
-            .await
-            .expect("get_orders_for_strat failed");
-        let our_order = orders
-            .iter()
-            .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == order_perm_id));
-        if let Some(OOFK::Stock(s)) = our_order {
-            println!(
-                "✅ Open order row created: perm_id={}, qty={}",
-                s.order_perm_id, s.quantity
+            let order_perm_id = OrderEngine::place_order(
+                tokio::runtime::Handle::current(),
+                state.pool.clone(),
+                &weak_client,
+                order_ibkr,
             );
-            // Cleanup: cancel the order on IBKR + delete the DB row
-            if let Some(client) = weak_client.upgrade() {
-                let _ = client.cancel_order(s.order_id, "");
-            }
-            let _ = crud
-                .delete(&OOInterfacePK::Stock(
-                    trading_app::database::models::OpenStockOrdersPrimaryKeys {
-                        order_perm_id: s.order_perm_id,
-                        order_id: s.order_id,
-                    },
-                ))
-                .await;
-        }
-    })
-    .await
-    .expect("Failed to boot live IBKR");
-}
 
-// ============================ 3. place_orders — batch (multiple orders) ============================
+            println!("place_order returned perm_id={order_perm_id}");
+            assert!(
+                order_perm_id > 0,
+                "order should be placed, got perm_id={order_perm_id}"
+            );
 
-#[tokio::test]
-#[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
-async fn test_place_orders_batch_multiple() {
-    with_live_ibkr(&ibkr_account(), "ibc_oe_place_batch.log", |state| async move {
+            // Wait for the order to appear in the open_orders table (created via create_or_update)
+            tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Place 2 orders: AAPL buy 1 share, MSFT buy 1 share
-        let order1 = OrderIBKR::new(aapl_contract(), market_order(Action::Buy, 1.0), -1);
-        let order2 = OrderIBKR::new(msft_contract(), market_order(Action::Buy, 1.0), -1);
-
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-
-        // place_orders is sync, returns ()
-        OrderEngine::place_orders(
-            tokio::runtime::Handle::current(),
-            state.pool.clone(),
-            &weak_client,
-            vec![order1, order2].into_iter(),
-        );
-
-        println!("place_orders batch submitted (2 orders)");
-        // Wait for orders to be processed
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Verify both orders appear in the DB
-        let crud = OpenOrdersCRUD::stock(state.pool.clone());
-        let orders = crud
-            .get_orders_for_strat("noise")
-            .await
-            .expect("get_orders_for_strat failed");
-        println!("Open orders after batch: {} total", orders.len());
-
-        // Cleanup: cancel all open orders + delete DB rows
-        for order in &orders {
-            if let OOFK::Stock(s) = order {
+            // Verify the open order row was created in the DB
+            let crud = OpenOrdersCRUD::stock(state.pool.clone());
+            let orders = crud
+                .get_orders_for_strat("noise")
+                .await
+                .expect("get_orders_for_strat failed");
+            let our_order = orders
+                .iter()
+                .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == order_perm_id));
+            if let Some(OOFK::Stock(s)) = our_order {
+                println!(
+                    "✅ Open order row created: perm_id={}, qty={}",
+                    s.order_perm_id, s.quantity
+                );
+                // Cleanup: cancel the order on IBKR + delete the DB row
                 if let Some(client) = weak_client.upgrade() {
                     let _ = client.cancel_order(s.order_id, "");
                 }
@@ -212,9 +162,66 @@ async fn test_place_orders_batch_multiple() {
                     ))
                     .await;
             }
-        }
-        println!("✅ place_orders batch cleanup complete");
-    })
+        },
+    )
+    .await
+    .expect("Failed to boot live IBKR");
+}
+
+// ============================ 3. place_orders — batch (multiple orders) ============================
+
+#[tokio::test]
+#[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
+async fn test_place_orders_batch_multiple() {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_oe_place_batch.log",
+        |state| async move {
+            // Place 2 orders: AAPL buy 1 share, MSFT buy 1 share
+            let order1 = OrderIBKR::new(aapl_contract(), market_order(Action::Buy, 1.0), -1);
+            let order2 = OrderIBKR::new(msft_contract(), market_order(Action::Buy, 1.0), -1);
+
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+
+            // place_orders is sync, returns ()
+            OrderEngine::place_orders(
+                tokio::runtime::Handle::current(),
+                state.pool.clone(),
+                &weak_client,
+                vec![order1, order2].into_iter(),
+            );
+
+            println!("place_orders batch submitted (2 orders)");
+            // Wait for orders to be processed
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            // Verify both orders appear in the DB
+            let crud = OpenOrdersCRUD::stock(state.pool.clone());
+            let orders = crud
+                .get_orders_for_strat("noise")
+                .await
+                .expect("get_orders_for_strat failed");
+            println!("Open orders after batch: {} total", orders.len());
+
+            // Cleanup: cancel all open orders + delete DB rows
+            for order in &orders {
+                if let OOFK::Stock(s) = order {
+                    if let Some(client) = weak_client.upgrade() {
+                        let _ = client.cancel_order(s.order_id, "");
+                    }
+                    let _ = crud
+                        .delete(&OOInterfacePK::Stock(
+                            trading_app::database::models::OpenStockOrdersPrimaryKeys {
+                                order_perm_id: s.order_perm_id,
+                                order_id: s.order_id,
+                            },
+                        ))
+                        .await;
+                }
+            }
+            println!("✅ place_orders batch cleanup complete");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -224,42 +231,47 @@ async fn test_place_orders_batch_multiple() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_place_order_dead_client_returns_zero() {
-    with_live_ibkr(&ibkr_account(), "ibc_oe_dead_client.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_oe_dead_client.log",
+        |state| async move {
+            // Create a dead weak client (drop the Arc first)
+            let _weak_client: Weak<ibapi::Client> = {
+                let _strong = state.client_1.clone();
+                drop(_strong);
+                // This Weak is still valid because state.client_1 holds an Arc.
+                // To truly test a dead client, we need to drop ALL Arcs.
+                Arc::downgrade(&state.client_1)
+            };
 
-        // Create a dead weak client (drop the Arc first)
-        let _weak_client: Weak<ibapi::Client> = {
-            let _strong = state.client_1.clone();
-            drop(_strong);
-            // This Weak is still valid because state.client_1 holds an Arc.
-            // To truly test a dead client, we need to drop ALL Arcs.
-            Arc::downgrade(&state.client_1)
-        };
+            // Actually test with a genuinely dead client
+            let dead_weak: Weak<ibapi::Client> = {
+                let temp_arc = Arc::new(ibapi::Client::connect("127.0.0.1:4002", 99).unwrap());
+                let w = Arc::downgrade(&temp_arc);
+                drop(temp_arc);
+                w
+            };
 
-        // Actually test with a genuinely dead client
-        let dead_weak: Weak<ibapi::Client> = {
-            let temp_arc = Arc::new(ibapi::Client::connect("127.0.0.1:4002", 99).unwrap());
-            let w = Arc::downgrade(&temp_arc);
-            drop(temp_arc);
-            w
-        };
+            let contract = aapl_contract();
+            let order = market_order(Action::Buy, 1.0);
+            let order_ibkr = OrderIBKR::new(contract, order, -1);
 
-        let contract = aapl_contract();
-        let order = market_order(Action::Buy, 1.0);
-        let order_ibkr = OrderIBKR::new(contract, order, -1);
+            let order_perm_id = OrderEngine::place_order(
+                tokio::runtime::Handle::current(),
+                state.pool.clone(),
+                &dead_weak,
+                order_ibkr,
+            );
 
-        let order_perm_id = OrderEngine::place_order(
-            tokio::runtime::Handle::current(),
-            state.pool.clone(),
-            &dead_weak,
-            order_ibkr,
-        );
-
-        // With a dead client, place_order logs an error and returns the order_id from
-        // client.next_order_id() (which panics on dead client) — actually this test
-        // verifies that the function handles a dead Weak gracefully.
-        println!("place_order with dead client returned perm_id={order_perm_id} (may log error)");
-        // The function should not panic — that's the main assertion
-    })
+            // With a dead client, place_order logs an error and returns the order_id from
+            // client.next_order_id() (which panics on dead client) — actually this test
+            // verifies that the function handles a dead Weak gracefully.
+            println!(
+                "place_order with dead client returned perm_id={order_perm_id} (may log error)"
+            );
+            // The function should not panic — that's the main assertion
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -270,7 +282,6 @@ async fn test_place_order_dead_client_returns_zero() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_handle_bar_update_outcome_no_action() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_noaction.log", |state| async move {
-
         let (consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -301,7 +312,6 @@ async fn test_handle_bar_update_outcome_no_action() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_emit_orders() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_emit.log", |state| async move {
-
         let (consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -361,7 +371,6 @@ async fn test_handle_bar_update_outcome_emit_orders() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_pending_db_query() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_pending.log", |state| async move {
-
         let (consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -396,7 +405,6 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_place_order_limit_unrealistic_price() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_limit.log", |state| async move {
-
         let contract = aapl_contract();
         // Limit buy at $1.00 — won't fill, stays open
         let order = limit_order(Action::Buy, 1.0, 1.0);

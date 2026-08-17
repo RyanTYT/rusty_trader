@@ -11,7 +11,7 @@ use trading_app::execution::order_update_stream::controller::OrderUpdateStreamCo
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]

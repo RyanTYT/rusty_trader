@@ -31,7 +31,7 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::StrategyEnum;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
@@ -193,7 +193,8 @@ async fn test_sort_consumers_stock_and_forex_ordering() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sort_consumers_multiple_stocks_alphabetical() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_bundler_sort_stocks.log",
         |state| async move {
             let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
@@ -233,7 +234,8 @@ async fn test_sort_consumers_multiple_stocks_alphabetical() {
             println!("✅ sort_consumers(multiple stocks): AAPL < MSFT < SPY (alphabetical)");
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 4. IbkrBarConsumer::new + get_bar_type ============================
@@ -241,64 +243,68 @@ async fn test_sort_consumers_multiple_stocks_alphabetical() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_ibkr_bar_consumer_new_and_get_bar_type() {
-    with_live_ibkr(&ibkr_account(), "ibc_bundler_consumer.log", |state| async move {
-        let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_bundler_consumer.log",
+        |state| async move {
+            let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
 
-        // Stock consumer → Normal
-        let (rb_stock, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-            Arc::downgrade(&state.client_1),
-            aapl_contract(),
-            RealtimeWhatToShow::Trades,
-            scheduler.clone(),
-        );
-        let stock_consumer = IbkrBarConsumer::new(
-            aapl_contract(),
-            RealtimeWhatToShow::Trades,
-            rb_stock.get_new_consumer().unwrap(),
-        );
-        assert!(
-            matches!(stock_consumer.get_bar_type(), IbkrBarType::Normal),
-            "stock consumer should be Normal"
-        );
-        assert_eq!(stock_consumer.contract.symbol.to_string(), "AAPL");
-        println!("✅ IbkrBarConsumer(stock): get_bar_type() = Normal");
+            // Stock consumer → Normal
+            let (rb_stock, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+                Arc::downgrade(&state.client_1),
+                aapl_contract(),
+                RealtimeWhatToShow::Trades,
+                scheduler.clone(),
+            );
+            let stock_consumer = IbkrBarConsumer::new(
+                aapl_contract(),
+                RealtimeWhatToShow::Trades,
+                rb_stock.get_new_consumer().unwrap(),
+            );
+            assert!(
+                matches!(stock_consumer.get_bar_type(), IbkrBarType::Normal),
+                "stock consumer should be Normal"
+            );
+            assert_eq!(stock_consumer.contract.symbol.to_string(), "AAPL");
+            println!("✅ IbkrBarConsumer(stock): get_bar_type() = Normal");
 
-        // Forex Bid consumer → ForexBid
-        let (rb_bid, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-            Arc::downgrade(&state.client_1),
-            gbp_usd_contract(),
-            RealtimeWhatToShow::Bid,
-            scheduler.clone(),
-        );
-        let bid_consumer = IbkrBarConsumer::new(
-            gbp_usd_contract(),
-            RealtimeWhatToShow::Bid,
-            rb_bid.get_new_consumer().unwrap(),
-        );
-        assert!(
-            matches!(bid_consumer.get_bar_type(), IbkrBarType::ForexBid),
-            "forex Bid consumer should be ForexBid"
-        );
-        println!("✅ IbkrBarConsumer(forex Bid): get_bar_type() = ForexBid");
+            // Forex Bid consumer → ForexBid
+            let (rb_bid, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+                Arc::downgrade(&state.client_1),
+                gbp_usd_contract(),
+                RealtimeWhatToShow::Bid,
+                scheduler.clone(),
+            );
+            let bid_consumer = IbkrBarConsumer::new(
+                gbp_usd_contract(),
+                RealtimeWhatToShow::Bid,
+                rb_bid.get_new_consumer().unwrap(),
+            );
+            assert!(
+                matches!(bid_consumer.get_bar_type(), IbkrBarType::ForexBid),
+                "forex Bid consumer should be ForexBid"
+            );
+            println!("✅ IbkrBarConsumer(forex Bid): get_bar_type() = ForexBid");
 
-        // Forex Ask consumer → ForexAsk
-        let (rb_ask, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-            Arc::downgrade(&state.client_1),
-            gbp_usd_contract(),
-            RealtimeWhatToShow::Ask,
-            scheduler.clone(),
-        );
-        let ask_consumer = IbkrBarConsumer::new(
-            gbp_usd_contract(),
-            RealtimeWhatToShow::Ask,
-            rb_ask.get_new_consumer().unwrap(),
-        );
-        assert!(
-            matches!(ask_consumer.get_bar_type(), IbkrBarType::ForexAsk),
-            "forex Ask consumer should be ForexAsk"
-        );
-        println!("✅ IbkrBarConsumer(forex Ask): get_bar_type() = ForexAsk");
-    })
+            // Forex Ask consumer → ForexAsk
+            let (rb_ask, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+                Arc::downgrade(&state.client_1),
+                gbp_usd_contract(),
+                RealtimeWhatToShow::Ask,
+                scheduler.clone(),
+            );
+            let ask_consumer = IbkrBarConsumer::new(
+                gbp_usd_contract(),
+                RealtimeWhatToShow::Ask,
+                rb_ask.get_new_consumer().unwrap(),
+            );
+            assert!(
+                matches!(ask_consumer.get_bar_type(), IbkrBarType::ForexAsk),
+                "forex Ask consumer should be ForexAsk"
+            );
+            println!("✅ IbkrBarConsumer(forex Ask): get_bar_type() = ForexAsk");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -349,7 +355,8 @@ async fn test_ibkr_bar_consumer_try_pop() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_stock_noise() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_bundler_hook_stock.log",
         |state| async move {
             let contract = aapl_contract();
@@ -397,7 +404,8 @@ async fn test_hook_strategy_stock_noise() {
             println!("✅ hook_strategy thread stopped after Drop (is_alive=false)");
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 7. hook_strategy — forex consumer (Manual) ============================
@@ -405,7 +413,8 @@ async fn test_hook_strategy_stock_noise() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_forex_manual() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_bundler_hook_forex.log",
         |state| async move {
             let contract = gbp_usd_contract();
@@ -463,7 +472,8 @@ async fn test_hook_strategy_forex_manual() {
             println!("✅ forex hook_strategy thread stopped after Drop");
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 8. hook_strategy — idempotency (calling twice is a no-op) ============================
@@ -547,7 +557,8 @@ async fn test_hook_strategy_idempotent() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
-    with_live_ibkr(&ibkr_account(),
+    with_live_ibkr(
+        &ibkr_account(),
         "ibc_bundler_lifecycle.log",
         |state| async move {
             // Build 2 stock consumers (AAPL + MSFT) + 1 forex pair (GBP/USD Bid + Ask)
@@ -638,5 +649,6 @@ async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
             println!("✅ full lifecycle: bundler dropped, thread stopped");
         },
     )
-    .await;
+    .await
+    .expect("Failed to boot live IBKR");
 }

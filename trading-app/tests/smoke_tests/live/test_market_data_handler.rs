@@ -24,7 +24,7 @@ use trading_app::market_data::handler::{
 };
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -64,7 +64,6 @@ fn eur_usd_contract() -> Contract {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_market_data_handler_new() {
     with_live_ibkr(&ibkr_account(), "ibc_mdh_new.log", |state| async move {
-
         let handler = MarketDataHandler::new(state.pool.clone());
         println!("✅ MarketDataHandler::new succeeded (no panic)");
 
@@ -130,44 +129,47 @@ async fn test_data_subscription_new_and_eq() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_one_per_thread() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_load_one.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_load_one.log",
+        |state| async move {
+            let mut handler = MarketDataHandler::new(state.pool.clone());
+            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let mut handler = MarketDataHandler::new(state.pool.clone());
-        let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            let subscriptions = vec![DataSubscription::new(aapl_contract(), WhatToShow::Trades)];
 
-        let subscriptions = vec![DataSubscription::new(aapl_contract(), WhatToShow::Trades)];
+            // Load subscriptions with OnePerThread method
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                subscriptions.clone(),
+                DbSubscriptionMethod::OnePerThread,
+                tokio::runtime::Handle::current(),
+            );
 
-        // Load subscriptions with OnePerThread method
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            subscriptions.clone(),
-            DbSubscriptionMethod::OnePerThread,
-            tokio::runtime::Handle::current(),
-        );
+            println!("load_all_subscription_producers(OnePerThread) completed");
 
-        println!("load_all_subscription_producers(OnePerThread) completed");
+            // Verify the subscription was registered
+            let sub = &subscriptions[0];
+            let ring_buffer = handler.get_subsription(sub);
+            assert!(
+                ring_buffer.is_some(),
+                "subscription should be registered after load"
+            );
+            println!("✅ get_subsription(AAPL Trades) after load: Some (registered)");
 
-        // Verify the subscription was registered
-        let sub = &subscriptions[0];
-        let ring_buffer = handler.get_subsription(sub);
-        assert!(
-            ring_buffer.is_some(),
-            "subscription should be registered after load"
-        );
-        println!("✅ get_subsription(AAPL Trades) after load: Some (registered)");
-
-        // Verify idempotency — calling again with the same subscription should be a no-op
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            subscriptions.clone(),
-            DbSubscriptionMethod::OnePerThread,
-            tokio::runtime::Handle::current(),
-        );
-        println!("✅ idempotent load (calling again with same subscription — no-op)");
-    })
+            // Verify idempotency — calling again with the same subscription should be a no-op
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                subscriptions.clone(),
+                DbSubscriptionMethod::OnePerThread,
+                tokio::runtime::Handle::current(),
+            );
+            println!("✅ idempotent load (calling again with same subscription — no-op)");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -177,37 +179,40 @@ async fn test_load_all_subscription_producers_one_per_thread() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_grouped_per_thread() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_load_grouped.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_load_grouped.log",
+        |state| async move {
+            let mut handler = MarketDataHandler::new(state.pool.clone());
+            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let mut handler = MarketDataHandler::new(state.pool.clone());
-        let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            let subscriptions = vec![
+                DataSubscription::new(aapl_contract(), WhatToShow::Trades),
+                DataSubscription::new(msft_contract(), WhatToShow::Trades),
+            ];
 
-        let subscriptions = vec![
-            DataSubscription::new(aapl_contract(), WhatToShow::Trades),
-            DataSubscription::new(msft_contract(), WhatToShow::Trades),
-        ];
+            // Load multiple subscriptions with GroupedPerThread method
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                subscriptions.clone(),
+                DbSubscriptionMethod::GroupedPerThread,
+                tokio::runtime::Handle::current(),
+            );
 
-        // Load multiple subscriptions with GroupedPerThread method
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            subscriptions.clone(),
-            DbSubscriptionMethod::GroupedPerThread,
-            tokio::runtime::Handle::current(),
-        );
+            println!(
+                "load_all_subscription_producers(GroupedPerThread) completed with 2 subscriptions"
+            );
 
-        println!(
-            "load_all_subscription_producers(GroupedPerThread) completed with 2 subscriptions"
-        );
-
-        // Verify both subscriptions were registered
-        for sub in &subscriptions {
-            let ring_buffer = handler.get_subsription(sub);
-            assert!(ring_buffer.is_some(), "subscription should be registered");
-        }
-        println!("✅ get_subsription for both AAPL + MSFT after GroupedPerThread load: Some");
-    })
+            // Verify both subscriptions were registered
+            for sub in &subscriptions {
+                let ring_buffer = handler.get_subsription(sub);
+                assert!(ring_buffer.is_some(), "subscription should be registered");
+            }
+            println!("✅ get_subsription for both AAPL + MSFT after GroupedPerThread load: Some");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -217,43 +222,46 @@ async fn test_load_all_subscription_producers_grouped_per_thread() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_load_all_subscription_producers_multiple_what_to_show() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_load_wts.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_load_wts.log",
+        |state| async move {
+            let mut handler = MarketDataHandler::new(state.pool.clone());
+            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let mut handler = MarketDataHandler::new(state.pool.clone());
-        let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            // Same contract, different WhatToShow — should be treated as separate subscriptions
+            let contract = eur_usd_contract();
+            let subscriptions = vec![
+                DataSubscription::new(contract.clone(), WhatToShow::Bid),
+                DataSubscription::new(contract.clone(), WhatToShow::Ask),
+            ];
 
-        // Same contract, different WhatToShow — should be treated as separate subscriptions
-        let contract = eur_usd_contract();
-        let subscriptions = vec![
-            DataSubscription::new(contract.clone(), WhatToShow::Bid),
-            DataSubscription::new(contract.clone(), WhatToShow::Ask),
-        ];
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                subscriptions.clone(),
+                DbSubscriptionMethod::GroupedPerThread,
+                tokio::runtime::Handle::current(),
+            );
 
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            subscriptions.clone(),
-            DbSubscriptionMethod::GroupedPerThread,
-            tokio::runtime::Handle::current(),
-        );
+            println!("load_all_subscription_producers with Bid + Ask for same forex contract");
 
-        println!("load_all_subscription_producers with Bid + Ask for same forex contract");
-
-        // Verify both WhatToShow variants are registered separately
-        let bid_sub = handler.get_subsription(&subscriptions[0]);
-        let ask_sub = handler.get_subsription(&subscriptions[1]);
-        assert!(bid_sub.is_some(), "Bid subscription should be registered");
-        assert!(ask_sub.is_some(), "Ask subscription should be registered");
-        assert_ne!(
-            bid_sub.map(|r| r as *const _),
-            ask_sub.map(|r| r as *const _),
-            "Bid and Ask subscriptions should be different ring buffers"
-        );
-        println!(
-            "✅ Bid + Ask for same contract are separate subscriptions (different ring buffers)"
-        );
-    })
+            // Verify both WhatToShow variants are registered separately
+            let bid_sub = handler.get_subsription(&subscriptions[0]);
+            let ask_sub = handler.get_subsription(&subscriptions[1]);
+            assert!(bid_sub.is_some(), "Bid subscription should be registered");
+            assert!(ask_sub.is_some(), "Ask subscription should be registered");
+            assert_ne!(
+                bid_sub.map(|r| r as *const _),
+                ask_sub.map(|r| r as *const _),
+                "Bid and Ask subscriptions should be different ring buffers"
+            );
+            println!(
+                "✅ Bid + Ask for same contract are separate subscriptions (different ring buffers)"
+            );
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -263,28 +271,31 @@ async fn test_load_all_subscription_producers_multiple_what_to_show() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_get_subsription_nonexistent_returns_none() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_get_none.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_get_none.log",
+        |state| async move {
+            let handler = MarketDataHandler::new(state.pool.clone());
 
-        let handler = MarketDataHandler::new(state.pool.clone());
+            // Verify get_subsription returns None for a contract that was never subscribed
+            let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
+            let result = handler.get_subsription(&sub);
+            assert!(
+                result.is_none(),
+                "non-existent subscription should return None"
+            );
 
-        // Verify get_subsription returns None for a contract that was never subscribed
-        let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
-        let result = handler.get_subsription(&sub);
-        assert!(
-            result.is_none(),
-            "non-existent subscription should return None"
-        );
+            // Also test with a different contract
+            let sub2 = DataSubscription::new(msft_contract(), WhatToShow::Bid);
+            let result2 = handler.get_subsription(&sub2);
+            assert!(
+                result2.is_none(),
+                "non-existent MSFT Bid subscription should return None"
+            );
 
-        // Also test with a different contract
-        let sub2 = DataSubscription::new(msft_contract(), WhatToShow::Bid);
-        let result2 = handler.get_subsription(&sub2);
-        assert!(
-            result2.is_none(),
-            "non-existent MSFT Bid subscription should return None"
-        );
-
-        println!("✅ get_subsription for non-existent subscriptions: None (correct)");
-    })
+            println!("✅ get_subsription for non-existent subscriptions: None (correct)");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -294,19 +305,22 @@ async fn test_get_subsription_nonexistent_returns_none() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_try_get_price_unknown_contract_id() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_price_none.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_price_none.log",
+        |state| async move {
+            let handler = MarketDataHandler::new(state.pool.clone());
 
-        let handler = MarketDataHandler::new(state.pool.clone());
+            // try_get_price for a contract_id that was never cached → None
+            let result = handler.try_get_price(99999);
+            assert!(
+                result.is_none(),
+                "try_get_price for unknown contract_id should return None"
+            );
 
-        // try_get_price for a contract_id that was never cached → None
-        let result = handler.try_get_price(99999);
-        assert!(
-            result.is_none(),
-            "try_get_price for unknown contract_id should return None"
-        );
-
-        println!("✅ try_get_price(unknown_contract_id): None (correct)");
-    })
+            println!("✅ try_get_price(unknown_contract_id): None (correct)");
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -316,65 +330,70 @@ async fn test_try_get_price_unknown_contract_id() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_try_get_price_after_subscription() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_price_after.log", |state| async move {
-
-        let mut handler = MarketDataHandler::new(state.pool.clone());
-        let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-
-        let contract = aapl_contract();
-        let subscriptions = vec![DataSubscription::new(contract.clone(), WhatToShow::Trades)];
-
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            subscriptions.clone(),
-            DbSubscriptionMethod::OnePerThread,
-            tokio::runtime::Handle::current(),
-        );
-
-        // Wait for market data to flow + consumer to cache the price
-        tokio::time::sleep(Duration::from_secs(20)).await;
-
-        // Verify the subscription ring buffer exists
-        let sub = &subscriptions[0];
-        let ring_buffer = handler.get_subsription(sub);
-        assert!(ring_buffer.is_some(), "subscription should be registered");
-
-        // try_get_price uses the contract_id — we need to validate the contract first to get the ID
-        let validated_contract = {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_price_after.log",
+        |state| async move {
+            let mut handler = MarketDataHandler::new(state.pool.clone());
             let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-            let market_data_handler = MarketDataHandler::new(state.pool.clone());
-            let consolidator = Arc::new(trading_app::market_data::consolidator::Consolidator::new(
-                tokio::runtime::Handle::current(),
-                state.pool.clone(),
-                state.client_1.clone(),
-                market_data_handler,
-                contract_scheduler,
-            ));
-            consolidator.validate_contract(contract, Duration::from_secs(30))
-        };
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        if let Some(validated) = validated_contract {
-            let price = handler.try_get_price(validated.contract_id);
-            match price {
-                Some(p) => {
-                    assert!(p > 0.0, "cached price should be positive, got {p}");
-                    println!(
-                        "✅ try_get_price(contract_id={}): ${p}",
-                        validated.contract_id
-                    );
+            let contract = aapl_contract();
+            let subscriptions = vec![DataSubscription::new(contract.clone(), WhatToShow::Trades)];
+
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                subscriptions.clone(),
+                DbSubscriptionMethod::OnePerThread,
+                tokio::runtime::Handle::current(),
+            );
+
+            // Wait for market data to flow + consumer to cache the price
+            tokio::time::sleep(Duration::from_secs(20)).await;
+
+            // Verify the subscription ring buffer exists
+            let sub = &subscriptions[0];
+            let ring_buffer = handler.get_subsription(sub);
+            assert!(ring_buffer.is_some(), "subscription should be registered");
+
+            // try_get_price uses the contract_id — we need to validate the contract first to get the ID
+            let validated_contract = {
+                let contract_scheduler =
+                    Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+                let market_data_handler = MarketDataHandler::new(state.pool.clone());
+                let consolidator =
+                    Arc::new(trading_app::market_data::consolidator::Consolidator::new(
+                        tokio::runtime::Handle::current(),
+                        state.pool.clone(),
+                        state.client_1.clone(),
+                        market_data_handler,
+                        contract_scheduler,
+                    ));
+                consolidator.validate_contract(contract, Duration::from_secs(30))
+            };
+
+            if let Some(validated) = validated_contract {
+                let price = handler.try_get_price(validated.contract_id);
+                match price {
+                    Some(p) => {
+                        assert!(p > 0.0, "cached price should be positive, got {p}");
+                        println!(
+                            "✅ try_get_price(contract_id={}): ${p}",
+                            validated.contract_id
+                        );
+                    }
+                    None => {
+                        println!(
+                            "try_get_price returned None (market may be closed — no bars received)"
+                        );
+                    }
                 }
-                None => {
-                    println!(
-                        "try_get_price returned None (market may be closed — no bars received)"
-                    );
-                }
+            } else {
+                println!("contract validation failed — skipping price check");
             }
-        } else {
-            println!("contract validation failed — skipping price check");
-        }
-    })
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }
@@ -384,58 +403,61 @@ async fn test_try_get_price_after_subscription() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_market_data_handler_full_lifecycle() {
-    with_live_ibkr(&ibkr_account(), "ibc_mdh_lifecycle.log", |state| async move {
+    with_live_ibkr(
+        &ibkr_account(),
+        "ibc_mdh_lifecycle.log",
+        |state| async move {
+            let mut handler = MarketDataHandler::new(state.pool.clone());
+            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let mut handler = MarketDataHandler::new(state.pool.clone());
-        let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
+            // 1. Before load — subscription doesn't exist
+            let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
+            assert!(handler.get_subsription(&sub).is_none(), "before load: None");
 
-        // 1. Before load — subscription doesn't exist
-        let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
-        assert!(handler.get_subsription(&sub).is_none(), "before load: None");
+            // 2. Load subscription
+            handler.load_all_subscription_producers(
+                &weak_client,
+                contract_scheduler.clone(),
+                vec![sub.clone()],
+                DbSubscriptionMethod::OnePerThread,
+                tokio::runtime::Handle::current(),
+            );
 
-        // 2. Load subscription
-        handler.load_all_subscription_producers(
-            &weak_client,
-            contract_scheduler.clone(),
-            vec![sub.clone()],
-            DbSubscriptionMethod::OnePerThread,
-            tokio::runtime::Handle::current(),
-        );
+            // 3. After load — subscription exists
+            let ring_buffer = handler.get_subsription(&sub);
+            assert!(ring_buffer.is_some(), "after load: Some");
+            println!("✅ Full lifecycle: load → get_subsription returns Some");
 
-        // 3. After load — subscription exists
-        let ring_buffer = handler.get_subsription(&sub);
-        assert!(ring_buffer.is_some(), "after load: Some");
-        println!("✅ Full lifecycle: load → get_subsription returns Some");
+            // 4. Wait for market data to flow
+            tokio::time::sleep(Duration::from_secs(15)).await;
 
-        // 4. Wait for market data to flow
-        tokio::time::sleep(Duration::from_secs(15)).await;
-
-        // 5. Get a consumer from the ring buffer + verify it can pop bars
-        if let Some(rb) = ring_buffer {
-            let consumer = rb.get_new_consumer();
-            match consumer {
-                Some(c) => {
-                    let bar = c.try_pop();
-                    match bar {
-                        Some(b) => {
-                            assert!(
-                                b.close > 0.0,
-                                "bar close should be positive, got {}",
-                                b.close
-                            );
-                            println!(
-                                "✅ Full lifecycle: consumer popped bar with close={}",
-                                b.close
-                            );
+            // 5. Get a consumer from the ring buffer + verify it can pop bars
+            if let Some(rb) = ring_buffer {
+                let consumer = rb.get_new_consumer();
+                match consumer {
+                    Some(c) => {
+                        let bar = c.try_pop();
+                        match bar {
+                            Some(b) => {
+                                assert!(
+                                    b.close > 0.0,
+                                    "bar close should be positive, got {}",
+                                    b.close
+                                );
+                                println!(
+                                    "✅ Full lifecycle: consumer popped bar with close={}",
+                                    b.close
+                                );
+                            }
+                            None => println!("No bars yet (market may be closed) — acceptable"),
                         }
-                        None => println!("No bars yet (market may be closed) — acceptable"),
                     }
+                    None => println!("get_new_consumer returned None (max consumers exceeded)"),
                 }
-                None => println!("get_new_consumer returned None (max consumers exceeded)"),
             }
-        }
-    })
+        },
+    )
     .await
     .expect("Failed to boot live IBKR");
 }

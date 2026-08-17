@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use ibapi::Client;
 use sqlx::PgPool;
-use trading_app::test_internals::{with_gateway_retry, IBGateway};
+use trading_app::test_internals::{IBGateway, with_gateway_retry};
 
 /// IBKR account number from env var (default: `DU111111`).
 pub fn ibkr_account() -> String {
@@ -58,7 +58,9 @@ pub async fn wait_for_port_release(max_wait: Duration) -> bool {
     let poll_interval = Duration::from_millis(500);
     let start = std::time::Instant::now();
     loop {
-        let still_bound = tokio::net::TcpStream::connect(api_port_addr()).await.is_ok();
+        let still_bound = tokio::net::TcpStream::connect(api_port_addr())
+            .await
+            .is_ok();
         if !still_bound {
             return true;
         }
@@ -75,7 +77,10 @@ pub async fn wait_for_port_bind(max_wait: Duration) -> bool {
     let poll_interval = Duration::from_millis(500);
     let start = std::time::Instant::now();
     loop {
-        if tokio::net::TcpStream::connect(api_port_addr()).await.is_ok() {
+        if tokio::net::TcpStream::connect(api_port_addr())
+            .await
+            .is_ok()
+        {
             return true;
         }
         if start.elapsed() >= max_wait {
@@ -85,10 +90,7 @@ pub async fn wait_for_port_bind(max_wait: Duration) -> bool {
     }
 }
 
-async fn connect_to_client_with_retry(
-    client_id: i32,
-    retry_times: u32,
-) -> Result<Client, String> {
+async fn connect_to_client_with_retry(client_id: i32, retry_times: u32) -> Result<Client, String> {
     // IB Gateway has a documented delay between "Login has completed" (UI ready)
     // and the API socket accepting connections. Use a short poll interval.
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -100,7 +102,10 @@ async fn connect_to_client_with_retry(
             Err(e) => {
                 tracing::warn!(
                     "Connection to {} (client {}) failed (attempt {}): {}",
-                    addr, client_id, retry_time + 1, e
+                    addr,
+                    client_id,
+                    retry_time + 1,
+                    e
                 );
                 retry_time += 1;
                 if retry_time <= retry_times {
@@ -117,8 +122,8 @@ async fn connect_to_client_with_retry(
 }
 
 pub async fn get_pool() -> Result<PgPool, String> {
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| "DATABASE_URL env var not set".to_string())?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL env var not set".to_string())?;
     sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)

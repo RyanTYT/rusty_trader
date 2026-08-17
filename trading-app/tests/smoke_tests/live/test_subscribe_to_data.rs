@@ -11,7 +11,7 @@ use spmc_ring::bench::RingBuffer;
 use trading_app::market_data::producer::subscribe_to_data;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::{with_live_ibkr, ibkr_account, api_port_addr, server_base_url};
+use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
