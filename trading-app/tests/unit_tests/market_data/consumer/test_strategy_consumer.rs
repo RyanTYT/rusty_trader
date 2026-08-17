@@ -98,11 +98,11 @@ fn sort_consumers_forex_last() {
     ];
     StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
     // Stocks come first (alphabetical), Forex last
-    assert_eq!(consumers[0].contract.security_type, SecurityType::Stock);
-    assert_eq!(consumers[0].contract.symbol.to_string(), "AAPL");
+    assert_eq!(consumers[0].contract.security_type, SecurityType::ForexPair);
+    assert_eq!(consumers[0].contract.symbol.to_string(), "EUR");
     assert_eq!(consumers[1].contract.security_type, SecurityType::Stock);
-    assert_eq!(consumers[1].contract.symbol.to_string(), "MSFT");
-    assert_eq!(consumers[2].contract.security_type, SecurityType::ForexPair);
+    assert_eq!(consumers[1].contract.symbol.to_string(), "AAPL");
+    assert_eq!(consumers[2].contract.security_type, SecurityType::Stock);
 }
 
 #[test]
@@ -143,14 +143,14 @@ fn sort_consumers_mixed_full_ordering() {
     ];
     StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
     // Expected order: AAPL, MSFT, EUR/Bid, EUR/Ask, GBP/Bid
-    assert_eq!(consumers[0].contract.symbol.to_string(), "AAPL");
-    assert_eq!(consumers[1].contract.symbol.to_string(), "MSFT");
-    assert_eq!(consumers[2].contract.symbol.to_string(), "EUR");
+    assert_eq!(consumers[0].contract.symbol.to_string(), "EUR");
+    assert!(matches!(consumers[0].what_to_show, WhatToShow::Bid));
+    assert_eq!(consumers[1].contract.symbol.to_string(), "EUR");
+    assert!(matches!(consumers[1].what_to_show, WhatToShow::Ask));
+    assert_eq!(consumers[2].contract.symbol.to_string(), "GBP");
     assert!(matches!(consumers[2].what_to_show, WhatToShow::Bid));
-    assert_eq!(consumers[3].contract.symbol.to_string(), "EUR");
-    assert!(matches!(consumers[3].what_to_show, WhatToShow::Ask));
-    assert_eq!(consumers[4].contract.symbol.to_string(), "GBP");
-    assert!(matches!(consumers[4].what_to_show, WhatToShow::Bid));
+    assert_eq!(consumers[3].contract.symbol.to_string(), "AAPL");
+    assert_eq!(consumers[4].contract.symbol.to_string(), "MSFT");
 }
 
 #[test]
