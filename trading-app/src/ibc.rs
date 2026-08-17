@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -58,6 +60,7 @@ impl IBGateway {
             .arg("--java-path=")
             .arg("--mode=paper")
             .arg("--on2fatimeout=restart")
+            .process_group(0) // put descendants in a process group
             .stderr(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -254,12 +257,33 @@ impl IBGateway {
     /// (where we only issue `start_kill` and let the OS reap it, since we
     /// can't `.await` there - see `Drop` impl below).
     async fn kill_and_reap(child: &mut Child) {
-        if let Err(e) = child.start_kill() {
-            if e.kind() != std::io::ErrorKind::InvalidInput {
-                tracing::warn!("Failed to kill IBC child process: {e:?}");
+        if let Some(pid) = child.id() {
+            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+            match nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGTERM) {
+                Ok(_) => tokio::time::sleep(Duration::from_secs(2)).await,
+                Err(e) => {
+                    if e != nix::errno::Errno::ESRCH {
+                        tracing::warn!("Failed to SIGTERM process group {pgid}: {e:?}");
+                    }
+                }
             }
-            // InvalidInput means the process had already exited - fine.
+
+            // force-kill wat's left
+            if let Err(e) = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL) {
+                if e != nix::errno::Errno::ESRCH {
+                    tracing::warn!("Failed to SIGTERM process group {pgid}: {e:?}");
+                }
+            }
         }
+
+        // kill direct child
+        if let Err(e) = child.start_kill() {
+            // InvalidInput means process alr exited
+            if e.kind() != std::io::ErrorKind::InvalidInput {
+                tracing::warn!("Failed to SIGTERM process group {pgid}: {e:?}");
+            }
+        }
+
         let _ = child.wait().await;
     }
 }
@@ -290,15 +314,14 @@ impl Drop for IBGateway {
              Issuing a non-blocking kill as a last resort; ports may not be released cleanly."
         );
 
-        if let Err(e) = self.child.start_kill() {
-            if e.kind() != std::io::ErrorKind::InvalidInput {
-                tracing::error!("Drop: failed to send kill signal to IBC child: {e:?}");
+        if let Some(pid) = child.id() {
+            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+            if let Err(e) = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL) {
+                if e != nix::errno::Errno::ESRCH {
+                    tracing::warn!("Drop: failed to SIGKILL process group {pgid}: {e:?}");
+                }
             }
         }
-        // Deliberately not reaping here: `wait()` is async and Drop can't
-        // await it. The process becoming a zombie briefly until the parent
-        // exits or something else reaps it is an acceptable tradeoff versus
-        // blocking a Tokio worker thread inside Drop.
     }
 }
 
