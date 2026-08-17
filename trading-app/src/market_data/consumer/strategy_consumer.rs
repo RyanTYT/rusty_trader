@@ -100,7 +100,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
             // 2. Symbol alphabetical order
             // 3. Custom 'what_to_show' tie-breaking for Forex
             (
-                is_fx_a,
+                is_fx_b,
                 &a.contract.symbol.to_string(),
                 match &a.what_to_show {
                     WhatToShow::Bid => 0,
@@ -109,7 +109,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                 },
             )
                 .cmp(&(
-                    is_fx_b,
+                    is_fx_a,
                     &b.contract.symbol.to_string(),
                     match &b.what_to_show {
                         WhatToShow::Bid => 0,
