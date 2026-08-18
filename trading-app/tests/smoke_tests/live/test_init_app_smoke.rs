@@ -3,6 +3,8 @@
 //! Requires: live IB Gateway + Postgres + DATABASE_URL + IBC installed.
 //! Run with: `cargo test --test smoke_tests test_init_app_smoke -- --ignored`
 
+use std::time::Duration;
+
 use trading_app::{ibc::with_gateway_retry, init_app::init_app};
 
 #[tokio::test]
@@ -21,6 +23,8 @@ async fn test_init_app_smoke_live() {
                 .await
                 .expect("init_app failed");
             println!("init_app bootstrapped successfully — full smoke test passed");
+
+            tokio::time::sleep(Duration::from_secs(10));
 
             drop(state);
         })

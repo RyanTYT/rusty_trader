@@ -95,8 +95,10 @@ fn place_market_order(
     contract: Contract,
     action: Action,
     qty: f64,
+    strategy: &str
 ) -> i32 {
-    let order = market_order(action, qty);
+    let mut order = market_order(action, qty);
+    order.order_ref = strategy.to_string();
     let order_ibkr = OrderIBKR::new(contract, order, -1);
     let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
     OrderEngine::place_order(
@@ -123,7 +125,8 @@ async fn test_event_order_status_submitted() {
 
             // Place a limit order at unrealistic price so it stays open (Submitted status)
             let contract = aapl_contract();
-            let order = limit_order(Action::Buy, 1.0, 1.0);
+            let mut order = limit_order(Action::Buy, 1.0, 1.0);
+            order.order_ref = "noise".to_string();
             let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
             let perm_id = OrderEngine::place_order(
@@ -186,7 +189,8 @@ async fn test_event_order_status_cancelled() {
 
             // Place a limit order at unrealistic price (stays open)
             let contract = aapl_contract();
-            let order = limit_order(Action::Buy, 1.0, 1.0);
+            let mut order = limit_order(Action::Buy, 1.0, 1.0);
+            order.order_ref = "noise".to_string();
             let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
             let perm_id = OrderEngine::place_order(
@@ -251,7 +255,7 @@ async fn test_event_execution_on_fill() {
         let _controller = start_order_update_stream(&state, &order_store);
 
         // Place a market order — will fill immediately
-        let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0);
+        let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0, "noise");
         assert!(perm_id > 0, "order should be placed");
 
         // Wait for fill + execution event to be processed
@@ -311,7 +315,7 @@ async fn test_event_commission_report_on_fill() {
         let _controller = start_order_update_stream(&state, &order_store);
 
         // Place a market order — will fill + trigger commission report
-        let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0);
+        let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0, "noise");
         assert!(perm_id > 0);
 
         // Wait for fill + commission report event
@@ -454,7 +458,8 @@ async fn test_open_order_submitted_and_cancelled_direct() {
             // open_order::submitted writes open_orders (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
             let contract = aapl_contract();
-            let order = limit_order(Action::Buy, 1.0, 1.0);
+            let mut order = limit_order(Action::Buy, 1.0, 1.0);
+            order.order_ref = "noise".to_string();
 
             // Call open_order::submitted directly
             let handle = open_order::submitted(state.pool.clone(), &contract, &order)
