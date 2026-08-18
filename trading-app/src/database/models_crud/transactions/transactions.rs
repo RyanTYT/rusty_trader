@@ -35,16 +35,18 @@ pub enum TransactionsFullKeys {
 
 impl TransactionsFullKeys {
     pub fn from_strat_and_exec(strategy: &str, execution_data: &ExecutionData) -> Self {
-        let naive_dt =
-            NaiveDateTime::parse_from_str(&execution_data.execution.time, "%Y%m%d  %H:%M:%S")
-                .expect(&format!(
-                    "Failed to parse execution time: {}",
-                    &execution_data.execution.time
-                ));
-        let execution_time = Utc
-            .from_local_datetime(&naive_dt)
+        // E.g.: "20260101 15:55:00 US/Eastern"
+        let (dt_str, tz_str) = execution_data
+            .execution
+            .time
+            .rsplit_once(' ')
+            .expect("Invalid timestamp");
+        let execution_time = NaiveDateTime::parse_from_str(dt_str, "%Y%m%d %H:%M:%S")
+            .expect("Invalid date format")
+            .and_local_timezone(tz_str.parse::<chrono_tz::Tz>().expect("Invalid timezone"))
             .single()
-            .expect("Ambiguous or invalid datetime in New York timezone");
+            .expect("Ambiguous local time");
+
         match AssetType::from_str(&execution_data.contract.security_type) {
             AssetType::Option => Self::Options(OptionTransactionsFullKeys {
                 strategy: strategy.to_string(),

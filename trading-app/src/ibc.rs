@@ -114,7 +114,7 @@ impl IBGateway {
             };
 
             while let Some(line) = line_rx.recv().await {
-                println!("{line}");
+                // println!("{line}");
                 if let Some(f) = file.as_mut() {
                     let _ = f.write_all(line.as_bytes()).await;
                     let _ = f.write_all(b"\n").await;
