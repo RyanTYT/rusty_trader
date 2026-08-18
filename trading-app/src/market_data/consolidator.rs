@@ -82,17 +82,21 @@ impl Consolidator {
                     *is_second_try,
                 )
             },
-            move |input: &(Arc<Client>, Contract, bool, Vec<String>, bool)| {
-                let (client, contract, vwap, generic_ticks, is_second_try) = input;
-                let client_for_price = client.clone();
-                let ticks_refs: Vec<&str> = generic_ticks.iter().map(String::as_str).collect();
-                Self::_get_current_price(
-                    client_for_price,
-                    contract,
-                    *vwap,
-                    &ticks_refs,
-                    *is_second_try,
-                )
+            {
+                let handle = handle.clone();
+                move |input: &(Arc<Client>, Contract, bool, Vec<String>, bool)| {
+                    let (client, contract, vwap, generic_ticks, is_second_try) = input;
+                    let client_for_price = client.clone();
+                    let ticks_refs: Vec<&str> = generic_ticks.iter().map(String::as_str).collect();
+                    Self::_get_current_price(
+                        client_for_price,
+                        contract,
+                        &handle,
+                        *vwap,
+                        &ticks_refs,
+                        *is_second_try,
+                    )
+                }
             },
         )));
         memoisers.insert(MemoisedConsolidatorFns::GetPrice, get_price_fn.clone());

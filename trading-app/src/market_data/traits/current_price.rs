@@ -146,27 +146,23 @@ impl PriceSupplier for Consolidator {
             latest_request_timestamp - (latest_request_timestamp % bar_interval);
 
         let batch_creator_opt = if config.use_batching {
-            Some(
-                match AssetType::from_str(&contract.security_type) {
-                    AssetType::Stock | AssetType::CFD | AssetType::Future => {
-                        BatchDbCreatorEnum::Stock(
-                            init_channel::<HistoricalStockDataFullKeys>().await,
-                        )
-                    }
-                    AssetType::Option => BatchDbCreatorEnum::Options(
-                        init_channel::<HistoricalOptionsDataFullKeys>().await,
-                    ),
-                    AssetType::ForexPair => BatchDbCreatorEnum::Forex(
-                        init_channel::<HistoricalForexDataFullKeys>().await,
-                    ),
-                    AssetType::CASH => {
-                        panic!("Shouldn't be possible to get CASH")
-                    }
-                    AssetType::Unknown => {
-                        panic!("Tried to init batch channel for Unknown Asset Type")
-                    }
+            Some(match AssetType::from_str(&contract.security_type) {
+                AssetType::Stock | AssetType::CFD | AssetType::Future => {
+                    BatchDbCreatorEnum::Stock(init_channel::<HistoricalStockDataFullKeys>().await)
                 }
-            )
+                AssetType::Option => BatchDbCreatorEnum::Options(
+                    init_channel::<HistoricalOptionsDataFullKeys>().await,
+                ),
+                AssetType::ForexPair => {
+                    BatchDbCreatorEnum::Forex(init_channel::<HistoricalForexDataFullKeys>().await)
+                }
+                AssetType::CASH => {
+                    panic!("Shouldn't be possible to get CASH")
+                }
+                AssetType::Unknown => {
+                    panic!("Tried to init batch channel for Unknown Asset Type")
+                }
+            })
         } else {
             None
         };
@@ -357,19 +353,19 @@ impl Consolidator {
     /// Fetches price from Yahoo Finance (yfinance-rs) as a synchronous fallback.
     /// Uses `fast_info().last_price` which is the simplest current-price path.
     /// The Yahoo ticker must already be in the correct format (e.g. "7203.T", "AAPL").
-    fn get_price_from_yfinance(yahoo_ticker: &str) -> Result<Option<f64>, String> {
-        // We're in a sync context; spin up a one-shot runtime for the async call.
-        // This is acceptable in a fallback path — not on a hot loop.
+    fn get_price_from_yfinance(
+        yahoo_ticker: &str,
+        handle: &tokio::runtime::Handle,
+    ) -> Result<Option<f64>, String> {
         let yahoo_ticker = yahoo_ticker.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                let client = YfClient::default();
-                let ticker = Ticker::new(&client, &yahoo_ticker);
-                let fast_info = ticker.fast_info().await.map_err(|e| {
-                    format!("yfinance-rs fast_info failed for {yahoo_ticker}: {e:?}")
-                })?;
-                Ok(fast_info.last.map(|v| v.amount().as_f64()))
-            })
+        handle.block_on(async move {
+            let client = YfClient::default();
+            let ticker = Ticker::new(&client, &yahoo_ticker);
+            let fast_info = ticker
+                .fast_info()
+                .await
+                .map_err(|e| format!("yfinance-rs fast_info failed for {yahoo_ticker}: {e:?}"))?;
+            Ok(fast_info.last.map(|v| v.amount().as_f64()))
         })
     }
 
@@ -455,6 +451,7 @@ impl Consolidator {
     pub(crate) fn _get_current_price(
         client: Arc<Client>,
         contract: &Contract,
+        handle: &tokio::runtime::Handle,
         vwap: bool,
         generic_ticks: &[&str],
         is_second_try: bool,
@@ -462,6 +459,7 @@ impl Consolidator {
         let result = Self::_get_current_price_inner(
             client.clone(),
             contract,
+            handle,
             vwap,
             generic_ticks,
             is_second_try,
@@ -478,6 +476,7 @@ impl Consolidator {
     fn _get_current_price_inner(
         client: Arc<Client>,
         contract: &Contract,
+        handle: &tokio::runtime::Handle,
         vwap: bool,
         generic_ticks: &[&str],
         is_second_try: bool,
@@ -526,6 +525,7 @@ impl Consolidator {
                 return Self::_get_current_price_inner(
                     client,
                     contract,
+                    handle,
                     vwap,
                     generic_ticks,
                     is_second_try,
@@ -543,6 +543,7 @@ impl Consolidator {
                             currency: contract.symbol.to_string().into(),
                             ..contract.clone()
                         },
+                        handle,
                         vwap,
                         generic_ticks,
                         true,
@@ -557,7 +558,7 @@ impl Consolidator {
                             "IBKR market data access denied for {} ({err}), falling back to yfinance-rs with ticker '{yt}'",
                             contract.symbol,
                         );
-                        Self::get_price_from_yfinance(&yt)
+                        Self::get_price_from_yfinance(&yt, handle)
                             .map_err(|e| format!("yfinance error for {yt}: {e}"))?
                             .ok_or_else(|| format!("yfinance returned no price data for {yt}"))
                     }
