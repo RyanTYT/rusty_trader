@@ -56,6 +56,8 @@ impl Consolidator {
                 .await
         })?;
 
+        tracing::info!("Retrieved current positions for get_strategy_sgd_value");
+
         let mut sgd_value = 0.0;
         let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
 
@@ -135,6 +137,8 @@ impl Consolidator {
                 let mkt_value = call_price(contract, false, vec![], false)? * quantity;
                 sgd_value += mkt_value;
             }
+
+            tracing::info!("Got one additional sgd position");
         }
 
         Ok(sgd_value)
