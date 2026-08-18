@@ -164,7 +164,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
       - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
       - DATABASE_HOST=test-db
-      - DB_USER=${DB_USER}
+      - DB_USERNAME=${DB_USER}
       - DB_PW=${DB_PW}
       - DB_DB=${DB_DB}
       - DISPLAY=:99
