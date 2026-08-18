@@ -129,13 +129,13 @@ async fn test_event_order_status_submitted() {
             order.order_ref = "noise".to_string();
             let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-            let perm_id = OrderEngine::place_order(
+            let order_id = OrderEngine::place_order(
                 tokio::runtime::Handle::current(),
                 state.pool.clone(),
                 &weak_client,
                 order_ibkr,
             );
-            assert!(perm_id > 0, "order should be placed");
+            assert!(order_id > 0, "order should be placed");
 
             // Wait for the Submitted event to be processed by the stream
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -148,12 +148,12 @@ async fn test_event_order_status_submitted() {
                 .expect("get_orders_for_strat failed");
             let our_order = orders
                 .iter()
-                .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == perm_id));
+                .find(|o| matches!(o, OOFK::Stock(s) if s.order_id == order_id));
             assert!(
                 our_order.is_some(),
-                "Submitted event should create open_order row for perm_id={perm_id}"
+                "Submitted event should create open_order row for order_id={order_id}"
             );
-            println!("✅ order_status::submitted — open_order row created for perm_id={perm_id}");
+            println!("✅ order_status::submitted — open_order row created for order_id={order_id}");
 
             // Cleanup: cancel + delete
             if let Some(OOFK::Stock(s)) = our_order {
