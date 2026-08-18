@@ -118,8 +118,6 @@ impl OrderEngine {
         let order_id = client.next_order_id();
         std::thread::spawn(move || {
             hotpath::measure_block!("order_submit_to_ibkr", {
-                let order_id = client.next_order_id();
-
                 tracing::info!(
                     "Order submitted to IBKR: {:?} for {:?}",
                     order_ibkr.order.action,
