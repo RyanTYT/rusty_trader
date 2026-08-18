@@ -22,6 +22,7 @@ pub enum BarUpdateOutcome {
     NoAction,
 }
 
+#[async_trait::async_trait]
 pub trait StrategyExecutor: Ord + PartialOrd + Eq + PartialEq + Clone + Send + Sync {
     /// NEEDS TO BE DEFINED CORRECTLY
     /// Usually for initialisation and storing of the relevant contracts for each strategy
@@ -44,7 +45,7 @@ pub trait StrategyExecutor: Ord + PartialOrd + Eq + PartialEq + Clone + Send + S
     fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract>;
     /// Warm up the data given the consolidator - get all data required up till now for the
     /// strategy
-    fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>;
+    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>;
     fn is_fx_strategy(&self) -> bool;
 }
 
@@ -64,6 +65,7 @@ macro_rules! strategy_enum {
             }
         }
 
+        #[async_trait::async_trait]
         impl StrategyExecutor for StrategyEnum {
             fn get_name(&self) -> String {
                 match self {
@@ -89,10 +91,10 @@ macro_rules! strategy_enum {
                 }
             }
 
-            fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
+           async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
             {
                 match self {
-                    $(StrategyEnum::$variant(s) => s.warm_up_data(consolidator)),*
+                    $(StrategyEnum::$variant(s) => s.warm_up_data(consolidator).await),*
                 }
             }
 

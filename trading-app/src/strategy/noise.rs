@@ -72,6 +72,7 @@ impl Noise {
 }
 
 #[hotpath::measure_all]
+#[async_trait::async_trait]
 impl StrategyExecutor for Noise {
     fn get_name(&self) -> String {
         self.name.clone()
@@ -108,7 +109,7 @@ impl StrategyExecutor for Noise {
         ]
     }
 
-    fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
+    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
         let consolidator = consolidator.clone();
         let contract_opt = consolidator.validate_contract(
             Contract::stock("QQQ")
@@ -118,16 +119,10 @@ impl StrategyExecutor for Noise {
                 .build(),
             Duration::from_secs(10),
         );
-        self.tokio_handle.block_on(async move {
-            consolidator
-                .update_at_least_n_days_data(
-                    &contract_opt.expect("Expected QQQ contract"),
-                    20,
-                    true,
-                )
-                .await
-                .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))
-        })?;
+        consolidator
+            .update_at_least_n_days_data(&contract_opt.expect("Expected QQQ contract"), 20, true)
+            .await
+            .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))?;
 
         Ok(())
     }

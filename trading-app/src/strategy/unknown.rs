@@ -53,6 +53,7 @@ impl Unknown {
 }
 
 #[hotpath::measure_all]
+#[async_trait::async_trait]
 impl StrategyExecutor for Unknown {
     fn get_name(&self) -> String {
         self.name.clone()
@@ -92,7 +93,7 @@ impl StrategyExecutor for Unknown {
         ]
     }
 
-    fn warm_up_data(&self, _consolidator: &Arc<Consolidator>) -> Result<(), String> {
+    async fn warm_up_data(&self, _consolidator: &Arc<Consolidator>) -> Result<(), String> {
         Ok(())
     }
 }

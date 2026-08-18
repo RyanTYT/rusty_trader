@@ -230,14 +230,13 @@ async fn test_strategy_warm_up_data_noise() {
         "ibc_strat_warmup_noise.log",
         |state| async move {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
-            let noise = StrategyEnum::Noise(Noise::new(
-                state.pool.clone(),
-                tokio::runtime::Handle::current(),
-            ));
+            let handle = tokio::runtime::Handle::current();
+            let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), handle.clone()));
 
             tokio::task::block_in_place(|| {
                 // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                let result = noise.warm_up_data(&consolidator);
+                let result =
+                    handle.block_on(async move { noise.warm_up_data(&consolidator).await });
                 assert!(
                     result.is_ok(),
                     "Noise warm_up_data should succeed, got: {:?}",
@@ -284,7 +283,8 @@ async fn test_strategy_warm_up_data_manual() {
 
             // Manual.warm_up_data is a no-op (returns Ok(()))
             tokio::task::block_in_place(|| {
-                let result = manual.warm_up_data(&consolidator);
+                let result = tokio::runtime::Handle::current()
+                    .block_on(async move { manual.warm_up_data(&consolidator).await });
                 assert!(result.is_ok(), "Manual warm_up_data should succeed");
             });
             println!("✅ warm_up_data(Manual): no-op completed without error");
@@ -309,7 +309,8 @@ async fn test_strategy_warm_up_data_unknown() {
             // Unknown.warm_up_data is a no-op (returns Ok(()))
             tokio::task::block_in_place(|| {
                 // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                let result = unknown.warm_up_data(&consolidator);
+                let result = tokio::runtime::Handle::current()
+                    .block_on(async move { unknown.warm_up_data(&consolidator).await });
                 assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             });
             println!("✅ warm_up_data(Unknown): no-op completed without error");
@@ -500,9 +501,8 @@ async fn test_strategy_on_bar_update_noise() {
             // on_bar_update for Noise queries DB (avg_move, daily_open, daily_vol, vwap) + returns a BarUpdateOutcome
             // It may return Ok(PendingDbQuery), Ok(NoAction), or Ok(EmitOrders)
             // depending on market conditions. We just verify it doesn't error.
-            let outcome = tokio::task::block_in_place(|| {
-                noise.on_bar_update(&contract, &bar, &consolidator)
-            });
+            let outcome =
+                tokio::task::block_in_place(|| noise.on_bar_update(&contract, &bar, &consolidator));
             assert!(
                 outcome.is_ok(),
                 "Noise on_bar_update scope handle should succeed"
