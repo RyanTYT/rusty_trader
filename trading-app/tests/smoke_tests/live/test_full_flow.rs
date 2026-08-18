@@ -187,7 +187,8 @@ async fn test_full_place_reverse_zero_flow() {
         println!("Baseline sync complete");
 
         // 4. Place a BUY order for 1 share
-        let order = market_order(Action::Buy, 1.0);
+        let mut order = market_order(Action::Buy, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
         let order_perm_id = OrderEngine::place_order(
@@ -241,7 +242,8 @@ async fn test_full_place_reverse_zero_flow() {
 
         // 5. Reverse: SELL to close the position
         let sell_qty = -pos.quantity;
-        let order = market_order(Action::Sell, sell_qty.abs());
+        let mut order = market_order(Action::Sell, sell_qty.abs());
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
         let _sell_perm_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
