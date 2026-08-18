@@ -411,35 +411,40 @@ async fn test_consolidator_get_strategy_sgd_value() {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // get_strategy_sgd_value queries current positions + computes SGD value
-            let result = consolidator.get_strategy_sgd_value("noise");
-            match result {
-                Ok(value) => {
-                    assert!(value.is_finite(), "SGD value should be finite, got {value}");
-                    assert!(
-                        value >= 0.0,
-                        "SGD value should be non-negative, got {value}"
-                    );
-                    println!("✅ get_strategy_sgd_value('noise'): {value}");
-                }
-                Err(e) => {
-                    println!("get_strategy_sgd_value returned Err (expected if no positions): {e}");
-                }
-            }
+            std::thread::scope(|s| {
+                let handle = s.spawn(|| {
+                    let result = consolidator.get_strategy_sgd_value("noise");
+                    match result {
+                        Ok(value) => {
+                            assert!(value.is_finite(), "SGD value should be finite, got {value}");
+                            assert!(
+                                value >= 0.0,
+                                "SGD value should be non-negative, got {value}"
+                            );
+                            println!("✅ get_strategy_sgd_value('noise'): {value}");
+                        }
+                        Err(e) => {
+                            println!("get_strategy_sgd_value returned Err (expected if no positions): {e}");
+                        }
+                    }
 
-            // Test with non-existent strategy — should return 0 or Err gracefully
-            let result = consolidator.get_strategy_sgd_value("nonexistent_strategy");
-            match result {
-                Ok(value) => {
-                    assert_eq!(
-                        value, 0.0,
-                        "non-existent strategy should have 0 SGD value, got {value}"
-                    );
-                    println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
-                }
-                Err(e) => {
-                    println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
-                }
-            }
+                    // Test with non-existent strategy — should return 0 or Err gracefully
+                    let result = consolidator.get_strategy_sgd_value("nonexistent_strategy");
+                    match result {
+                        Ok(value) => {
+                            assert_eq!(
+                                value, 0.0,
+                                "non-existent strategy should have 0 SGD value, got {value}"
+                            );
+                            println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
+                        }
+                        Err(e) => {
+                            println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
+                        }
+                    }
+                });
+                handle.join();
+            });
         },
     )
     .await

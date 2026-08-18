@@ -35,17 +35,24 @@ async fn test_get_strategy_sgd_value_live() {
             contract_scheduler,
         );
 
-        let result = consolidator.get_strategy_sgd_value("noise");
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let result = consolidator.get_strategy_sgd_value("noise");
 
-        match result {
-            Ok(value) => {
-                assert!(value.is_finite(), "SGD value should be finite, got {value}");
-                println!("Strategy 'noise' SGD value: {value}");
-            }
-            Err(e) => {
-                println!("get_strategy_sgd_value returned error (expected if no positions): {e}");
-            }
-        }
+                match result {
+                    Ok(value) => {
+                        assert!(value.is_finite(), "SGD value should be finite, got {value}");
+                        println!("Strategy 'noise' SGD value: {value}");
+                    }
+                    Err(e) => {
+                        println!(
+                            "get_strategy_sgd_value returned error (expected if no positions): {e}"
+                        );
+                    }
+                }
+            });
+            handle.join();
+        });
     })
     .await
     .expect("Failed to boot live IBKR");

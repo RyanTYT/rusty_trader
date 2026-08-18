@@ -453,7 +453,7 @@ async fn test_open_order_submitted_and_cancelled_direct() {
             // Verify the row was created (order_id from the Order struct)
             let crud = OpenOrdersCRUD::stock(state.pool.clone());
             let pk = OOInterfacePK::Stock(OpenStockOrdersPrimaryKeys {
-                order_perm_id: -1,
+                order_perm_id: order.perm_id,
                 order_id: order.order_id,
             });
             let data = crud.read(&pk).await.expect("read failed");
@@ -467,7 +467,7 @@ async fn test_open_order_submitted_and_cancelled_direct() {
             open_order::cancelled(
                 state.pool.clone(),
                 order.order_id,
-                -1,
+                order.perm_id,
                 &ibapi::contracts::SecurityType::Stock,
             );
 
