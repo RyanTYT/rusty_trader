@@ -83,11 +83,7 @@ impl TransactionsFullKeys {
                     stock: stock,
                     primary_exchange: execution_data.contract.primary_exchange.to_string(),
                     currency: execution_data.contract.currency.to_string(),
-                    time: Utc
-                        .from_local_datetime(&naive_dt)
-                        .single()
-                        .expect("Ambiguous or invalid datetime in New York timezone")
-                        .to_utc(),
+                    time: execution_time.to_utc(),
                     price: execution_data.execution.price,
                     quantity: if execution_data.execution.side == "BOT" {
                         execution_data.execution.shares
