@@ -349,13 +349,18 @@ async fn test_strategy_on_bar_update_manual() {
                 },
             );
 
-            let outcome = {
-                let handle = std::thread::Builder::new()
-                    .name("manual_on_bar_update".to_string())
-                    .spawn(move || manual.on_bar_update(&contract, &bar, &consolidator))
-                    .expect("Failed to spawn on_bar_update thread");
-                handle.join().expect("on_bar_update thread panicked")
-            };
+            // on_bar_update is SYNC + internally calls self.tokio_handle.block_on(...).
+            // Mirror the production hook_strategy pattern (strategy_consumer.rs:142):
+            // run it on a dedicated OS thread. Use `spawn_blocking` (not raw
+            // std::thread + join) so the main thread stays in the event loop
+            // servicing the current-thread runtime's I/O driver — otherwise the
+            // sync call's internal block_on would deadlock against a blocked main
+            // thread. No block_in_place (would panic on current-thread runtime).
+            let outcome = tokio::task::spawn_blocking(move || {
+                manual.on_bar_update(&contract, &bar, &consolidator)
+            })
+            .await
+            .expect("on_bar_update blocking task panicked");
             assert!(
                 outcome.is_ok(),
                 "Manual on_bar_update scoped handle should succeed"
@@ -414,13 +419,13 @@ async fn test_strategy_on_bar_update_unknown() {
                 },
             );
 
-            let outcome = {
-                let handle = std::thread::Builder::new()
-                    .name("unknown_on_bar_update".to_string())
-                    .spawn(move || unknown.on_bar_update(&contract, &bar, &consolidator))
-                    .expect("Failed to spawn on_bar_update thread");
-                handle.join().expect("on_bar_update thread panicked")
-            };
+            // on_bar_update is SYNC — run on a dedicated OS thread via spawn_blocking
+            // (keeps main thread in event loop so the internal block_on doesn't deadlock).
+            let outcome = tokio::task::spawn_blocking(move || {
+                unknown.on_bar_update(&contract, &bar, &consolidator)
+            })
+            .await
+            .expect("on_bar_update blocking task panicked");
             assert!(
                 outcome.is_ok(),
                 "Unknown on_bar_update scoped handle should succeed"
@@ -508,15 +513,14 @@ async fn test_strategy_on_bar_update_noise() {
             // depending on market conditions. We just verify it doesn't error.
             //
             // on_bar_update is SYNC + internally calls self.tokio_handle.block_on(...).
-            // Mirror the production hook_strategy pattern: run it on a dedicated OS
-            // thread + join. No block_in_place.
-            let outcome = {
-                let handle = std::thread::Builder::new()
-                    .name("noise_on_bar_update".to_string())
-                    .spawn(move || noise.on_bar_update(&contract, &bar, &consolidator))
-                    .expect("Failed to spawn on_bar_update thread");
-                handle.join().expect("on_bar_update thread panicked")
-            };
+            // Run on a dedicated OS thread via spawn_blocking (keeps main thread in
+            // event loop so the internal block_on doesn't deadlock the current-thread
+            // runtime). No block_in_place.
+            let outcome = tokio::task::spawn_blocking(move || {
+                noise.on_bar_update(&contract, &bar, &consolidator)
+            })
+            .await
+            .expect("on_bar_update blocking task panicked");
             assert!(
                 outcome.is_ok(),
                 "Noise on_bar_update scope handle should succeed"

@@ -418,19 +418,18 @@ async fn test_consolidator_get_strategy_sgd_value() {
 
             // get_strategy_sgd_value is SYNC + internally calls handle.block_on(...).
             // Mirror the production hook_strategy pattern (strategy_consumer.rs:142):
-            // run it on a dedicated OS thread + join. No block_in_place.
+            // run it on a dedicated OS thread. We use `spawn_blocking` (not a raw
+            // `std::thread::spawn` + `join`) so the main thread stays in the event
+            // loop servicing the current-thread runtime's I/O driver — otherwise the
+            // sync call's internal `handle.block_on(db_query)` would deadlock against
+            // a blocked main thread. No block_in_place.
             let consolidator_for_thread = consolidator.clone();
-            let join = std::thread::Builder::new()
-                .name("cons_sgd_value".to_string())
-                .spawn(move || {
-                    let noise_result = consolidator_for_thread.get_strategy_sgd_value("noise");
-                    // Re-fetch the consolidator for the second call (ownership moved above).
-                    (noise_result, consolidator_for_thread)
-                })
-                .expect("Failed to spawn sgd_value thread");
-            let (result, consolidator_back) = join
-                .join()
-                .expect("sgd_value thread panicked");
+            let (result, consolidator_back) = tokio::task::spawn_blocking(move || {
+                let noise_result = consolidator_for_thread.get_strategy_sgd_value("noise");
+                (noise_result, consolidator_for_thread)
+            })
+            .await
+            .expect("sgd_value blocking task panicked");
             match result {
                 Ok(value) => {
                     assert!(value.is_finite(), "SGD value should be finite, got {value}");
@@ -448,14 +447,12 @@ async fn test_consolidator_get_strategy_sgd_value() {
             }
 
             // Test with non-existent strategy — should return 0 or Err gracefully.
-            // Run on the same OS-thread pattern.
-            let join = std::thread::Builder::new()
-                .name("cons_sgd_value_none".to_string())
-                .spawn(move || consolidator_back.get_strategy_sgd_value("nonexistent_strategy"))
-                .expect("Failed to spawn sgd_value_none thread");
-            let result = join
-                .join()
-                .expect("sgd_value_none thread panicked");
+            // Use the same spawn_blocking pattern (keeps main thread in event loop).
+            let result = tokio::task::spawn_blocking(move || {
+                consolidator_back.get_strategy_sgd_value("nonexistent_strategy")
+            })
+            .await
+            .expect("sgd_value_none blocking task panicked");
             match result {
                 Ok(value) => {
                     assert_eq!(
