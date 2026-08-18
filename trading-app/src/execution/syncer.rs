@@ -416,7 +416,7 @@ impl SyncOps for SyncerEngine {
             self.account.to_string(),
             &fx_map,
             &mut errors,
-            &default_strategy.unwrap_or("unknown".to_string())
+            &default_strategy.clone().unwrap_or("unknown".to_string()),
         )
         .await;
 
@@ -449,7 +449,7 @@ async fn sync_fx_positions(
     account: String,
     fx_map: &HashMap<String, f64>,
     errors: &mut Vec<String>,
-    default_strategy: &str
+    default_strategy: &str,
 ) {
     // =====================================
     // Compare FX broker positions
