@@ -32,9 +32,9 @@ impl GetStrategyValue for Consolidator {
         // just move it straight into the tuple.
         let result = entry.call_any(Box::new(strategy.to_string()))?;
 
-        *result
-            .downcast::<Result<f64, String>>()
-            .unwrap_or_else(|_| panic!("AnyMemoized: return type mismatch for GetPrice"))
+        Ok(*result
+            .downcast::<f64>()
+            .unwrap_or_else(|_| panic!("AnyMemoized: return type mismatch for GetPrice")))
     }
 }
 
