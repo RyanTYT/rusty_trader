@@ -416,6 +416,7 @@ impl SyncOps for SyncerEngine {
             self.account.to_string(),
             &fx_map,
             &mut errors,
+            &default_strategy.unwrap_or("unknown".to_string())
         )
         .await;
 
@@ -448,6 +449,7 @@ async fn sync_fx_positions(
     account: String,
     fx_map: &HashMap<String, f64>,
     errors: &mut Vec<String>,
+    default_strategy: &str
 ) {
     // =====================================
     // Compare FX broker positions
@@ -511,7 +513,7 @@ async fn sync_fx_positions(
         if let Err(e) = current_stock_positions_crud
             .update_positions_additive(
                 CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
-                    strategy: "unknown".to_string(),
+                    strategy: default_strategy.to_string(),
                     stock: format!("CASH:{currency}"),
                     primary_exchange: "".to_string(),
                     currency: "SGD".to_string(),
