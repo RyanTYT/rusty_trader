@@ -191,17 +191,17 @@ async fn test_full_place_reverse_zero_flow() {
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let order_perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
             order_ibkr,
         );
         assert!(
-            order_perm_id > 0,
-            "order should be placed, got perm_id={order_perm_id}"
+            order_id > 0,
+            "order should be placed, got order_id={order_id}"
         );
-        println!("BUY order placed, perm_id={order_perm_id}");
+        println!("BUY order placed, order_id={order_id}");
 
         // Wait for fill + order_update_stream to process
         tokio::time::sleep(Duration::from_secs(15)).await;
@@ -245,7 +245,7 @@ async fn test_full_place_reverse_zero_flow() {
         let mut order = market_order(Action::Sell, sell_qty.abs());
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
-        let _sell_perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
