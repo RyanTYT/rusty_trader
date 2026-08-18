@@ -56,6 +56,12 @@ pub struct Consolidator {
     contract_scheduler: Arc<IbkrContractScheduler>,
 }
 
+impl Drop for Consolidator {
+    fn drop(&mut self) {
+        self.client.disconnect();
+    }
+}
+
 impl Consolidator {
     pub fn new(
         handle: tokio::runtime::Handle,
