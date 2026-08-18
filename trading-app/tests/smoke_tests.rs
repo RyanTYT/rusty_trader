@@ -9,5 +9,8 @@
 //! Each test file under `live/` exercises a real IBKR flow (validate_contract,
 //! get_current_price, populate_historical_data, sync_executions, etc.).
 
+#[path ="common/mod.rs"]
+mod common;
+
 #[path = "smoke_tests/live/mod.rs"]
 mod live;

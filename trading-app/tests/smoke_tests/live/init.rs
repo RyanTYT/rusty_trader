@@ -167,6 +167,7 @@ where
     F: FnOnce(LiveIbkr) -> Fut,
     Fut: std::future::Future<Output = T>,
 {
+    crate::common::init_tracing();
     let pool = get_pool().await?;
 
     // with_gateway_retry owns the IBGateway and shuts it down when the closure
