@@ -235,14 +235,9 @@ async fn test_strategy_warm_up_data_noise() {
                 tokio::runtime::Handle::current(),
             ));
 
-            std::thread::scope(|s| {
-                let result_handle = s.spawn(|| {
-                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                    noise.warm_up_data(&consolidator)
-                });
-                let result = result_handle
-                    .join()
-                    .expect("Expected manual warm_up_data thread not to panic");
+            tokio::task::block_in_place(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                let result = noise.warm_up_data(&consolidator);
                 assert!(
                     result.is_ok(),
                     "Noise warm_up_data should succeed, got: {:?}",
@@ -288,14 +283,8 @@ async fn test_strategy_warm_up_data_manual() {
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
             // Manual.warm_up_data is a no-op (returns Ok(()))
-            std::thread::scope(|s| {
-                let result_handle = s.spawn(|| {
-                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                    manual.warm_up_data(&consolidator)
-                });
-                let result = result_handle
-                    .join()
-                    .expect("Expected manual warm_up_data thread not to panic");
+            tokio::task::block_in_place(|| {
+                let result = manual.warm_up_data(&consolidator);
                 assert!(result.is_ok(), "Manual warm_up_data should succeed");
             });
             println!("✅ warm_up_data(Manual): no-op completed without error");
@@ -318,14 +307,9 @@ async fn test_strategy_warm_up_data_unknown() {
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
             // Unknown.warm_up_data is a no-op (returns Ok(()))
-            std::thread::scope(|s| {
-                let result_handle = s.spawn(|| {
-                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                    unknown.warm_up_data(&consolidator)
-                });
-                let result = result_handle
-                    .join()
-                    .expect("Expected unknown warm_up_data thread not to panic");
+            tokio::task::block_in_place(|| {
+                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
+                let result = unknown.warm_up_data(&consolidator);
                 assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             });
             println!("✅ warm_up_data(Unknown): no-op completed without error");
@@ -370,20 +354,14 @@ async fn test_strategy_on_bar_update_manual() {
                 },
             );
 
-            let outcome = std::thread::scope(|s| {
-                let handle = s.spawn(|| manual.on_bar_update(&contract, &bar, &consolidator));
-                handle.join()
+            let outcome = tokio::task::block_in_place(|| {
+                manual.on_bar_update(&contract, &bar, &consolidator)
             });
             assert!(
                 outcome.is_ok(),
                 "Manual on_bar_update scoped handle should succeed"
             );
-            let outcome_unwrap = outcome.unwrap();
-            assert!(
-                outcome_unwrap.is_ok(),
-                "Manual on_bar_update should succeed"
-            );
-            match outcome_unwrap.unwrap() {
+            match outcome.unwrap() {
                 BarUpdateOutcome::PendingDbQuery(asset_types) => {
                     assert!(
                         asset_types.contains(&AssetType::Stock),
@@ -437,20 +415,14 @@ async fn test_strategy_on_bar_update_unknown() {
                 },
             );
 
-            let outcome = std::thread::scope(|s| {
-                let handle = s.spawn(|| unknown.on_bar_update(&contract, &bar, &consolidator));
-                handle.join()
+            let outcome = tokio::task::block_in_place(|| {
+                unknown.on_bar_update(&contract, &bar, &consolidator)
             });
             assert!(
                 outcome.is_ok(),
                 "Unknown on_bar_update scoped handle should succeed"
             );
-            let outcome_unwrap = outcome.unwrap();
-            assert!(
-                outcome_unwrap.is_ok(),
-                "Unknown on_bar_update should succeed"
-            );
-            match outcome_unwrap.unwrap() {
+            match outcome.unwrap() {
                 BarUpdateOutcome::PendingDbQuery(asset_types) => {
                     assert!(asset_types.contains(&AssetType::Stock));
                     assert!(asset_types.contains(&AssetType::Option));
@@ -480,15 +452,7 @@ async fn test_strategy_on_bar_update_noise() {
             ));
 
             // Warm up data first so on_bar_update has the historical data it needs
-            std::thread::scope(|s| {
-                let result_handle = s.spawn(|| {
-                    // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                    noise.warm_up_data(&consolidator)
-                });
-                let result = result_handle
-                    .join()
-                    .expect("Expected noise warm_up_data thread not to panic");
-            });
+            let result = tokio::task::block_in_place(|| noise.warm_up_data(&consolidator));
 
             let contract = Contract {
                 symbol: "QQQ".into(),
@@ -536,17 +500,14 @@ async fn test_strategy_on_bar_update_noise() {
             // on_bar_update for Noise queries DB (avg_move, daily_open, daily_vol, vwap) + returns a BarUpdateOutcome
             // It may return Ok(PendingDbQuery), Ok(NoAction), or Ok(EmitOrders)
             // depending on market conditions. We just verify it doesn't error.
-            let outcome = std::thread::scope(|s| {
-                let handle = s.spawn(|| noise.on_bar_update(&contract, &bar, &consolidator));
-                handle.join()
+            let outcome = tokio::task::block_in_place(|| {
+                noise.on_bar_update(&contract, &bar, &consolidator)
             });
             assert!(
                 outcome.is_ok(),
                 "Noise on_bar_update scope handle should succeed"
             );
-            let outcome_unwrap = outcome.unwrap();
-            assert!(outcome_unwrap.is_ok(), "Noise on_bar_update should succeed");
-            match outcome_unwrap.unwrap() {
+            match outcome.unwrap() {
                 BarUpdateOutcome::NoAction => {
                     println!("✅ on_bar_update(Noise): NoAction (market conditions not met)")
                 }
