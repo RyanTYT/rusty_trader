@@ -443,7 +443,7 @@ async fn test_consolidator_get_strategy_sgd_value() {
                         }
                     }
                 });
-                handle.join();
+                handle.join().expect("Expected thread to be fine");
             });
         },
     )
