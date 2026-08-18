@@ -37,7 +37,9 @@ use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -114,6 +116,8 @@ async fn test_place_order_market_buy() {
         &ibkr_account(),
         "ibc_oe_place_market.log",
         |state| async move {
+            // place_order writes optimistic open_order row (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let contract = aapl_contract();
             let order = market_order(Action::Buy, 1.0);
             let order_ibkr = OrderIBKR::new(contract, order, -1);
@@ -177,6 +181,8 @@ async fn test_place_orders_batch_multiple() {
         &ibkr_account(),
         "ibc_oe_place_batch.log",
         |state| async move {
+            // place_orders writes optimistic open_order rows (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             // Place 2 orders: AAPL buy 1 share, MSFT buy 1 share
             let order1 = OrderIBKR::new(aapl_contract(), market_order(Action::Buy, 1.0), -1);
             let order2 = OrderIBKR::new(msft_contract(), market_order(Action::Buy, 1.0), -1);
@@ -319,6 +325,8 @@ async fn test_handle_bar_update_outcome_no_action() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_emit_orders() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_emit.log", |state| async move {
+        // EmitOrders path places orders → writes open_order rows (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let (consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -378,6 +386,8 @@ async fn test_handle_bar_update_outcome_emit_orders() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_handle_bar_update_outcome_pending_db_query() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_pending.log", |state| async move {
+        // PendingDbQuery path reads target/current position diff; may place orders.
+        ensure_strategy_row(&state.pool, "noise").await;
         let (consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
@@ -412,6 +422,8 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_place_order_limit_unrealistic_price() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_limit.log", |state| async move {
+        // place_order writes optimistic open_order row (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let contract = aapl_contract();
         // Limit buy at $1.00 — won't fill, stays open
         let order = limit_order(Action::Buy, 1.0, 1.0);

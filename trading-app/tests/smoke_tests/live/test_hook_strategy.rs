@@ -31,7 +31,9 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::StrategyEnum;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 const BUFFER_SIZE: usize = 128;
 const MAX_NO_OF_CONSUMERS: usize = 4;
@@ -359,6 +361,9 @@ async fn test_hook_strategy_stock_noise() {
         &ibkr_account(),
         "ibc_bundler_hook_stock.log",
         |state| async move {
+            // hook_strategy with Noise processes bars → may write target_positions/
+            // place orders (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let contract = aapl_contract();
             let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
             let consolidator = build_consolidator(&state, scheduler.clone());
@@ -417,6 +422,8 @@ async fn test_hook_strategy_forex_manual() {
         &ibkr_account(),
         "ibc_bundler_hook_forex.log",
         |state| async move {
+            // hook_strategy with Manual processes forex bars → may place orders (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "manual").await;
             let contract = gbp_usd_contract();
             let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
             let consolidator = build_consolidator(&state, scheduler.clone());
@@ -482,74 +489,76 @@ async fn test_hook_strategy_forex_manual() {
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
 async fn test_hook_strategy_idempotent() {
     with_live_ibkr(&ibkr_account(), "ibc_bundler_hook_idem.log", |state| async move {
+        // hook_strategy with Noise processes bars → may place orders (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
 
-    let contract = aapl_contract();
-    let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
-    let consolidator = build_consolidator(&state, scheduler.clone());
+        let contract = aapl_contract();
+        let scheduler = build_scheduler_with_schedules(&state, &[contract.clone()]);
+        let consolidator = build_consolidator(&state, scheduler.clone());
 
-    let (rb, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-        Arc::downgrade(&state.client_1),
-        contract.clone(),
-        RealtimeWhatToShow::Trades,
-        scheduler.clone(),
-    );
-    let consumer = IbkrBarConsumer::new(
-        contract,
-        RealtimeWhatToShow::Trades,
-        rb.get_new_consumer().unwrap(),
-    );
+        let (rb, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+            Arc::downgrade(&state.client_1),
+            contract.clone(),
+            RealtimeWhatToShow::Trades,
+            scheduler.clone(),
+        );
+        let consumer = IbkrBarConsumer::new(
+            contract,
+            RealtimeWhatToShow::Trades,
+            rb.get_new_consumer().unwrap(),
+        );
 
-    let scheduler_clone = scheduler.clone();
-    let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
-    let order_engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
-    let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-    let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
+        let scheduler_clone = scheduler.clone();
+        let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+        let order_engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
+        let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
+        let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
 
-    // First call — should spawn the thread
-    bundler.hook_strategy(
-        vec![consumer],
-        noise.clone(),
-        order_engine.clone(),
-        Arc::downgrade(&consolidator),
-        Arc::downgrade(&state.client_1),
-        Arc::downgrade(&order_store),
-    );
-    println!("First hook_strategy call — thread spawned");
+        // First call — should spawn the thread
+        bundler.hook_strategy(
+            vec![consumer],
+            noise.clone(),
+            order_engine.clone(),
+            Arc::downgrade(&consolidator),
+            Arc::downgrade(&state.client_1),
+            Arc::downgrade(&order_store),
+        );
+        println!("First hook_strategy call — thread spawned");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Second call — should be a no-op (is_alive is already true)
-    // Note: we can't easily pass the same consumer twice (ownership), so we build a new one
-    let (rb2, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
-        Arc::downgrade(&state.client_1),
-        aapl_contract(),
-        RealtimeWhatToShow::Trades,
-        scheduler_clone.clone(),
-    );
-    let consumer2 = IbkrBarConsumer::new(
-        aapl_contract(),
-        RealtimeWhatToShow::Trades,
-        rb2.get_new_consumer().unwrap(),
-    );
+        // Second call — should be a no-op (is_alive is already true)
+        // Note: we can't easily pass the same consumer twice (ownership), so we build a new one
+        let (rb2, _) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+            Arc::downgrade(&state.client_1),
+            aapl_contract(),
+            RealtimeWhatToShow::Trades,
+            scheduler_clone.clone(),
+        );
+        let consumer2 = IbkrBarConsumer::new(
+            aapl_contract(),
+            RealtimeWhatToShow::Trades,
+            rb2.get_new_consumer().unwrap(),
+        );
 
-    bundler.hook_strategy(
-        vec![consumer2],
-        noise,
-        order_engine,
-        Arc::downgrade(&consolidator),
-        Arc::downgrade(&state.client_1),
-        Arc::downgrade(&order_store),
-    );
-    println!("Second hook_strategy call — should be a no-op (is_alive already true)");
+        bundler.hook_strategy(
+            vec![consumer2],
+            noise,
+            order_engine,
+            Arc::downgrade(&consolidator),
+            Arc::downgrade(&state.client_1),
+            Arc::downgrade(&order_store),
+        );
+        println!("Second hook_strategy call — should be a no-op (is_alive already true)");
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    println!("✅ hook_strategy idempotency verified — second call didn't spawn a duplicate thread");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        println!("✅ hook_strategy idempotency verified — second call didn't spawn a duplicate thread");
 
-    drop(bundler);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+        drop(bundler);
+        tokio::time::sleep(Duration::from_secs(2)).await;
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 9. hook_strategy — full lifecycle with multiple consumers ============================
@@ -561,6 +570,8 @@ async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
         &ibkr_account(),
         "ibc_bundler_lifecycle.log",
         |state| async move {
+            // hook_strategy with Noise processes bars → may place orders (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             // Build 2 stock consumers (AAPL + MSFT) + 1 forex pair (GBP/USD Bid + Ask)
             let contracts = vec![aapl_contract(), msft_contract(), gbp_usd_contract()];
             let scheduler = build_scheduler_with_schedules(&state, &contracts);

@@ -48,7 +48,9 @@ use trading_app::execution::order_update_stream::event_handlers::order_status;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -114,6 +116,8 @@ async fn test_event_order_status_submitted() {
         &ibkr_account(),
         "ibc_eh_submitted.log",
         |state| async move {
+            // submitted handler writes open_orders (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
             let _controller = start_order_update_stream(&state, &order_store);
 
@@ -175,6 +179,8 @@ async fn test_event_order_status_cancelled() {
         &ibkr_account(),
         "ibc_eh_cancelled.log",
         |state| async move {
+            // cancelled handler deletes open_orders rows that the submitted path created (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
             let _controller = start_order_update_stream(&state, &order_store);
 
@@ -239,6 +245,8 @@ async fn test_event_order_status_cancelled() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_execution_on_fill() {
     with_live_ibkr(&ibkr_account(), "ibc_eh_exec.log", |state| async move {
+        // execution handler writes transactions + current_positions (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
         let _controller = start_order_update_stream(&state, &order_store);
 
@@ -296,6 +304,9 @@ async fn test_event_execution_on_fill() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES REAL ORDERS"]
 async fn test_event_commission_report_on_fill() {
     with_live_ibkr(&ibkr_account(), "ibc_eh_commission.log", |state| async move {
+        // commission handler writes staged_commissions (no strategy FK), but the
+        // preceding execution path also writes transactions + positions (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
         let _controller = start_order_update_stream(&state, &order_store);
 
@@ -440,6 +451,8 @@ async fn test_open_order_submitted_and_cancelled_direct() {
         &ibkr_account(),
         "ibc_eh_open_order_direct.log",
         |state| async move {
+            // open_order::submitted writes open_orders (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let contract = aapl_contract();
             let order = limit_order(Action::Buy, 1.0, 1.0);
 
@@ -495,6 +508,8 @@ async fn test_order_status_submitted_and_cancelled_direct() {
         &ibkr_account(),
         "ibc_eh_order_status_direct.log",
         |state| async move {
+            // order_status handlers read/update open_orders rows (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             // Pre-create an open order row
             let crud = OpenOrdersCRUD::stock(state.pool.clone());
             let order_perm_id = 12345;

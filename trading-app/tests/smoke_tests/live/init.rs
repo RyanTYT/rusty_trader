@@ -26,6 +26,9 @@ use std::time::Duration;
 
 use ibapi::Client;
 use sqlx::PgPool;
+use trading_app::database::crud::CRUDTrait;
+use trading_app::database::models::{Status, StrategyFullKeys};
+use trading_app::database::models_crud::strategy::StrategyCRUD;
 use trading_app::test_internals::{IBGateway, with_gateway_retry};
 
 /// IBKR account number from env var (default: `DU111111`).
@@ -198,3 +201,26 @@ where
 
 // `with_gateway` / `with_gateway_retry` / `IBGateway` are re-exported via
 // `trading_app::test_internals` — import them directly from there in tests.
+
+/// Ensure a strategy row exists in `trading.strategy` so that inserts into the
+/// FK-referencing tables (`current_stock_positions`, `open_stock_orders`,
+/// `stock_transactions`, `target_stock_positions`, etc.) don't violate the
+/// `REFERENCES trading.strategy(strategy)` constraint.
+///
+/// Mirrors `init_app::init_strategies` (src/init_app.rs:106-115): uses
+/// `create_or_ignore` so it's idempotent across tests. Call this at the top of
+/// any smoke test that writes to a strategy-aware table.
+///
+/// The strategy is created with `Status::Active` (same as init_app).
+pub async fn ensure_strategy_row(pool: &PgPool, strategy: &str) {
+    let crud = StrategyCRUD::new(pool.clone());
+    if let Err(e) = crud
+        .create_or_ignore(&StrategyFullKeys {
+            strategy: strategy.to_string(),
+            status: Status::Active,
+        })
+        .await
+    {
+        tracing::error!("Failed to ensure strategy row for '{strategy}': {e:?}");
+    }
+}

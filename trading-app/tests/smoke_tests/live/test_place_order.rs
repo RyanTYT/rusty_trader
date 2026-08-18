@@ -11,12 +11,16 @@ use ibapi::prelude::SecurityType;
 use std::sync::{Arc, Weak};
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + paper trading account — PLACES A REAL ORDER"]
 async fn test_place_order_live() {
     with_live_ibkr(&ibkr_account(), "ibc_live.log", |state| async move {
+        // place_order writes the optimistic open_order row (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let contract = Contract {
             symbol: "AAPL".into(),
             security_type: SecurityType::Stock,

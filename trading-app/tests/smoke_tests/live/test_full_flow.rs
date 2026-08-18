@@ -41,7 +41,9 @@ use trading_app::test_internals::is_any_open;
 use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 fn fixed_contracts() -> Vec<Contract> {
     vec![
@@ -112,6 +114,8 @@ async fn test_find_trading_contracts() {
 #[ignore = "requires live IB Gateway + paper trading account + market open — PLACES REAL ORDERS"]
 async fn test_full_place_reverse_zero_flow() {
     with_live_ibkr(&ibkr_account(), "ibc_flow.log", |state| async move {
+        // Places orders → writes open_orders/transactions/positions (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let mut scheduler = IbkrContractScheduler::new(state.client_1.clone());
         let contract = fixed_contracts().into_iter().next().unwrap();
         scheduler
@@ -335,6 +339,8 @@ async fn test_edge_case_market_closed_no_fill() {
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
 async fn test_edge_case_cancel_open_order() {
     with_live_ibkr(&ibkr_account(), "ibc_flow.log", |state| async move {
+        // Places a limit order → writes open_orders (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let contract = fixed_contracts().into_iter().next().unwrap();
         let order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);

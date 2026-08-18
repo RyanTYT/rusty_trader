@@ -39,7 +39,9 @@ use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyEx
 use trading_app::strategy::unknown::Unknown;
 use trading_app::test_internals::is_fx_trading_datetime;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 /// Build a Consolidator needed by warm_up_data + on_bar_update.
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
@@ -233,16 +235,15 @@ async fn test_strategy_warm_up_data_noise() {
             let handle = tokio::runtime::Handle::current();
             let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), handle.clone()));
 
-            tokio::task::block_in_place(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                let result =
-                    handle.block_on(async move { noise.warm_up_data(&consolidator).await });
-                assert!(
-                    result.is_ok(),
-                    "Noise warm_up_data should succeed, got: {:?}",
-                    result.err()
-                );
-            });
+            // warm_up_data is async — await it directly on the test runtime.
+            // (Production spawns a dedicated OS thread + block_on; in a test the
+            // simplest correct thing is to just .await.)
+            let result = noise.warm_up_data(&consolidator).await;
+            assert!(
+                result.is_ok(),
+                "Noise warm_up_data should succeed, got: {:?}",
+                result.err()
+            );
             println!("✅ warm_up_data(Noise): completed without error");
 
             // Verify historical data was actually fetched for QQQ
@@ -281,12 +282,9 @@ async fn test_strategy_warm_up_data_manual() {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
-            // Manual.warm_up_data is a no-op (returns Ok(()))
-            tokio::task::block_in_place(|| {
-                let result = tokio::runtime::Handle::current()
-                    .block_on(async move { manual.warm_up_data(&consolidator).await });
-                assert!(result.is_ok(), "Manual warm_up_data should succeed");
-            });
+            // Manual.warm_up_data is a no-op (returns Ok(())) — just await it.
+            let result = manual.warm_up_data(&consolidator).await;
+            assert!(result.is_ok(), "Manual warm_up_data should succeed");
             println!("✅ warm_up_data(Manual): no-op completed without error");
         },
     )
@@ -306,13 +304,9 @@ async fn test_strategy_warm_up_data_unknown() {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
-            // Unknown.warm_up_data is a no-op (returns Ok(()))
-            tokio::task::block_in_place(|| {
-                // warm_up_data fetches 20 days of QQQ historical data — may take a few seconds
-                let result = tokio::runtime::Handle::current()
-                    .block_on(async move { unknown.warm_up_data(&consolidator).await });
-                assert!(result.is_ok(), "Unknown warm_up_data should succeed");
-            });
+            // Unknown.warm_up_data is a no-op (returns Ok(())) — just await it.
+            let result = unknown.warm_up_data(&consolidator).await;
+            assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             println!("✅ warm_up_data(Unknown): no-op completed without error");
         },
     )
@@ -355,9 +349,13 @@ async fn test_strategy_on_bar_update_manual() {
                 },
             );
 
-            let outcome = tokio::task::block_in_place(|| {
-                manual.on_bar_update(&contract, &bar, &consolidator)
-            });
+            let outcome = {
+                let handle = std::thread::Builder::new()
+                    .name("manual_on_bar_update".to_string())
+                    .spawn(move || manual.on_bar_update(&contract, &bar, &consolidator))
+                    .expect("Failed to spawn on_bar_update thread");
+                handle.join().expect("on_bar_update thread panicked")
+            };
             assert!(
                 outcome.is_ok(),
                 "Manual on_bar_update scoped handle should succeed"
@@ -416,9 +414,13 @@ async fn test_strategy_on_bar_update_unknown() {
                 },
             );
 
-            let outcome = tokio::task::block_in_place(|| {
-                unknown.on_bar_update(&contract, &bar, &consolidator)
-            });
+            let outcome = {
+                let handle = std::thread::Builder::new()
+                    .name("unknown_on_bar_update".to_string())
+                    .spawn(move || unknown.on_bar_update(&contract, &bar, &consolidator))
+                    .expect("Failed to spawn on_bar_update thread");
+                handle.join().expect("on_bar_update thread panicked")
+            };
             assert!(
                 outcome.is_ok(),
                 "Unknown on_bar_update scoped handle should succeed"
@@ -447,13 +449,17 @@ async fn test_strategy_on_bar_update_noise() {
         "ibc_strat_bar_noise.log",
         |state| async move {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            // on_bar_update for Noise writes target_positions (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let noise = StrategyEnum::Noise(Noise::new(
                 state.pool.clone(),
                 tokio::runtime::Handle::current(),
             ));
 
-            // Warm up data first so on_bar_update has the historical data it needs
-            let result = tokio::task::block_in_place(|| noise.warm_up_data(&consolidator));
+            // Warm up data first so on_bar_update has the historical data it needs.
+            // warm_up_data is async — await it directly (no block_in_place).
+            let result = noise.warm_up_data(&consolidator).await;
+            let _ = result; // warm_up_data errors are non-fatal for this test
 
             let contract = Contract {
                 symbol: "QQQ".into(),
@@ -463,7 +469,6 @@ async fn test_strategy_on_bar_update_noise() {
                 primary_exchange: "NASDAQ".into(),
                 ..Default::default()
             };
-
             // Fetch a real recent bar to use
             let crud = HistoricalDataCRUD::stock(state.pool.clone());
             let pk = HistoricalDataPrimaryKeysWoTime::Stock(
@@ -501,8 +506,17 @@ async fn test_strategy_on_bar_update_noise() {
             // on_bar_update for Noise queries DB (avg_move, daily_open, daily_vol, vwap) + returns a BarUpdateOutcome
             // It may return Ok(PendingDbQuery), Ok(NoAction), or Ok(EmitOrders)
             // depending on market conditions. We just verify it doesn't error.
-            let outcome =
-                tokio::task::block_in_place(|| noise.on_bar_update(&contract, &bar, &consolidator));
+            //
+            // on_bar_update is SYNC + internally calls self.tokio_handle.block_on(...).
+            // Mirror the production hook_strategy pattern: run it on a dedicated OS
+            // thread + join. No block_in_place.
+            let outcome = {
+                let handle = std::thread::Builder::new()
+                    .name("noise_on_bar_update".to_string())
+                    .spawn(move || noise.on_bar_update(&contract, &bar, &consolidator))
+                    .expect("Failed to spawn on_bar_update thread");
+                handle.join().expect("on_bar_update thread panicked")
+            };
             assert!(
                 outcome.is_ok(),
                 "Noise on_bar_update scope handle should succeed"

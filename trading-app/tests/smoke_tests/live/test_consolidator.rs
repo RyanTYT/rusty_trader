@@ -25,7 +25,9 @@ use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
     let market_data_handler = MarketDataHandler::new(pool.clone());
@@ -409,41 +411,63 @@ async fn test_consolidator_get_strategy_sgd_value() {
         "ibc_cons_sgd_value.log",
         |state| async move {
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            // get_strategy_sgd_value reads current_positions (FK → trading.strategy);
+            // the "noise" row must exist. NOTE: deliberately do NOT create
+            // "nonexistent_strategy" — that arm verifies the no-row path returns 0/Err.
+            ensure_strategy_row(&state.pool, "noise").await;
 
-            // get_strategy_sgd_value queries current positions + computes SGD value
-            tokio::task::block_in_place(|| {
-                let result = consolidator.get_strategy_sgd_value("noise");
-                match result {
-                    Ok(value) => {
-                        assert!(value.is_finite(), "SGD value should be finite, got {value}");
-                        assert!(
-                            value >= 0.0,
-                            "SGD value should be non-negative, got {value}"
-                        );
-                        println!("✅ get_strategy_sgd_value('noise'): {value}");
-                    }
-                    Err(e) => {
-                        println!(
-                            "get_strategy_sgd_value returned Err (expected if no positions): {e}"
-                        );
-                    }
+            // get_strategy_sgd_value is SYNC + internally calls handle.block_on(...).
+            // Mirror the production hook_strategy pattern (strategy_consumer.rs:142):
+            // run it on a dedicated OS thread + join. No block_in_place.
+            let consolidator_for_thread = consolidator.clone();
+            let join = std::thread::Builder::new()
+                .name("cons_sgd_value".to_string())
+                .spawn(move || {
+                    let noise_result = consolidator_for_thread.get_strategy_sgd_value("noise");
+                    // Re-fetch the consolidator for the second call (ownership moved above).
+                    (noise_result, consolidator_for_thread)
+                })
+                .expect("Failed to spawn sgd_value thread");
+            let (result, consolidator_back) = join
+                .join()
+                .expect("sgd_value thread panicked");
+            match result {
+                Ok(value) => {
+                    assert!(value.is_finite(), "SGD value should be finite, got {value}");
+                    assert!(
+                        value >= 0.0,
+                        "SGD value should be non-negative, got {value}"
+                    );
+                    println!("✅ get_strategy_sgd_value('noise'): {value}");
                 }
+                Err(e) => {
+                    println!(
+                        "get_strategy_sgd_value returned Err (expected if no positions): {e}"
+                    );
+                }
+            }
 
-                // Test with non-existent strategy — should return 0 or Err gracefully
-                let result = consolidator.get_strategy_sgd_value("nonexistent_strategy");
-                match result {
-                    Ok(value) => {
-                        assert_eq!(
-                            value, 0.0,
-                            "non-existent strategy should have 0 SGD value, got {value}"
-                        );
-                        println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
-                    }
-                    Err(e) => {
-                        println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
-                    }
+            // Test with non-existent strategy — should return 0 or Err gracefully.
+            // Run on the same OS-thread pattern.
+            let join = std::thread::Builder::new()
+                .name("cons_sgd_value_none".to_string())
+                .spawn(move || consolidator_back.get_strategy_sgd_value("nonexistent_strategy"))
+                .expect("Failed to spawn sgd_value_none thread");
+            let result = join
+                .join()
+                .expect("sgd_value_none thread panicked");
+            match result {
+                Ok(value) => {
+                    assert_eq!(
+                        value, 0.0,
+                        "non-existent strategy should have 0 SGD value, got {value}"
+                    );
+                    println!("✅ get_strategy_sgd_value('nonexistent'): 0.0 (correct)");
                 }
-            });
+                Err(e) => {
+                    println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
+                }
+            }
         },
     )
     .await

@@ -34,7 +34,9 @@ use trading_app::strategy::strategy::StrategyEnum;
 use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{
+    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -82,6 +84,8 @@ fn build_syncer(state: &crate::live::init::LiveIbkr, contract: Contract) -> Sync
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_syncer_new_constructor() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_new.log", |state| async move {
+        // sync_open_orders writes open_orders (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
         println!("✅ SyncerEngine::new succeeded (no panic)");
 
@@ -100,6 +104,8 @@ async fn test_syncer_new_constructor() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_open_orders_empty_account() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_oo_empty.log", |state| async move {
+        // sync_open_orders writes open_orders (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -136,6 +142,8 @@ async fn test_sync_open_orders_empty_account() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_sync_open_orders_with_open_order() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_oo_with.log", |state| async move {
+        // sync_open_orders writes open_orders (FK → trading.strategy); place_order also writes optimistic row.
+        ensure_strategy_row(&state.pool, "noise").await;
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
 
@@ -194,6 +202,8 @@ async fn test_sync_executions_empty() {
         &ibkr_account(),
         "ibc_syncer_exec_empty.log",
         |state| async move {
+            // sync_executions writes transactions/positions (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
             let syncer = build_syncer(&state, aapl_contract());
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
@@ -217,6 +227,8 @@ async fn test_sync_executions_empty() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_sync_executions_with_fill() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_exec_fill.log", |state| async move {
+        // sync_executions writes transactions/positions (FK → trading.strategy); place_order also writes optimistic row.
+        ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
@@ -270,6 +282,8 @@ async fn test_sync_executions_with_fill() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_sync_positions_reconcile() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_pos.log", |state| async move {
+        // sync_positions writes current_positions (FK → trading.strategy).
+        ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
@@ -304,6 +318,10 @@ async fn test_sync_open_orders_default_strategy_fallback() {
         &ibkr_account(),
         "ibc_syncer_default.log",
         |state| async move {
+            // sync_open_orders with default='unknown' may write open_orders rows
+            // with strategy='unknown' (FK → trading.strategy). Ensure both rows exist.
+            ensure_strategy_row(&state.pool, "noise").await;
+            ensure_strategy_row(&state.pool, "unknown").await;
             // Build syncer with noise strategy
             let syncer = build_syncer(&state, aapl_contract());
             let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
@@ -333,6 +351,10 @@ async fn test_sync_executions_no_default_strategy() {
         &ibkr_account(),
         "ibc_syncer_no_default.log",
         |state| async move {
+            // sync_executions with None default falls back to "unknown" — writes
+            // transactions/positions with strategy='unknown' (FK → trading.strategy).
+            ensure_strategy_row(&state.pool, "noise").await;
+            ensure_strategy_row(&state.pool, "unknown").await;
             let syncer = build_syncer(&state, aapl_contract());
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
@@ -357,6 +379,8 @@ async fn test_sync_executions_no_default_strategy() {
 #[ignore = "requires live IB Gateway + paper trading — PLACES A REAL ORDER"]
 async fn test_syncer_full_lifecycle() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_lifecycle.log", |state| async move {
+        // Full lifecycle: sync_open_orders/executions/positions all write FK tables.
+        ensure_strategy_row(&state.pool, "noise").await;
         let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
