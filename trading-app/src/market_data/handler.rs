@@ -112,14 +112,14 @@ impl Eq for DataSubscription {}
 
 // This struct will basically help manage the lifetimes of consumers and producers
 pub struct MarketDataHandler {
-    pool: PgPool,
+    db_consumers: Vec<MarketDataDbConsumer>,
+    client_producers: Vec<MarketDataProducer>,
+    live_prices: Cache<i32, (DateTime<Utc>, f64)>,
     subscriptions: HashMap<
         DataSubscription,
         std::pin::Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
     >,
-    live_prices: Cache<i32, (DateTime<Utc>, f64)>,
-    db_consumers: Vec<MarketDataDbConsumer>,
-    client_producers: Vec<MarketDataProducer>,
+    pool: PgPool,
 }
 
 pub enum DbSubscriptionMethod {
