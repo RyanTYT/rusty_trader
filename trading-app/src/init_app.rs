@@ -41,9 +41,11 @@ pub enum ApplicationState {
 
 #[derive(Clone)]
 pub struct StrategyParameters {
-    pub(crate) strategy: StrategyEnum,
+    // pub visibility FROM pub(crate) visibility ONLY for testing purposes
+    pub strategy: StrategyEnum,
+    // pub visibility FROM pub(crate) visibility ONLY for testing purposes
     // used to provide time for warm up before market open so be conservative
-    pub(crate) subscribed_contracts: Vec<DataSubscription>,
+    pub subscribed_contracts: Vec<DataSubscription>,
 }
 
 pub async fn init_strategies(
@@ -93,8 +95,12 @@ pub async fn init_strategies(
             DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Ask),
         ],
     };
-
-    let res = vec![noise_strat_params, manual_params, unknown_params];
+    
+    let res = vec![
+        noise_strat_params,
+        manual_params,
+        unknown_params,
+    ];
 
     for strat_param in res.iter() {
         let strategy_crud = StrategyCRUD::new(pool.clone());
@@ -124,7 +130,7 @@ async fn connect_to_client_with_retry(
             Ok(connected_client) => Some(connected_client),
             Err(e) => {
                 tracing::error!(
-                    "Connection to TWS via \nURL: localhost:4002\n Client Id: 0\n failed!\nError: {}",
+                    "Connection to TWS via \nURL: localhost:4002\n Client Id: {client_id}\n failed!\nError: {}",
                     e
                 );
                 retry_time += 1;
@@ -139,13 +145,14 @@ async fn connect_to_client_with_retry(
         break try_client;
     };
 
-    client_opt.ok_or("Error: Could not connect to client".to_string())
+    client_opt.ok_or(format!("Error: Could not connect to client {client_id}"))
 }
 
 pub async fn init_app(
     api_port_addr: &str,
     account: &'static str,
     pool: PgPool,
+    // ibc_log_file: &'static str,
     // strat_params: Vec<StrategyParameters>,
     default_strategy: String,
 ) -> Result<ApplicationState, String> {
@@ -260,62 +267,53 @@ pub async fn init_app(
     )
     .expect("Expected OrderUpdateStreamController initialisation to be ok");
 
-    let mut strategy_threads_res = Vec::new();
-    std::thread::scope(|s| {
-        let mut strategy_threads = Vec::new();
-        for strat_param in strat_params.iter() {
-            let strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
-            let strategy_thread = s.spawn(|| {
-                if let Err(e) = strat_param.strategy.warm_up_data(&consolidator) {
-                    tracing::error!(
-                        "Failed to initialise strategy ({}): {e:?}",
-                        strat_param.strategy.get_name()
+    let strategy_threads = strat_params.into_iter().map(|strat_param| {
+        let strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
+        let cloned_consolidator = consolidator.clone();
+        let cloned_order_engine = order_engine.clone();
+        let cloned_client_1 = client_1.clone();
+        let cloned_backed_up_orders = backed_up_orders.clone();
+        async move {
+            if let Err(e) = strat_param
+                .strategy
+                .warm_up_data(&cloned_consolidator)
+                .await
+            {
+                tracing::error!(
+                    "Failed to initialise strategy ({}): {e:?}",
+                    strat_param.strategy.get_name()
+                )
+            };
+            let consumers = strat_param
+                .subscribed_contracts
+                .iter()
+                .map(|subscription| {
+                    IbkrBarConsumer::new(
+                        subscription.contract.clone(),
+                        subscription.what_to_show,
+                        cloned_consolidator
+                            .market_data_handler
+                            .get_subsription(subscription)
+                            .expect("Expected subscription to already exist beforehand")
+                            .get_new_consumer()
+                            .expect("Expected max no. of consumers not to be exceeded"),
                     )
-                };
-                let consumers = strat_param
-                    .subscribed_contracts
-                    .iter()
-                    .map(|subscription| {
-                        IbkrBarConsumer::new(
-                            subscription.contract.clone(),
-                            subscription.what_to_show,
-                            consolidator
-                                .market_data_handler
-                                .get_subsription(subscription)
-                                .expect("Expected subscription to already exist beforehand")
-                                .get_new_consumer()
-                                .expect("Expected max no. of consumers not to be exceeded"),
-                        )
-                    })
-                    .collect();
-                strategy_data_bundler.hook_strategy(
-                    consumers,
-                    strat_param.strategy.clone(),
-                    order_engine.clone(),
-                    Arc::downgrade(&consolidator),
-                    Arc::downgrade(&client_1),
-                    Arc::downgrade(&backed_up_orders),
-                );
+                })
+                .collect();
+            strategy_data_bundler.hook_strategy(
+                consumers,
+                strat_param.strategy.clone(),
+                cloned_order_engine.clone(),
+                Arc::downgrade(&cloned_consolidator),
+                Arc::downgrade(&cloned_client_1),
+                Arc::downgrade(&cloned_backed_up_orders),
+            );
 
-                strategy_data_bundler
-            });
-
-            strategy_threads.push(strategy_thread);
-        }
-
-        for thread in strategy_threads.into_iter() {
-            strategy_threads_res.push(
-                thread
-                    .join()
-                    .map_err(|e| format!("Failed to boot strategy: {e:?}")),
-            )
+            strategy_data_bundler
         }
     });
 
-    // propagates the first Err encountered
-    let strategy_handlers = strategy_threads_res
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    let strategy_handlers = futures::future::join_all(strategy_threads).await;
 
     Ok(ApplicationState::IbkrState(IbkrState {
         consolidator,
@@ -323,4 +321,3 @@ pub async fn init_app(
         order_update_stream_controller,
     }))
 }
-
