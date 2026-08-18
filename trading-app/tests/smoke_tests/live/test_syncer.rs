@@ -148,7 +148,8 @@ async fn test_sync_open_orders_with_open_order() {
         let syncer = build_syncer(&state, aapl_contract());
 
         // Place a limit order at unrealistic price so it stays open
-        let order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
+        let mut order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
         let perm_id = OrderEngine::place_order(
@@ -233,7 +234,8 @@ async fn test_sync_executions_with_fill() {
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
         // Place a market order to generate an execution
-        let order = market_order(Action::Buy, 1.0);
+        let mut order = market_order(Action::Buy, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
         let perm_id = OrderEngine::place_order(
@@ -398,7 +400,8 @@ async fn test_syncer_full_lifecycle() {
         println!("3. sync_positions completed");
 
         // 4. Place a market order to generate activity
-        let order = market_order(Action::Buy, 1.0);
+        let mut order = market_order(Action::Buy, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
         let perm_id = OrderEngine::place_order(

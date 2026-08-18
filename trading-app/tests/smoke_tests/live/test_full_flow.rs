@@ -342,7 +342,8 @@ async fn test_edge_case_cancel_open_order() {
         // Places a limit order → writes open_orders (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
         let contract = fixed_contracts().into_iter().next().unwrap();
-        let order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
+        let mut order = ibapi::orders::order_builder::limit_order(Action::Buy, 1.0, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract.clone(), order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
         let order_perm_id = OrderEngine::place_order(

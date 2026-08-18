@@ -119,7 +119,8 @@ async fn test_place_order_market_buy() {
             // place_order writes optimistic open_order row (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
             let contract = aapl_contract();
-            let order = market_order(Action::Buy, 1.0);
+            let mut order = market_order(Action::Buy, 1.0);
+            order.order_ref = "noise".to_string();
             let order_ibkr = OrderIBKR::new(contract, order, -1);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
@@ -183,9 +184,11 @@ async fn test_place_orders_batch_multiple() {
         |state| async move {
             // place_orders writes optimistic open_order rows (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
+            let mut buy_order = market_order(Action::Buy, 1.0);
+            buy_order.order_ref = "noise".to_string();
             // Place 2 orders: AAPL buy 1 share, MSFT buy 1 share
-            let order1 = OrderIBKR::new(aapl_contract(), market_order(Action::Buy, 1.0), -1);
-            let order2 = OrderIBKR::new(msft_contract(), market_order(Action::Buy, 1.0), -1);
+            let order1 = OrderIBKR::new(aapl_contract(), buy_order.clone(), -1);
+            let order2 = OrderIBKR::new(msft_contract(), buy_order.clone(), -1);
 
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
@@ -259,7 +262,8 @@ async fn test_place_order_dead_client_panics() {
             };
 
             let contract = aapl_contract();
-            let order = market_order(Action::Buy, 1.0);
+            let mut order = market_order(Action::Buy, 1.0);
+            order.order_ref = "noise".to_string();
             let order_ibkr = OrderIBKR::new(contract, order, -1);
 
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -337,7 +341,8 @@ async fn test_handle_bar_update_outcome_emit_orders() {
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
         // EmitOrders fast path — directly submits the orders
-        let order = market_order(Action::Buy, 1.0);
+        let mut order = market_order(Action::Buy, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         engine.handle_bar_update_outcome(
             &weak_client,
@@ -426,7 +431,8 @@ async fn test_place_order_limit_unrealistic_price() {
         ensure_strategy_row(&state.pool, "noise").await;
         let contract = aapl_contract();
         // Limit buy at $1.00 — won't fill, stays open
-        let order = limit_order(Action::Buy, 1.0, 1.0);
+        let mut order = limit_order(Action::Buy, 1.0, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract, order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 

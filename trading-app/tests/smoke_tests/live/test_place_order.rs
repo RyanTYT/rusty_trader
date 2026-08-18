@@ -30,7 +30,8 @@ async fn test_place_order_live() {
             ..Default::default()
         };
 
-        let order = market_order(Action::Buy, 1.0);
+        let mut order = market_order(Action::Buy, 1.0);
+        order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(contract, order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
