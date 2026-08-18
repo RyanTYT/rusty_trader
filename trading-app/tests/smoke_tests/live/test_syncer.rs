@@ -152,14 +152,14 @@ async fn test_sync_open_orders_with_open_order() {
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
             order_ibkr,
         );
-        assert!(perm_id > 0, "order should be placed");
-        println!("Limit order placed, perm_id={perm_id}, waiting for IBKR to register...");
+        assert!(order_id > 0, "order should be placed");
+        println!("Limit order placed, order_id={order_id}, waiting for IBKR to register...");
 
         // Wait for the order to be registered on IBKR side
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -175,9 +175,9 @@ async fn test_sync_open_orders_with_open_order() {
         let crud = OpenOrdersCRUD::stock(state.pool.clone());
         let orders = crud.get_orders_for_strat("noise").await.expect("get_orders_for_strat failed");
         let our_order = orders.iter().find(|o| {
-            matches!(o, trading_app::database::models_crud::open_orders::open_orders::OpenOrdersFullKeys::Stock(s) if s.order_perm_id == perm_id)
+            matches!(o, trading_app::database::models_crud::open_orders::open_orders::OpenOrdersFullKeys::Stock(s) if s.order_id == order_id)
         });
-        assert!(our_order.is_some(), "sync_open_orders should have synced the open order (perm_id={perm_id})");
+        assert!(our_order.is_some(), "sync_open_orders should have synced the open order (order_id={order_id})");
         println!("✅ sync_open_orders: open order synced to DB");
 
         // Cleanup: cancel the order + delete the DB row
@@ -238,14 +238,14 @@ async fn test_sync_executions_with_fill() {
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
             order_ibkr,
         );
-        assert!(perm_id > 0, "order should be placed");
-        println!("Market order placed, perm_id={perm_id}, waiting for fill...");
+        assert!(order_id > 0, "order should be placed");
+        println!("Market order placed, order_id={order_id}, waiting for fill...");
 
         // Wait for the order to fill
         tokio::time::sleep(Duration::from_secs(15)).await;
@@ -404,14 +404,14 @@ async fn test_syncer_full_lifecycle() {
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
         let weak_client: std::sync::Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
-        let perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
             order_ibkr,
         );
-        assert!(perm_id > 0);
-        println!("4. Market order placed, perm_id={perm_id}");
+        assert!(order_id > 0);
+        println!("4. Market order placed, order_id={order_id}");
 
         // Wait for fill
         tokio::time::sleep(Duration::from_secs(15)).await;
