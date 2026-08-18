@@ -180,6 +180,18 @@ where
     //
     // Both master_client (id=0) and client_1 (id=1) get 6 retries each —
     // the IB Gateway API can be slow to accept connections right after boot.
+    //
+    // CLIENT LIFECYCLE: we deliberately hold master_client + client_1 OUTSIDE
+    // the closure body so that, after f(live).await returns, we can call
+    // disconnect() on them BEFORE with_gateway_retry runs gateway.shutdown().
+    // Reason: OrderEngine::place_order + OrderUpdateStreamController spawn
+    // DETACHED std::threads that move clones of Arc<Client> — these outlive
+    // the closure, keep the Arc refcount >0, so Client::Drop::ensure_shutdown
+    // never runs, the message-bus reader thread keeps reading, the gateway
+    // dies, the reader gets EOF + "will attempt reconnect" spam.
+    // Calling disconnect() explicitly forces message_bus.ensure_shutdown() —
+    // which signals the reader thread to stop — even if Arc clones linger in
+    // detached threads. (Client::disconnect is idempotent + Sync-safe.)
     with_gateway_retry(ibc_log_file, 2, |_| async {
         let master_client = connect_to_client_with_retry(0, 6)
             .await
@@ -188,13 +200,25 @@ where
             .await
             .map_err(|e| format!("client_1 (id=1) failed: {e}"))?;
 
+        let master_arc = Arc::new(master_client);
+        let client_1_arc = Arc::new(client_1);
         let live = LiveIbkr {
-            master_client: Arc::new(master_client),
-            client_1: Arc::new(client_1),
+            master_client: master_arc.clone(),
+            client_1: client_1_arc.clone(),
             pool: pool.clone(),
         };
 
-        Ok(f(live).await)
+        let result = f(live).await;
+
+        // ── Explicit client disconnect BEFORE gateway.shutdown() runs ──
+        // Stops the message-bus reader threads cleanly so they don't hit EOF
+        // + reconnect-loop on the now-dead gateway socket. Safe even if leaked
+        // Arc clones still exist (disconnect is &self, idempotent).
+        tracing::debug!("with_live_ibkr: disconnecting clients before gateway shutdown");
+        master_arc.disconnect();
+        client_1_arc.disconnect();
+
+        Ok(result)
     })
     .await?
 }

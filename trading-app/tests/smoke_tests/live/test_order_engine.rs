@@ -308,14 +308,25 @@ async fn test_handle_bar_update_outcome_no_action() {
         ));
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
-        // NoAction should be a complete no-op — no orders placed, no DB queries
-        engine.handle_bar_update_outcome(
-            &weak_client,
-            &Arc::downgrade(&consolidator),
-            BarUpdateOutcome::NoAction,
-            &noise,
-            &order_store,
-        );
+        // NoAction should be a complete no-op — no orders placed, no DB queries.
+        // handle_bar_update_outcome is SYNC; the PendingDbQuery arm internally
+        // calls self.tokio_handle.block_on(...). Run it on a blocking-pool thread
+        // via spawn_blocking so the test runtime worker stays in the event loop
+        // (otherwise block_on panics: "Cannot start a runtime from within a runtime").
+        let consolidator_weak = Arc::downgrade(&consolidator);
+        let noise_clone = noise.clone();
+        let order_store_clone = order_store.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.handle_bar_update_outcome(
+                &weak_client,
+                &consolidator_weak,
+                BarUpdateOutcome::NoAction,
+                &noise_clone,
+                &order_store_clone,
+            );
+        })
+        .await
+        .expect("handle_bar_update_outcome(NoAction) blocking task panicked");
 
         println!("✅ handle_bar_update_outcome(NoAction) completed without error");
     })
@@ -340,17 +351,27 @@ async fn test_handle_bar_update_outcome_emit_orders() {
         ));
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
-        // EmitOrders fast path — directly submits the orders
+        // EmitOrders fast path — directly submits the orders.
+        // Run on spawn_blocking (handle_bar_update_outcome is SYNC; keeps the
+        // test runtime worker out of any internal block_on).
         let mut order = market_order(Action::Buy, 1.0);
         order.order_ref = "noise".to_string();
         let order_ibkr = OrderIBKR::new(aapl_contract(), order, -1);
-        engine.handle_bar_update_outcome(
-            &weak_client,
-            &Arc::downgrade(&consolidator),
-            BarUpdateOutcome::EmitOrders(vec![order_ibkr]),
-            &noise,
-            &order_store,
-        );
+        let consolidator_weak = Arc::downgrade(&consolidator);
+        let noise_clone = noise.clone();
+        let order_store_clone = order_store.clone();
+        let weak_client_for_call = weak_client.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.handle_bar_update_outcome(
+                &weak_client_for_call,
+                &consolidator_weak,
+                BarUpdateOutcome::EmitOrders(vec![order_ibkr]),
+                &noise_clone,
+                &order_store_clone,
+            );
+        })
+        .await
+        .expect("handle_bar_update_outcome(EmitOrders) blocking task panicked");
 
         println!("EmitOrders path submitted order");
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -402,16 +423,28 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
         ));
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
-        // PendingDbQuery slow path — reads target/current diff, places orders to reconcile
+        // PendingDbQuery slow path — reads target/current diff, places orders to reconcile.
         // We don't pre-populate target positions, so this should complete without placing orders
-        // (qty_diff will be 0 for all)
-        engine.handle_bar_update_outcome(
-            &weak_client,
-            &Arc::downgrade(&consolidator),
-            BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]),
-            &noise,
-            &order_store,
-        );
+        // (qty_diff will be 0 for all).
+        // MUST run on spawn_blocking: the PendingDbQuery arm calls
+        // self.tokio_handle.block_on(...) inline, which panics with
+        // "Cannot start a runtime from within a runtime" if called from the
+        // test's runtime worker. spawn_blocking runs it on a dedicated OS thread
+        // while the test worker stays in the event loop servicing that block_on.
+        let consolidator_weak = Arc::downgrade(&consolidator);
+        let noise_clone = noise.clone();
+        let order_store_clone = order_store.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.handle_bar_update_outcome(
+                &weak_client,
+                &consolidator_weak,
+                BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]),
+                &noise_clone,
+                &order_store_clone,
+            );
+        })
+        .await
+        .expect("handle_bar_update_outcome(PendingDbQuery) blocking task panicked");
 
         println!("PendingDbQuery path completed");
         tokio::time::sleep(Duration::from_secs(2)).await;
