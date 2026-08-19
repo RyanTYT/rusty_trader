@@ -105,11 +105,11 @@ fn build_scheduler_with_schedules(
 async fn test_strategy_data_bundler_new() {
     with_live_ibkr(&ibkr_account(), "ibc_bundler_new.log", |state| async move {
         let scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
-        let _bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+        let _bundler = StrategyDataBundler::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(scheduler);
         println!("✅ StrategyDataBundler::new succeeded (no panic)");
 
         // Verify the bundler is usable — call sort_consumers (static method)
-        let mut consumers: Vec<IbkrBarConsumer<BUFFER_SIZE>> = vec![];
+        let mut consumers: Vec<IbkrBarConsumer<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>> = vec![];
         StrategyDataBundler::sort_consumers(&mut consumers);
         assert!(
             consumers.is_empty(),
@@ -204,7 +204,7 @@ async fn test_sort_consumers_multiple_stocks_alphabetical() {
             // Build consumers in reverse alphabetical order: SPY, MSFT, AAPL
             let contracts = vec![("SPY", "ARCA"), ("MSFT", "NASDAQ"), ("AAPL", "NASDAQ")];
 
-            let mut consumers: Vec<IbkrBarConsumer<BUFFER_SIZE>> = vec![];
+            let mut consumers: Vec<IbkrBarConsumer<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>> = vec![];
             for (symbol, exchange) in &contracts {
                 let contract = Contract {
                     symbol: (*symbol).into(),
@@ -380,7 +380,7 @@ async fn test_hook_strategy_stock_noise() {
                 rb.get_new_consumer().unwrap(),
             );
 
-            let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+            let mut bundler = StrategyDataBundler::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(scheduler);
             let order_engine =
                 OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
@@ -453,7 +453,7 @@ async fn test_hook_strategy_forex_manual() {
                 rb_ask.get_new_consumer().unwrap(),
             );
 
-            let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+            let mut bundler = StrategyDataBundler::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(scheduler);
             let order_engine =
                 OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
@@ -509,7 +509,7 @@ async fn test_hook_strategy_idempotent() {
         );
 
         let scheduler_clone = scheduler.clone();
-        let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+        let mut bundler = StrategyDataBundler::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(scheduler);
         let order_engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
         let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), tokio::runtime::Handle::current()));
@@ -629,7 +629,7 @@ async fn test_hook_strategy_full_lifecycle_multiple_consumers() {
             StrategyDataBundler::sort_consumers(&mut consumers);
             println!("Consumers sorted: forex-first (GBP Bid+Ask), then stocks (AAPL, MSFT)");
 
-            let mut bundler = StrategyDataBundler::<BUFFER_SIZE>::new(scheduler);
+            let mut bundler = StrategyDataBundler::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(scheduler);
             let order_engine =
                 OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));

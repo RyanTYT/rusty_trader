@@ -9,6 +9,8 @@
 //! must be obtained from a real `SpmcRingBuffer`. We construct a throwaway ring buffer
 //! for each consumer.
 
+use std::sync::Arc;
+
 use ibapi::contracts::{Contract, SecurityType};
 use ibapi::market_data::realtime::WhatToShow;
 use spmc_ring::bench::RingBuffer;
@@ -26,9 +28,9 @@ fn make_consumer(
     security_type: SecurityType,
     symbol: &str,
     what: WhatToShow,
-) -> IbkrBarConsumer<BUFFER_CAPACITY> {
-    let ring: SpmcRingBuffer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS> = SpmcRingBuffer::new();
-    let consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY> = ring.get_new_consumer().unwrap();
+) -> IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS> {
+    let ring: Arc<SpmcRingBuffer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>> = Arc::new(SpmcRingBuffer::new());
+    let consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS> = ring.get_new_consumer().unwrap();
     IbkrBarConsumer::new(
         Contract {
             symbol: symbol.into(),
@@ -96,7 +98,7 @@ fn sort_consumers_forex_last() {
         make_consumer(SecurityType::ForexPair, "EUR", WhatToShow::Bid),
         make_consumer(SecurityType::Stock, "MSFT", WhatToShow::Trades),
     ];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     // Stocks come first (alphabetical), Forex last
     assert_eq!(consumers[0].contract.security_type, SecurityType::ForexPair);
     assert_eq!(consumers[0].contract.symbol.to_string(), "EUR");
@@ -111,7 +113,7 @@ fn sort_consumers_forex_bid_before_ask() {
         make_consumer(SecurityType::ForexPair, "EUR", WhatToShow::Ask),
         make_consumer(SecurityType::ForexPair, "EUR", WhatToShow::Bid),
     ];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     assert!(matches!(consumers[0].what_to_show, WhatToShow::Bid));
     assert!(matches!(consumers[1].what_to_show, WhatToShow::Ask));
 }
@@ -123,7 +125,7 @@ fn sort_consumers_symbol_alphabetical_among_same_type() {
         make_consumer(SecurityType::Stock, "AAPL", WhatToShow::Trades),
         make_consumer(SecurityType::Stock, "GOOG", WhatToShow::Trades),
     ];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     assert_eq!(consumers[0].contract.symbol.to_string(), "AAPL");
     assert_eq!(consumers[1].contract.symbol.to_string(), "GOOG");
     assert_eq!(consumers[2].contract.symbol.to_string(), "MSFT");
@@ -141,7 +143,7 @@ fn sort_consumers_mixed_full_ordering() {
         make_consumer(SecurityType::ForexPair, "EUR", WhatToShow::Bid),
         make_consumer(SecurityType::ForexPair, "GBP", WhatToShow::Bid),
     ];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     // Expected order: AAPL, MSFT, EUR/Bid, EUR/Ask, GBP/Bid
     assert_eq!(consumers[0].contract.symbol.to_string(), "EUR");
     assert!(matches!(consumers[0].what_to_show, WhatToShow::Bid));
@@ -155,8 +157,8 @@ fn sort_consumers_mixed_full_ordering() {
 
 #[test]
 fn sort_consumers_empty_vec() {
-    let mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY>> = vec![];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    let mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>> = vec![];
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     assert!(consumers.is_empty());
 }
 
@@ -167,7 +169,7 @@ fn sort_consumers_single_element() {
         "AAPL",
         WhatToShow::Trades,
     )];
-    StrategyDataBundler::<BUFFER_CAPACITY>::sort_consumers(&mut consumers);
+    StrategyDataBundler::<BUFFER_CAPACITY, NUM_CONSUMERS>::sort_consumers(&mut consumers);
     assert_eq!(consumers.len(), 1);
     assert_eq!(consumers[0].contract.symbol.to_string(), "AAPL");
 }
