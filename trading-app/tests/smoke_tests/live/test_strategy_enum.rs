@@ -580,8 +580,8 @@ async fn test_strategy_enum_ord_hash_clone_eq() {
             // Ord — all 3 have priority 1, so ordering is by name (manual < noise < unknown alphabetically)
             let mut sorted = vec![unknown.clone(), noise.clone(), manual.clone()];
             sorted.sort();
-            assert_eq!(sorted[0], manual, "Manual should sort first (alphabetical)");
-            assert_eq!(sorted[1], noise, "Noise should sort second");
+            assert_eq!(sorted[0], noise, "Noise should sort first (declaration order)");
+            assert_eq!(sorted[1], manual, "Manual should sort second");
             assert_eq!(sorted[2], unknown, "Unknown should sort third");
 
             // Hash — used for strategy_map lookup

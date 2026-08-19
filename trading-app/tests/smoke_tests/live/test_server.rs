@@ -1,6 +1,6 @@
 //! Comprehensive smoke tests for the axum HTTP server (live IBKR).
 //!
-//! Tests all 5 HTTP endpoints exposed by `init_server` on port 8000:
+//! Tests all 5 HTTP endpoints exposed by `init_server`:
 //! - GET /check-health — health check (IBKR connection status)
 //! - GET /contract/price?stock=&primary_exchange=&currency= — current price for a contract
 //! - GET /contracts/stock?stock=&primary_exchange=&currency= — possible stock contracts + prices
@@ -8,10 +8,14 @@
 //! - GET /strategy/capital?strategy= — strategy SGD value
 //!
 //! Also tests:
-//! - `init_server()` — boots the server on port 8000
+//! - `init_server()` — boots the server on an OS-assigned ephemeral port
 //! - `CurrencyVal`, `Currencies`, `StrategyValue`, `StrategyQuery` structs (serialization)
 //! - Server lifecycle (boot + shutdown)
 //! - Error handling (not-running state, invalid query params)
+//!
+//! Each test binds `0.0.0.0:0` (ephemeral port) so parallel tests never collide
+//! on a fixed port, and tears the server down via `ServerHandle::shutdown()`
+//! (with `Drop` as a safety net if the closure panics).
 //!
 //! Requires: live IB Gateway + Postgres + DATABASE_URL + IBC installed.
 //! Run with: DATABASE_URL=... cargo test --test smoke_tests test_server -- --ignored
@@ -20,14 +24,15 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use trading_app::init_app::{ApplicationState, init_app};
-use trading_app::server::server::init_server;
+use trading_app::server::server::{ServerHandle, init_server};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{api_port_addr, ibkr_account, with_live_ibkr};
 
 /// Boot the server + init_app inside a `with_live_ibkr` closure.
 /// The closure receives `state` (LiveIbkr with gateway + clients + pool).
 /// The gateway is shut down when the closure returns.
-fn boot_server_and_run_test<F, Fut>(test_fn: F)
+#[allow(dead_code)]
+fn boot_server_and_run_test<F, Fut>(_test_fn: F)
 where
     F: Fn(reqwest::Client) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()> + Send,
@@ -36,16 +41,17 @@ where
     todo!("use with_live_ibkr directly in each test")
 }
 
-// ============================ 1. init_server — boots on port 8000 ============================
+// ============================ 1. init_server — boots on ephemeral port ============================
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_init_boots() {
     with_live_ibkr(&ibkr_account(), "ibc_server_boot.log", |state| async move {
-        // Create the channel + boot the server
+        // Create the channel + boot the server on an OS-assigned ephemeral port.
         let (app_state_sender, app_state_rcx) =
             tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-        init_server(app_state_rcx);
+        let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+        let base_url = format!("http://{}", server.local_addr());
 
         // Boot init_app (this connects to IBKR + builds the consolidator)
         let account: &'static str = Box::leak(ibkr_account().into_boxed_str());
@@ -62,10 +68,10 @@ async fn test_server_init_boots() {
         let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Verify the server is listening on port 8000
+        // Verify the server is listening on the ephemeral port
         let client = reqwest::Client::new();
         let response = client
-            .get(format!("{}/check-health", server_base_url()))
+            .get(format!("{base_url}/check-health"))
             .send()
             .await
             .expect("HTTP request failed — server may not be running");
@@ -76,9 +82,12 @@ async fn test_server_init_boots() {
             response.status()
         );
         println!(
-            "✅ init_server: server is listening on port 8000 (status {})",
+            "✅ init_server: server is listening on {} (status {})",
+            server.local_addr(),
             response.status()
         );
+
+        server.shutdown();
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -95,7 +104,8 @@ async fn test_server_check_health() {
         |state| async move {
             let (app_state_sender, app_state_rcx) =
                 tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-            init_server(app_state_rcx);
+            let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+            let base_url = format!("http://{}", server.local_addr());
 
             let app_state = init_app(
                 &api_port_addr(),
@@ -111,7 +121,7 @@ async fn test_server_check_health() {
 
             let client = reqwest::Client::new();
             let response = client
-                .get(format!("{}/check-health", server_base_url()))
+                .get(format!("{base_url}/check-health"))
                 .send()
                 .await
                 .expect("HTTP request failed");
@@ -130,6 +140,8 @@ async fn test_server_check_health() {
                 assert_eq!(body["status"], "not connected to IBKR");
                 println!("⚠️ /check-health: 500 (IBKR not connected)");
             }
+
+            server.shutdown();
         },
     )
     .await
@@ -147,7 +159,8 @@ async fn test_server_get_current_price() {
         |state| async move {
             let (app_state_sender, app_state_rcx) =
                 tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-            init_server(app_state_rcx);
+            let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+            let base_url = format!("http://{}", server.local_addr());
 
             let app_state = init_app(
                 &api_port_addr(),
@@ -163,7 +176,7 @@ async fn test_server_get_current_price() {
 
             let client = reqwest::Client::new();
             let response = client
-                .get(format!("{}/contract/price", server_base_url()))
+                .get(format!("{base_url}/contract/price"))
                 .query(&[
                     ("stock", "AAPL"),
                     ("primary_exchange", "NASDAQ"),
@@ -184,6 +197,8 @@ async fn test_server_get_current_price() {
             //     assert!(price > 0.0 && (50.0..=500.0).contains(&price));
             //     println!("✅ /contract/price: AAPL = ${price}");
             // }
+
+            server.shutdown();
         },
     )
     .await
@@ -198,7 +213,8 @@ async fn test_server_get_exchange_rate() {
     with_live_ibkr(&ibkr_account(), "ibc_server_fx.log", |state| async move {
         let (app_state_sender, app_state_rcx) =
             tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-        init_server(app_state_rcx);
+        let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+        let base_url = format!("http://{}", server.local_addr());
 
         let app_state = init_app(
             &api_port_addr(),
@@ -214,7 +230,7 @@ async fn test_server_get_exchange_rate() {
 
         let client = reqwest::Client::new();
         let response = client
-            .get(format!("{}/exchange_rate", server_base_url()))
+            .get(format!("{base_url}/exchange_rate"))
             .query(&[("currency", "USD"), ("quote", "SGD")])
             .send()
             .await
@@ -231,6 +247,8 @@ async fn test_server_get_exchange_rate() {
             assert!(price > 0.0 && (0.5..=2.0).contains(&price));
             println!("✅ /exchange_rate: USD/SGD = {price}");
         }
+
+        server.shutdown();
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -244,7 +262,8 @@ async fn test_server_get_strategy_value() {
     with_live_ibkr(&ibkr_account(), "ibc_server_sgd.log", |state| async move {
         let (app_state_sender, app_state_rcx) =
             tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-        init_server(app_state_rcx);
+        let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+        let base_url = format!("http://{}", server.local_addr());
 
         let app_state = init_app(
             &api_port_addr(),
@@ -260,7 +279,7 @@ async fn test_server_get_strategy_value() {
 
         let client = reqwest::Client::new();
         let response = client
-            .get(format!("{}/strategy/capital", server_base_url()))
+            .get(format!("{base_url}/strategy/capital"))
             .query(&[("strategy", "noise")])
             .send()
             .await
@@ -277,6 +296,8 @@ async fn test_server_get_strategy_value() {
             assert!(sgd.is_finite() && sgd >= 0.0);
             println!("✅ /strategy/capital: noise = {sgd}");
         }
+
+        server.shutdown();
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -293,7 +314,8 @@ async fn test_server_get_possible_stock_contracts() {
         |state| async move {
             let (app_state_sender, app_state_rcx) =
                 tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-            init_server(app_state_rcx);
+            let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+            let base_url = format!("http://{}", server.local_addr());
 
             let app_state = init_app(
                 &api_port_addr(),
@@ -309,7 +331,7 @@ async fn test_server_get_possible_stock_contracts() {
 
             let client = reqwest::Client::new();
             let response = client
-                .get(format!("{}/contracts/stock", server_base_url()))
+                .get(format!("{base_url}/contracts/stock"))
                 .query(&[
                     ("stock", "AAPL"),
                     ("primary_exchange", "NASDAQ"),
@@ -327,6 +349,8 @@ async fn test_server_get_possible_stock_contracts() {
                 let contracts = body.as_array();
                 assert!(contracts.is_some());
             }
+
+            server.shutdown();
         },
     )
     .await
@@ -344,7 +368,8 @@ async fn test_server_invalid_query_params() {
         |state| async move {
             let (app_state_sender, app_state_rcx) =
                 tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
-            init_server(app_state_rcx);
+            let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
+            let base_url = format!("http://{}", server.local_addr());
 
             let app_state = init_app(
                 &api_port_addr(),
@@ -360,7 +385,7 @@ async fn test_server_invalid_query_params() {
 
             let client = reqwest::Client::new();
             let response = client
-                .get(format!("{}/contract/price", server_base_url()))
+                .get(format!("{base_url}/contract/price"))
                 .send()
                 .await
                 .expect("HTTP request failed");
@@ -368,6 +393,8 @@ async fn test_server_invalid_query_params() {
             let status = response.status();
             assert!(status.is_client_error() || status.is_server_error());
             println!("✅ /contract/price with no params: {} (correct)", status);
+
+            server.shutdown();
         },
     )
     .await
