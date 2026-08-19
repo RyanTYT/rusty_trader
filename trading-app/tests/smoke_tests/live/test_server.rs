@@ -90,9 +90,10 @@ async fn test_server_init_boots() {
             );
 
             // Explicit teardown: server before app_state (server borrows app_state).
+            drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            server.shutdown();
             true
         })
         .await
@@ -148,9 +149,10 @@ async fn test_server_check_health() {
                 println!("⚠️ /check-health: 500 (IBKR not connected)");
             }
 
+            drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            server.shutdown();
             true
         })
         .await
@@ -208,9 +210,10 @@ async fn test_server_get_current_price() {
             //     println!("✅ /contract/price: AAPL = ${price}");
             // }
 
+            drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            server.shutdown();
             true
         })
         .await
@@ -264,9 +267,10 @@ async fn test_server_get_exchange_rate() {
                 println!("✅ /exchange_rate: USD/SGD = {price}");
             }
 
+            drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            server.shutdown();
             true
         })
         .await
@@ -320,6 +324,7 @@ async fn test_server_get_strategy_value() {
                 println!("✅ /strategy/capital: noise = {sgd}");
             }
 
+            drop(client);
             drop(app_state_sender);
             server.shutdown();
             drop(app_state);
@@ -377,6 +382,7 @@ async fn test_server_get_possible_stock_contracts() {
                 assert!(contracts.is_some());
             }
 
+            drop(client);
             drop(app_state_sender);
             server.shutdown();
             drop(app_state);
@@ -424,6 +430,7 @@ async fn test_server_invalid_query_params() {
             assert!(status.is_client_error() || status.is_server_error());
             println!("✅ /contract/price with no params: {} (correct)", status);
 
+            drop(client);
             drop(app_state_sender);
             server.shutdown();
             drop(app_state);
