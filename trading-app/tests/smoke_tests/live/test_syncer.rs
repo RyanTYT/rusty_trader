@@ -33,6 +33,7 @@ use trading_app::strategy::strategy::StrategyEnum;
 
 use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
+use trading_app::strategy::unknown::Unknown;
 
 use crate::live::init::{
     api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
@@ -66,14 +67,22 @@ fn build_syncer(state: &crate::live::init::LiveIbkr, contract: Contract) -> Sync
         state.pool.clone(),
         tokio::runtime::Handle::current(),
     ));
-    let strat_params = vec![trading_app::test_internals::strategy_parameters(
+    let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
+    let unknown_strat_param = trading_app::test_internals::strategy_parameters(
+        unknown.clone(),
+        vec![DataSubscription::new(
+            contract.clone(),
+            RealtimeWhatToShow::Trades,
+        )],
+    );
+    let noise_strat_param = trading_app::test_internals::strategy_parameters(
         noise.clone(),
         vec![DataSubscription::new(contract, RealtimeWhatToShow::Trades)],
-    )];
+    );
     SyncerEngine::new(
         state.pool.clone(),
         ibkr_account(),
-        &strat_params,
+        &vec![unknown_strat_param, noise_strat_param],
         tokio::runtime::Handle::current(),
     )
 }
