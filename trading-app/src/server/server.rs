@@ -25,6 +25,52 @@ use std::{
 };
 use tokio::sync::{Mutex, mpsc::Receiver};
 
+/// Handle to a running axum server. Owns the worker thread + a shutdown signal.
+///
+/// Drop shuts the server down gracefully (best-effort) and joins the worker
+/// thread so the OS releases the bound port before `Drop` returns. Callers
+/// that want explicit teardown can call `.shutdown()` instead.
+pub struct ServerHandle {
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+    /// The actual bound address (captures the OS-assigned port when binding to :0).
+    local_addr: std::net::SocketAddr,
+}
+
+impl ServerHandle {
+    /// The actual address the server is listening on. Useful when binding to
+    /// `"0.0.0.0:0"` for tests — the OS assigns an ephemeral port reported here.
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        self.local_addr
+    }
+
+    /// Explicitly shut the server down and block until the worker thread exits.
+    /// Idempotent; safe to call multiple times.
+    pub fn shutdown(mut self) {
+        self.shutdown_internal();
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn shutdown_internal(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            // Receiver drop = graceful_shutdown future completes; axum::serve returns Ok.
+            let _ = tx.send(());
+        }
+    }
+}
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        self.shutdown_internal();
+        if let Some(handle) = self.thread_handle.take() {
+            // Block so the port is actually released before we return.
+            let _ = handle.join();
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct AppState {
     trading_app_state: Arc<Mutex<Option<Weak<ApplicationState>>>>,
@@ -344,14 +390,47 @@ async fn check_health(
     }
 }
 
-pub fn init_server(mut app_state_rcx: Receiver<Weak<ApplicationState>>) {
-    thread::spawn(move || {
+// ============================ 1. init_server — boots on port 8000 ============================
+/// Boot the axum HTTP server.
+///
+/// `addr` is the bind address, e.g. `"0.0.0.0:8000"` for production or
+/// `"0.0.0.0:0"` for tests (OS-assigned ephemeral port — read the actual port
+/// back via `handle.local_addr()`).
+///
+/// The bind happens synchronously on the caller's thread BEFORE the worker
+/// thread is spawned, so a bind failure surfaces as an `io::Error` here
+/// (rather than panicking inside a detached thread, which was the old behavior
+/// that cascaded into `Address already in use` across parallel tests).
+///
+/// Returns a `ServerHandle` that gracefully shuts the server down on drop,
+/// guaranteeing the port is released before the handle is destroyed.
+pub fn init_server(
+    addr: &str,
+    mut app_state_rcx: Receiver<Weak<ApplicationState>>,
+) -> Result<ServerHandle, std::io::Error> {
+    // Bind synchronously on the caller's thread so bind errors surface here.
+    let std_listener = std::net::TcpListener::bind(addr)?;
+    // Capture the actual bound address (incl. OS-assigned port when addr=:0)
+    // before the listener is moved into the worker thread.
+    let local_addr = std_listener.local_addr()?;
+    // Set non-blocking so tokio can poll it inside the worker runtime.
+    std_listener.set_nonblocking(true)?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let thread_handle = thread::spawn(move || {
         let axum_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .build()
+            .build()  // propagates as a panic in the worker thread if it fails
             .unwrap();
 
-        axum_runtime.block_on(async {
+        axum_runtime.block_on(async move {
+            // Convert the already-bound std listener into a tokio listener
+            // inside this runtime.
+            let listener = tokio::net::TcpListener::from_std(std_listener)
+                .expect("from_std on a bound non-blocking listener cannot fail");
+            tracing::info!("[Axum Thread] Server listening on http://{}", local_addr);
+
             let app_state = AppState {
                 trading_app_state: Arc::new(Mutex::new(None)),
             };
@@ -374,11 +453,20 @@ pub fn init_server(mut app_state_rcx: Receiver<Weak<ApplicationState>>) {
                 .route("/check-health", axum::routing::get(check_health))
                 .with_state(app_state);
 
-            let addr = "0.0.0.0:8000";
-            let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-            tracing::info!("[Axum Thread] Server listening on http://{}", addr);
-
-            axum::serve(listener, app).await.unwrap();
+            // Graceful shutdown: when `shutdown_tx` is dropped (or sent),
+            // `shutdown_rx` resolves and axum::serve returns Ok(()).
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .ok();  // don't panic on graceful shutdown / runtime errors
         });
     });
+
+    Ok(ServerHandle {
+        shutdown_tx: Some(shutdown_tx),
+        thread_handle: Some(thread_handle),
+        local_addr,
+    })
 }

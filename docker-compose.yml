@@ -39,6 +39,7 @@ services:
       - DB_PW=${DB_PW}
       - DB_DB=${DB_DB}
       - DATABASE_HOST=db
+      - SERVER_URL=0.0.0.0:8000
       # - HOST=127.0.0.1
       # - SERVER_HOST=127.0.0.1
       # - PORT=8000
@@ -168,6 +169,7 @@ services:
       - DB_PW=${DB_PW}
       - DB_DB=${DB_DB}
       - DISPLAY=:99
+      - SERVER_URL=0.0.0.0:8000
       - SQLX_OFFLINE=true
       - RUST_BACKTRACE=1
       - RUST_LOG=info
