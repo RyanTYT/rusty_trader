@@ -28,11 +28,14 @@ use crate::{
 };
 
 const BUFFER_CAPACITY: usize = 128;
+const MAX_NUM_CONSUMERS: usize = 10;
 
+// Order matters here: strategy_handlers dropped first
+// - consolidator holding impt stuff last to drop to prevent panics
 pub struct IbkrState {
-    pub consolidator: Arc<Consolidator>,
-    strategy_handlers: Vec<StrategyDataBundler<BUFFER_CAPACITY>>,
+    strategy_handlers: Vec<StrategyDataBundler<BUFFER_CAPACITY, MAX_NUM_CONSUMERS>>,
     order_update_stream_controller: OrderUpdateStreamController,
+    pub consolidator: Arc<Consolidator>,
 }
 
 pub enum ApplicationState {
@@ -95,12 +98,8 @@ pub async fn init_strategies(
             DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Ask),
         ],
     };
-    
-    let res = vec![
-        noise_strat_params,
-        manual_params,
-        unknown_params,
-    ];
+
+    let res = vec![noise_strat_params, manual_params, unknown_params];
 
     for strat_param in res.iter() {
         let strategy_crud = StrategyCRUD::new(pool.clone());
@@ -267,22 +266,24 @@ pub async fn init_app(
     )
     .expect("Expected OrderUpdateStreamController initialisation to be ok");
 
+    let handle = tokio::runtime::Handle::current();
     let strategy_threads = strat_params.into_iter().map(|strat_param| {
-        let strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
+        let mut strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
         let cloned_consolidator = consolidator.clone();
         let cloned_order_engine = order_engine.clone();
         let cloned_client_1 = client_1.clone();
         let cloned_backed_up_orders = backed_up_orders.clone();
+        let handle = handle.clone();
         async move {
-            if let Err(e) = strat_param
-                .strategy
-                .warm_up_data(&cloned_consolidator)
-                .await
+            let strategy = strat_param.strategy.clone();
+            let strat_name = strategy.get_name();
+            let consolidator = cloned_consolidator.clone();
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                handle.block_on(strategy.warm_up_data(&consolidator))
+            })
+            .await
             {
-                tracing::error!(
-                    "Failed to initialise strategy ({}): {e:?}",
-                    strat_param.strategy.get_name()
-                )
+                tracing::error!("Failed to initialise strategy ({}): {e:?}", strat_name)
             };
             let consumers = strat_param
                 .subscribed_contracts
@@ -302,7 +303,7 @@ pub async fn init_app(
                 .collect();
             strategy_data_bundler.hook_strategy(
                 consumers,
-                strat_param.strategy.clone(),
+                strat_param.strategy,
                 cloned_order_engine.clone(),
                 Arc::downgrade(&cloned_consolidator),
                 Arc::downgrade(&cloned_client_1),
