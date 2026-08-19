@@ -469,7 +469,7 @@ async fn test_place_order_limit_unrealistic_price() {
         let order_ibkr = OrderIBKR::new(contract, order, -1);
         let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
-        let order_perm_id = OrderEngine::place_order(
+        let order_id = OrderEngine::place_order(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             &weak_client,
@@ -477,10 +477,10 @@ async fn test_place_order_limit_unrealistic_price() {
         );
 
         assert!(
-            order_perm_id > 0,
-            "limit order should be placed, got perm_id={order_perm_id}"
+            order_id > 0,
+            "limit order should be placed, got order_id={order_id}"
         );
-        println!("Limit order placed at $1.00, perm_id={order_perm_id} (won't fill, stays open)");
+        println!("Limit order placed at $1.00, order_id={order_id} (won't fill, stays open)");
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -492,7 +492,7 @@ async fn test_place_order_limit_unrealistic_price() {
             .expect("get_orders_for_strat failed");
         let our_order = orders
             .iter()
-            .find(|o| matches!(o, OOFK::Stock(s) if s.order_perm_id == order_perm_id));
+            .find(|o| matches!(o, OOFK::Stock(s) if s.order_id == order_id));
         assert!(
             our_order.is_some(),
             "limit order should appear in open_orders"
