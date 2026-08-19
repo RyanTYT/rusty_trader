@@ -345,8 +345,8 @@ async fn update_currency_and_place_backed_up_orders(
         return;
     };
 
-    let strat_orders = backed_up_orders.load_orders(strategy_name).unwrap().unwrap();
-    if !strat_orders.is_empty() {
+    let strat_orders = backed_up_orders.load_orders(strategy_name).unwrap();
+    if !strat_orders.as_ref().is_none_or(|strat_orders_vec| strat_orders_vec.is_empty()) {
         let current_positions_currency = 
             match current_positions_crud.read(&pk).await {
                 Ok(v) => v,
@@ -358,7 +358,7 @@ async fn update_currency_and_place_backed_up_orders(
 
         let mut currency_value = current_positions_currency.expect("Expected current positions of currency not to be None").get_qty();
         if currency_value > 0.0 {
-            for mut strat_order in strat_orders {
+            for mut strat_order in strat_orders.unwrap() {
                 if !(strat_order.contract.currency.to_string() == pk.get_stock().strip_prefix("CASH:").expect("Expected currency stock to have CASH: prefix")) {
                     continue;
                 }
