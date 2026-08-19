@@ -19,11 +19,17 @@ const MAX_SUB_TRY_TIMES: usize = 50;
 
 pub struct MarketDataProducer {
     is_alive: Arc<AtomicBool>,
+    thread_handle: Option<std::thread::JoinHandle<()>>
 }
 
 impl Drop for MarketDataProducer {
     fn drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
+        if let Some(handle) = self.thread_handle.take() {
+            if let Err(e) = handle.join() {
+                tracing::error!("Failed to kill producer thread: {e:?}");
+            }
+        }
     }
 }
 
@@ -34,10 +40,10 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     what_to_show: WhatToShow,
     contract_scheduler: Arc<IbkrContractScheduler>,
 ) -> (
-    Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
+    Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>,
     MarketDataProducer,
 ) {
-    let ring_buffer = Box::pin(SpmcRingBuffer::<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new());
+    let ring_buffer = Arc::new(SpmcRingBuffer::<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new());
     let producer = ring_buffer.get_new_producer().expect(
         "Expected to be able to get \
             producer for SPMC ring buffer",
@@ -55,7 +61,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
     hotpath::gauge!(metric_missed_bar.as_str()).set(0);
     hotpath::gauge!(metric_sub_errors.as_str()).set(0);
 
-    std::thread::Builder::new()
+    let thread_handle = std::thread::Builder::new()
         .name(
             format!(
                 "{}_{}_prod",
@@ -194,5 +200,5 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                 }
             }
         }).expect("Expected producer thread to be able to spawn");
-    return (ring_buffer, MarketDataProducer { is_alive });
+    return (ring_buffer, MarketDataProducer { is_alive, thread_handle: Some(thread_handle) });
 }

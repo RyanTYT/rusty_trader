@@ -31,26 +31,36 @@ const SPIN_BACKOFF: Duration = Duration::ZERO;
 // }
 pub struct MarketDataDbConsumer {
     is_alive: Arc<AtomicBool>,
+    thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for MarketDataDbConsumer {
     fn drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
+
+        if let Some(handle) = self.thread_handle.take() {
+            if let Err(e) = handle.join() {
+                tracing::error!("Failed to tear down MarketDataDbConsumer properly: {e:?}");
+            }
+        }
     }
 }
 
 #[hotpath::measure]
-pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
+pub fn begin_db_consumer_thread_singular<
+    const BUFFER_CAPACITY: usize,
+    const NUM_CONSUMERS: usize,
+>(
     pool: PgPool,
     contract_scheduler: Arc<IbkrContractScheduler>,
-    consumer: IbkrBarConsumer<BUFFER_CAPACITY>,
+    consumer: IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
     rt_handle: tokio::runtime::Handle,
 ) -> MarketDataDbConsumer {
     let is_alive = Arc::new(AtomicBool::new(true));
     let is_alive_cloned = is_alive.clone();
     let contract_scheduler = contract_scheduler.clone();
-    std::thread::Builder::new()
+    let thread_handle = std::thread::Builder::new()
         .name(format!(
             "{}_{}_consumer",
             consumer.contract.symbol, consumer.contract.security_type
@@ -142,14 +152,18 @@ pub fn begin_db_consumer_thread_singular<const BUFFER_CAPACITY: usize>(
         .expect("Expected DB Consumer thread to be able to be spawned");
     MarketDataDbConsumer {
         is_alive: is_alive_cloned,
+        thread_handle: Some(thread_handle),
     }
 }
 
 #[hotpath::measure]
-pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
+pub fn begin_db_consumer_thread_grouped<
+    const BUFFER_CAPACITY: usize,
+    const NUM_CONSUMERS: usize,
+>(
     pool: PgPool,
     contract_scheduler: Arc<IbkrContractScheduler>,
-    consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY>>,
+    consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
     cache: Cache<i32, (DateTime<Utc>, f64)>,
     rt_handle: tokio::runtime::Handle,
 ) -> MarketDataDbConsumer {
@@ -181,7 +195,7 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
             .security_type,
         actual_consumers
     );
-    std::thread::Builder::new()
+    let thread_handle = std::thread::Builder::new()
         .name(format!(
             "{}_{}_grouped_consumer",
             consumers
@@ -319,6 +333,7 @@ pub fn begin_db_consumer_thread_grouped<const BUFFER_CAPACITY: usize>(
         .expect("Expected to be able to spawn DB consumer thread");
     MarketDataDbConsumer {
         is_alive: is_alive_cloned,
+        thread_handle: Some(thread_handle),
     }
 }
 

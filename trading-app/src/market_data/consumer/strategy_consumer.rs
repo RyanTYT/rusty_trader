@@ -28,17 +28,19 @@ const HOT_WINDOW: Duration = Duration::from_millis(200);
 /// Set to Duration::ZERO for a true hot spin.
 const SPIN_BACKOFF: Duration = Duration::ZERO;
 
-pub struct IbkrBarConsumer<const BUFFER_CAPACITY: usize> {
+pub struct IbkrBarConsumer<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> {
     pub contract: Contract,
     pub what_to_show: WhatToShow,
-    consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY>,
+    consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>,
 }
 
-impl<const BUFFER_CAPACITY: usize> IbkrBarConsumer<BUFFER_CAPACITY> {
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
+    IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
     pub fn new(
         contract: Contract,
         what_to_show: WhatToShow,
-        consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY>,
+        consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>,
     ) -> Self {
         Self {
             contract,
@@ -55,7 +57,9 @@ pub enum IbkrBarType {
     ForexAsk,
 }
 
-impl<const BUFFER_CAPACITY: usize> IbkrBarConsumer<BUFFER_CAPACITY> {
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
+    IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
     // pub fn is_trading(&self) -> bool {
     //     // self.contract
     //     true
@@ -75,22 +79,26 @@ impl<const BUFFER_CAPACITY: usize> IbkrBarConsumer<BUFFER_CAPACITY> {
     }
 }
 
-pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize> {
+pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> {
     contract_scheduler: Arc<IbkrContractScheduler>,
     is_alive: Arc<AtomicBool>,
+    thread_handles: Vec<std::thread::JoinHandle<()>>,
 }
 
 #[hotpath::measure_all]
-impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
+    StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
     pub fn new(contract_scheduler: Arc<IbkrContractScheduler>) -> Self {
         Self {
             contract_scheduler,
             is_alive: Arc::new(AtomicBool::new(false)),
+            thread_handles: vec![],
         }
     }
 
     /// pub visibility ONLY for testing purposes
-    pub fn sort_consumers(consumers: &mut Vec<IbkrBarConsumer<BUFFER_CAPACITY>>) {
+    pub fn sort_consumers(consumers: &mut Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>) {
         consumers.sort_by(|a, b| {
             let is_fx_a = AssetType::from_str(&a.contract.security_type) == AssetType::ForexPair;
             let is_fx_b = AssetType::from_str(&b.contract.security_type) == AssetType::ForexPair;
@@ -122,8 +130,8 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
 
     // Will only ever spawn thread once
     pub fn hook_strategy(
-        &self,
-        mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY>>,
+        &mut self,
+        mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
         strategy: StrategyEnum,
 
         order_engine: OrderEngine,
@@ -139,7 +147,7 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
 
         Self::sort_consumers(&mut consumers);
         let contract_scheduler = self.contract_scheduler.clone();
-        std::thread::Builder::new()
+        let thread_handle = std::thread::Builder::new()
             .name(format!("{}_strat", strategy.get_name()))
             .spawn(move || {
                 let strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
@@ -313,6 +321,8 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
                 }
             })
             .expect("Expected Strategy Thread to be able to be spawned");
+
+        self.thread_handles.push(thread_handle);
     }
 
     fn dispatch_bar<OnBarUpdate, HandleBarUpdate>(
@@ -370,9 +380,17 @@ impl<const BUFFER_CAPACITY: usize> StrategyDataBundler<BUFFER_CAPACITY> {
     }
 }
 
-impl<const BUFFER_CAPACITY: usize> Drop for StrategyDataBundler<BUFFER_CAPACITY> {
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
+    for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
     fn drop(&mut self) {
-        self.is_alive.store(false, Ordering::Release)
+        self.is_alive.store(false, Ordering::Release);
+
+        for thread_handle in std::mem::take(&mut self.thread_handles) {
+            if let Err(e) = thread_handle.join() {
+                tracing::error!("Failed to end strategy thread handle: {e:?}");
+            }
+        }
     }
 }
 

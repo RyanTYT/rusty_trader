@@ -115,10 +115,8 @@ pub struct MarketDataHandler {
     db_consumers: Vec<MarketDataDbConsumer>,
     client_producers: Vec<MarketDataProducer>,
     live_prices: Cache<i32, (DateTime<Utc>, f64)>,
-    subscriptions: HashMap<
-        DataSubscription,
-        std::pin::Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
-    >,
+    subscriptions:
+        HashMap<DataSubscription, Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>,
     pool: PgPool,
 }
 
@@ -170,7 +168,7 @@ impl MarketDataHandler {
                 self.client_producers.push(producer);
                 let a = ring_buffer.get_new_consumer().unwrap().try_pop();
                 tracing::error!("Initial ring buffer result: {a:?}");
-                new_consumers.push(IbkrBarConsumer::<BUFFER_SIZE>::new(
+                new_consumers.push(IbkrBarConsumer::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(
                     subscription.contract.clone(),
                     subscription.what_to_show.clone(),
                     ring_buffer.get_new_consumer().expect("Expected to be able to get_new_consumer() -> i.e. no. of consumers exceeded!"),
@@ -210,7 +208,7 @@ impl MarketDataHandler {
     pub fn get_subsription(
         &self,
         sub: &DataSubscription,
-    ) -> Option<&std::pin::Pin<Box<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>>> {
+    ) -> Option<&Arc<SpmcRingBuffer<Bar, BUFFER_SIZE, MAX_NO_OF_CONSUMERS>>> {
         self.subscriptions.get(&sub)
     }
 }

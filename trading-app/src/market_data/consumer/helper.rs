@@ -112,9 +112,9 @@ pub fn aggregate_bars(
 /// Consumers that aren't trading yet at startup are skipped here; they'll
 /// simply be picked up by the active-set snapshot once they start trading,
 /// on whatever schedule the group has already settled into.
-pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize>(
+pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>(
     contract_scheduler: &IbkrContractScheduler,
-    consumers: &[IbkrBarConsumer<BUFFER_CAPACITY>],
+    consumers: &[IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>],
 ) -> SystemTime {
     let n = consumers.len();
     let mut observed = vec![None; n];
