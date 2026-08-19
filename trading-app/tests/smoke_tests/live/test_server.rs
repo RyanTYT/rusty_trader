@@ -93,7 +93,8 @@ async fn test_server_init_boots() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            server.shutdown();
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -152,7 +153,8 @@ async fn test_server_check_health() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            server.shutdown();
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -213,7 +215,8 @@ async fn test_server_get_current_price() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            server.shutdown();
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -270,7 +273,8 @@ async fn test_server_get_exchange_rate() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            server.shutdown();
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -326,8 +330,9 @@ async fn test_server_get_strategy_value() {
 
             drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -384,8 +389,9 @@ async fn test_server_get_possible_stock_contracts() {
 
             drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
@@ -432,8 +438,9 @@ async fn test_server_invalid_query_params() {
 
             drop(client);
             drop(app_state_sender);
-            server.shutdown();
             drop(app_state);
+            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            handle.await.unwrap();
             true
         })
         .await
