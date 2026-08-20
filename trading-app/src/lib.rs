@@ -191,6 +191,7 @@ pub mod test_internals {
 macro_rules! loop_until_async_drop {
     ($app_state:ident) => {
         loop {
+            println!("trying to drop app_state");
             if let Some(app_state_uno) = Arc::get_mut(&mut $app_state) {
                 app_state_uno.async_drop().await;
                 break;
