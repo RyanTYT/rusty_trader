@@ -220,6 +220,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     });
                     let mut received = vec![false; active.len()];
 
+                    println!("Next deadline: {:?}", next_deadline - HOT_WINDOW);
                     hotpath::measure_block!("sleep_until_deadline", {
                         sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy.get_name());
                     });
@@ -338,14 +339,30 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
                     // Anything still marked not-received missed its window
                     // this cycle — surface that instead of silently dropping it.
-                    for (slot, &idx) in active.iter().enumerate() {
-                        if !received[slot] {
-                            tracing::warn!(
-                                "Failed to receive bar for {}",
-                                consumers[idx].contract.symbol
-                            );
-                        }
-                    }
+                    let errs = active
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(slot, &idx)| {
+                            if !received[idx] {
+                                Some(format!(
+                                    "Failed to receive bar for {}",
+                                    consumers[idx].contract.symbol
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    tracing::warn!("{}", errs);
+                    // for (slot, &idx) in active.iter().enumerate() {
+                    //     if !received[slot] {
+                    //         tracing::warn!(
+                    //             "Failed to receive bar for {}",
+                    //             consumers[idx].contract.symbol
+                    //         );
+                    //     }
+                    // }
 
                     next_deadline += BAR_INTERVAL;
                 }
