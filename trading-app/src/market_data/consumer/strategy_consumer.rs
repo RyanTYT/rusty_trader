@@ -85,6 +85,21 @@ pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS
     thread_handles: Vec<std::thread::JoinHandle<()>>,
 }
 
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
+    for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
+    fn drop(&mut self) {
+        self.is_alive.store(false, Ordering::Release);
+
+        for thread_handle in std::mem::take(&mut self.thread_handles) {
+            if let Err(e) = thread_handle.join() {
+                tracing::error!("Failed to end strategy thread handle: {e:?}");
+            }
+        }
+    }
+}
+
+
 #[hotpath::measure_all]
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
@@ -377,20 +392,6 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
             }
         }
         Ok(())
-    }
-}
-
-impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
-    for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
-{
-    fn drop(&mut self) {
-        self.is_alive.store(false, Ordering::Release);
-
-        for thread_handle in std::mem::take(&mut self.thread_handles) {
-            if let Err(e) = thread_handle.join() {
-                tracing::error!("Failed to end strategy thread handle: {e:?}");
-            }
-        }
     }
 }
 
