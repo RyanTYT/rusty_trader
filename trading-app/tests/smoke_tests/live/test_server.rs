@@ -158,6 +158,7 @@ async fn test_server_check_health() {
 
             drop(client);
             drop(app_state_sender);
+            println!("app_state count: {}", Arc::strong_count(&app_state));
             loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
