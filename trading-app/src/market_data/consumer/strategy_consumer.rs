@@ -89,7 +89,9 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
     for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
     fn drop(&mut self) {
+        println!("Dropping StrategyDataBundler");
         self.is_alive.store(false, Ordering::Release);
+        println!("Dropping StrategyDataBundler 1");
 
         for thread_handle in std::mem::take(&mut self.thread_handles) {
             if let Err(e) = thread_handle.join() {
