@@ -40,6 +40,7 @@ use trading_app::ibc::with_gateway_retry;
 use trading_app::init_app::{ApplicationState, init_app};
 use trading_app::server::server::init_server;
 
+use crate::common::init_tracing;
 use crate::live::init::{api_port_addr, get_pool};
 
 // ============================ 1. init_server — boots on ephemeral port ============================
@@ -47,6 +48,7 @@ use crate::live::init::{api_port_addr, get_pool};
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_init_boots() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_boot.log", 2, |_| async {
@@ -110,6 +112,7 @@ async fn test_server_init_boots() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_check_health() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_health.log", 2, |_| async {
@@ -172,6 +175,7 @@ async fn test_server_check_health() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_get_current_price() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_price.log", 2, |_| async {
@@ -235,6 +239,7 @@ async fn test_server_get_current_price() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_get_exchange_rate() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_fx.log", 2, |_| async {
@@ -295,6 +300,7 @@ async fn test_server_get_exchange_rate() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_get_strategy_value() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_sgd.log", 2, |_| async {
@@ -355,6 +361,7 @@ async fn test_server_get_strategy_value() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_get_possible_stock_contracts() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_contracts.log", 2, |_| async {
@@ -416,6 +423,7 @@ async fn test_server_get_possible_stock_contracts() {
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_invalid_query_params() {
+    init_tracing();
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_invalid.log", 2, |_| async {
