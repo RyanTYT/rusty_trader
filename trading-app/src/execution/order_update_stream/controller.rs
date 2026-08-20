@@ -116,7 +116,7 @@ impl OrderUpdateStreamController {
             };
             info!("Subscribed for updates for orders!");
 
-            while is_alive.load(std::sync::atomic::Ordering::Acquire) {
+            loop {
                 if let Some(e) = event_subscription.error() {
                     warn!(
                         "order_update_stream subscription died! but not killed:{e:?}\
@@ -149,6 +149,10 @@ impl OrderUpdateStreamController {
                             )
                         };
                     });
+                }
+
+                if is_alive.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
                 }
             }
 
