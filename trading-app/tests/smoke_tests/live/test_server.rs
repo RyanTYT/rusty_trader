@@ -38,6 +38,7 @@ use std::time::Duration;
 
 use trading_app::ibc::with_gateway_retry;
 use trading_app::init_app::{ApplicationState, init_app};
+use trading_app::loop_until_async_drop;
 use trading_app::server::server::init_server;
 
 use crate::common::init_tracing;
@@ -68,7 +69,7 @@ async fn test_server_init_boots() {
             .await
             .expect("init_app failed");
 
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -94,7 +95,7 @@ async fn test_server_init_boots() {
             // Explicit teardown: server before app_state (server borrows app_state).
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -129,7 +130,7 @@ async fn test_server_check_health() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -157,7 +158,7 @@ async fn test_server_check_health() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -192,7 +193,7 @@ async fn test_server_get_current_price() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -221,7 +222,7 @@ async fn test_server_get_current_price() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -256,7 +257,7 @@ async fn test_server_get_exchange_rate() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -282,7 +283,7 @@ async fn test_server_get_exchange_rate() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -317,7 +318,7 @@ async fn test_server_get_strategy_value() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -343,7 +344,7 @@ async fn test_server_get_strategy_value() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -378,7 +379,7 @@ async fn test_server_get_possible_stock_contracts() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -405,7 +406,7 @@ async fn test_server_get_possible_stock_contracts() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -424,6 +425,7 @@ async fn test_server_get_possible_stock_contracts() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_server_invalid_query_params() {
     init_tracing();
+    /// NOTE GET_POOL CRASHED FOR NON-STALLED TESTS
     let pool = get_pool().await.expect("Failed to connect to DB");
     assert!(
         with_gateway_retry("ibc_server_invalid.log", 2, |_| async {
@@ -440,7 +442,7 @@ async fn test_server_invalid_query_params() {
             )
             .await
             .expect("init_app failed");
-            let app_state = Arc::new(app_state);
+            let mut app_state = Arc::new(app_state);
             let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -457,7 +459,7 @@ async fn test_server_invalid_query_params() {
 
             drop(client);
             drop(app_state_sender);
-            drop(app_state);
+            loop_until_async_drop!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });

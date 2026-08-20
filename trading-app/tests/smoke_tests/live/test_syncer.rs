@@ -25,6 +25,7 @@ use trading_app::database::models_crud::open_orders::open_orders::{OpenOrdersCRU
 use trading_app::execution::fx_backed_up_order::OrderStore;
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
 use trading_app::execution::syncer::{SyncOps, SyncerEngine};
+use trading_app::loop_until_async_drop;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::{DataSubscription, MarketDataHandler};
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
@@ -35,9 +36,7 @@ use ibapi::orders::Action;
 use ibapi::orders::order_builder::market_order;
 use trading_app::strategy::unknown::Unknown;
 
-use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -99,9 +98,11 @@ async fn test_syncer_new_constructor() {
         println!("✅ SyncerEngine::new succeeded (no panic)");
 
         // Verify the syncer is usable — call sync_open_orders (which uses the internal maps)
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         syncer.sync_open_orders(&state.client_1, &consolidator, Some("noise".to_string()));
         println!("✅ SyncerEngine internal state verified — sync_open_orders ran without error");
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -116,7 +117,7 @@ async fn test_sync_open_orders_empty_account() {
         // sync_open_orders writes open_orders (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         // Clean up any existing open orders for "noise" strategy first
         let crud = OpenOrdersCRUD::stock(state.pool.clone());
@@ -140,6 +141,8 @@ async fn test_sync_open_orders_empty_account() {
         }).collect();
         assert!(our_orders.is_empty(), "no open orders should exist for AAPL after sync on empty account");
         println!("✅ sync_open_orders(empty): no spurious open orders created");
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -153,7 +156,7 @@ async fn test_sync_open_orders_with_open_order() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_oo_with.log", |state| async move {
         // sync_open_orders writes open_orders (FK → trading.strategy); place_order also writes optimistic row.
         ensure_strategy_row(&state.pool, "noise").await;
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
 
         // Place a limit order at unrealistic price so it stays open
@@ -198,6 +201,8 @@ async fn test_sync_open_orders_with_open_order() {
                 OpenStockOrdersPrimaryKeys { order_perm_id: s.order_perm_id, order_id: s.order_id },
             )).await;
         }
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -296,7 +301,7 @@ async fn test_sync_positions_reconcile() {
         // sync_positions writes current_positions (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
         let syncer = build_syncer(&state, aapl_contract());
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         // sync_positions reconciles local DB positions with broker positions
         syncer
@@ -315,6 +320,8 @@ async fn test_sync_positions_reconcile() {
             "sync_positions: {} positions for 'noise' strategy",
             positions.len()
         );
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -335,7 +342,7 @@ async fn test_sync_open_orders_default_strategy_fallback() {
             ensure_strategy_row(&state.pool, "unknown").await;
             // Build syncer with noise strategy
             let syncer = build_syncer(&state, aapl_contract());
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // Call sync_open_orders with a different default strategy
             syncer.sync_open_orders(&state.client_1, &consolidator, Some("unknown".to_string()));
@@ -347,6 +354,8 @@ async fn test_sync_open_orders_default_strategy_fallback() {
                 .get_orders_for_strat("unknown")
                 .await
                 .expect("get_orders_for_strat failed");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -392,7 +401,7 @@ async fn test_syncer_full_lifecycle() {
     with_live_ibkr(&ibkr_account(), "ibc_syncer_lifecycle.log", |state| async move {
         // Full lifecycle: sync_open_orders/executions/positions all write FK tables.
         ensure_strategy_row(&state.pool, "noise").await;
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         let syncer = build_syncer(&state, aapl_contract());
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
 
@@ -440,6 +449,8 @@ async fn test_syncer_full_lifecycle() {
         let _ = sqlx::query("DELETE FROM trading.staged_commissions WHERE execution_id LIKE '%noise%'")
             .execute(&state.pool).await;
         println!("✅ full sync lifecycle cleanup complete");
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");

@@ -31,6 +31,7 @@ use trading_app::database::models_crud::open_orders::open_orders::{
 };
 use trading_app::execution::fx_backed_up_order::OrderStore;
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
+use trading_app::loop_until_async_drop;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
@@ -299,7 +300,7 @@ async fn test_place_order_dead_client_panics() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_handle_bar_update_outcome_no_action() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_noaction.log", |state| async move {
-        let (consolidator, weak_client) =
+        let (mut consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
         let noise = StrategyEnum::Noise(Noise::new(
@@ -329,6 +330,8 @@ async fn test_handle_bar_update_outcome_no_action() {
         .expect("handle_bar_update_outcome(NoAction) blocking task panicked");
 
         println!("✅ handle_bar_update_outcome(NoAction) completed without error");
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -342,7 +345,7 @@ async fn test_handle_bar_update_outcome_emit_orders() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_emit.log", |state| async move {
         // EmitOrders path places orders → writes open_order rows (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
-        let (consolidator, weak_client) =
+        let (mut consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
         let noise = StrategyEnum::Noise(Noise::new(
@@ -400,6 +403,7 @@ async fn test_handle_bar_update_outcome_emit_orders() {
                     .await;
             }
         }
+        loop_until_async_drop!(consolidator);
         println!("✅ EmitOrders cleanup complete");
     })
     .await
@@ -414,7 +418,7 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
     with_live_ibkr(&ibkr_account(), "ibc_oe_pending.log", |state| async move {
         // PendingDbQuery path reads target/current position diff; may place orders.
         ensure_strategy_row(&state.pool, "noise").await;
-        let (consolidator, weak_client) =
+        let (mut consolidator, weak_client) =
             build_consolidator(state.pool.clone(), state.client_1.clone()).await;
         let engine = OrderEngine::new(state.pool.clone(), tokio::runtime::Handle::current());
         let noise = StrategyEnum::Noise(Noise::new(
@@ -449,6 +453,8 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
         println!("PendingDbQuery path completed");
         tokio::time::sleep(Duration::from_secs(2)).await;
         println!("✅ PendingDbQuery completed without error");
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");

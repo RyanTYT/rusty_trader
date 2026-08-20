@@ -9,7 +9,7 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{ibkr_account, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + market open + IBC installed"]
@@ -27,7 +27,7 @@ async fn test_get_current_price_live() {
         let contract_scheduler =
             std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
         let market_data_handler = MarketDataHandler::new(state.pool.clone());
-        let consolidator = Consolidator::new(
+        let mut consolidator = Consolidator::new(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             state.client_1.clone(),
@@ -44,6 +44,8 @@ async fn test_get_current_price_live() {
             (50.0..=500.0).contains(&price),
             "AAPL price {price} out of expected range"
         );
+
+        consolidator.async_drop().await;
     })
     .await
     .expect("Failed to boot live IBKR");

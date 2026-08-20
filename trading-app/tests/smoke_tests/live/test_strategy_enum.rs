@@ -20,8 +20,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::Utc;
-use chrono_tz::US::Eastern;
 use ibapi::prelude::Contract;
 use trading_app::database::models::AssetType;
 use trading_app::database::models_crud::historical_data::historical_data::{
@@ -30,6 +28,7 @@ use trading_app::database::models_crud::historical_data::historical_data::{
 use trading_app::database::models_crud::target_positions::target_positions::{
     TargetPositionsCRUD, TargetPositionsOps,
 };
+use trading_app::loop_until_async_drop;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
@@ -37,11 +36,8 @@ use trading_app::strategy::manual::Manual;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor};
 use trading_app::strategy::unknown::Unknown;
-use trading_app::test_internals::is_fx_trading_datetime;
 
-use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 /// Build a Consolidator needed by warm_up_data + on_bar_update.
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
@@ -231,7 +227,7 @@ async fn test_strategy_warm_up_data_noise() {
         &ibkr_account(),
         "ibc_strat_warmup_noise.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let handle = tokio::runtime::Handle::current();
             let noise = StrategyEnum::Noise(Noise::new(state.pool.clone(), handle.clone()));
 
@@ -264,6 +260,8 @@ async fn test_strategy_warm_up_data_noise() {
                 "warm_up_data should have fetched QQQ bars"
             );
             println!("✅ warm_up_data(Noise): QQQ historical data verified in DB");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -279,13 +277,15 @@ async fn test_strategy_warm_up_data_manual() {
         &ibkr_account(),
         "ibc_strat_warmup_manual.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
             // Manual.warm_up_data is a no-op (returns Ok(())) — just await it.
             let result = manual.warm_up_data(&consolidator).await;
             assert!(result.is_ok(), "Manual warm_up_data should succeed");
             println!("✅ warm_up_data(Manual): no-op completed without error");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -301,13 +301,15 @@ async fn test_strategy_warm_up_data_unknown() {
         &ibkr_account(),
         "ibc_strat_warmup_unknown.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
             // Unknown.warm_up_data is a no-op (returns Ok(())) — just await it.
             let result = unknown.warm_up_data(&consolidator).await;
             assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             println!("✅ warm_up_data(Unknown): no-op completed without error");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -323,7 +325,7 @@ async fn test_strategy_on_bar_update_manual() {
         &ibkr_account(),
         "ibc_strat_bar_manual.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let manual = StrategyEnum::Manual(Manual::new(state.pool.clone()));
 
             // Build a dummy stock bar
@@ -356,8 +358,9 @@ async fn test_strategy_on_bar_update_manual() {
             // servicing the current-thread runtime's I/O driver — otherwise the
             // sync call's internal block_on would deadlock against a blocked main
             // thread. No block_in_place (would panic on current-thread runtime).
+            let cloned_consolidator = consolidator.clone();
             let outcome = tokio::task::spawn_blocking(move || {
-                manual.on_bar_update(&contract, &bar, &consolidator)
+                manual.on_bar_update(&contract, &bar, &cloned_consolidator)
             })
             .await
             .expect("on_bar_update blocking task panicked");
@@ -379,6 +382,8 @@ async fn test_strategy_on_bar_update_manual() {
                 other => panic!("Manual should return PendingDbQuery, got {:?}", other),
             }
             println!("✅ on_bar_update(Manual): returns PendingDbQuery([Stock, Option])");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -394,7 +399,7 @@ async fn test_strategy_on_bar_update_unknown() {
         &ibkr_account(),
         "ibc_strat_bar_unknown.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             let unknown = StrategyEnum::Unknown(Unknown::new(state.pool.clone()));
 
             let contract = Contract {
@@ -421,8 +426,9 @@ async fn test_strategy_on_bar_update_unknown() {
 
             // on_bar_update is SYNC — run on a dedicated OS thread via spawn_blocking
             // (keeps main thread in event loop so the internal block_on doesn't deadlock).
+            let cloned_consolidator = consolidator.clone();
             let outcome = tokio::task::spawn_blocking(move || {
-                unknown.on_bar_update(&contract, &bar, &consolidator)
+                unknown.on_bar_update(&contract, &bar, &cloned_consolidator)
             })
             .await
             .expect("on_bar_update blocking task panicked");
@@ -438,6 +444,8 @@ async fn test_strategy_on_bar_update_unknown() {
                 other => panic!("Unknown should return PendingDbQuery, got {:?}", other),
             }
             println!("✅ on_bar_update(Unknown): returns PendingDbQuery([Stock, Option])");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -453,7 +461,7 @@ async fn test_strategy_on_bar_update_noise() {
         &ibkr_account(),
         "ibc_strat_bar_noise.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             // on_bar_update for Noise writes target_positions (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
             let noise = StrategyEnum::Noise(Noise::new(
@@ -516,8 +524,9 @@ async fn test_strategy_on_bar_update_noise() {
             // Run on a dedicated OS thread via spawn_blocking (keeps main thread in
             // event loop so the internal block_on doesn't deadlock the current-thread
             // runtime). No block_in_place.
+            let cloned_consolidator = consolidator.clone();
             let outcome = tokio::task::spawn_blocking(move || {
-                noise.on_bar_update(&contract, &bar, &consolidator)
+                noise.on_bar_update(&contract, &bar, &cloned_consolidator)
             })
             .await
             .expect("on_bar_update blocking task panicked");
@@ -547,6 +556,8 @@ async fn test_strategy_on_bar_update_noise() {
             // Cleanup any target position Noise may have created
             let target_crud = TargetPositionsCRUD::stock(state.pool.clone());
             let _ = target_crud.clear_strat_pos("noise").await;
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -580,7 +591,10 @@ async fn test_strategy_enum_ord_hash_clone_eq() {
             // Ord — all 3 have priority 1, so ordering is by name (manual < noise < unknown alphabetically)
             let mut sorted = vec![unknown.clone(), noise.clone(), manual.clone()];
             sorted.sort();
-            assert_eq!(sorted[0], noise, "Noise should sort first (declaration order)");
+            assert_eq!(
+                sorted[0], noise,
+                "Noise should sort first (declaration order)"
+            );
             assert_eq!(sorted[1], manual, "Manual should sort second");
             assert_eq!(sorted[2], unknown, "Unknown should sort third");
 

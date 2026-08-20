@@ -6,14 +6,12 @@ use std::sync::Arc;
 
 use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
-use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
+use trading_app::{loop_until_async_drop, market_data::consolidator::Consolidator};
 
-use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
@@ -34,7 +32,7 @@ async fn test_get_strategy_sgd_value_live() {
 
         let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
         let market_data_handler = MarketDataHandler::new(state.pool.clone());
-        let consolidator = Arc::new(Consolidator::new(
+        let mut consolidator = Arc::new(Consolidator::new(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             state.client_1.clone(),
@@ -65,6 +63,8 @@ async fn test_get_strategy_sgd_value_live() {
                 println!("get_strategy_sgd_value returned error (expected if no positions): {e}");
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");

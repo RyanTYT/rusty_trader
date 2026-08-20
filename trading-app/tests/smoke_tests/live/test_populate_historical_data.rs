@@ -9,7 +9,7 @@ use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{ibkr_account, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]
@@ -27,7 +27,7 @@ async fn test_populate_historical_data_live() {
         let contract_scheduler =
             std::sync::Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
         let market_data_handler = MarketDataHandler::new(state.pool.clone());
-        let consolidator = Consolidator::new(
+        let mut consolidator = Consolidator::new(
             tokio::runtime::Handle::current(),
             state.pool.clone(),
             state.client_1.clone(),
@@ -48,6 +48,8 @@ async fn test_populate_historical_data_live() {
             .expect("populate_historical_data failed");
 
         println!("populate_historical_data succeeded — smoke test passed");
+
+        consolidator.async_drop().await;
     })
     .await
     .expect("Failed to boot live IBKR");

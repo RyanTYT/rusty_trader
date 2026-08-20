@@ -6,7 +6,7 @@ use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{ibkr_account, with_live_ibkr};
 
 #[tokio::test]
 #[ignore = "requires live IB Gateway + Postgres + IBC installed"]

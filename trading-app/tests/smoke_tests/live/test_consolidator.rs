@@ -19,6 +19,7 @@ use ibapi::prelude::SecurityType;
 use trading_app::database::models_crud::historical_data::historical_data::{
     HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
 };
+use trading_app::loop_until_async_drop;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::PriceSupplier;
@@ -26,7 +27,7 @@ use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
 use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
+    ensure_strategy_row, ibkr_account, with_live_ibkr,
 };
 
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
@@ -79,7 +80,7 @@ fn eur_usd_contract() -> Contract {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_new_constructor() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_new.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
         println!("✅ Consolidator::new succeeded (no panic)");
 
         // Verify the consolidator is usable — call a method that depends on internal state
@@ -95,6 +96,8 @@ async fn test_consolidator_new_constructor() {
                 println!("get_current_price returned Err (may need market data subscription): {e}")
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -109,7 +112,7 @@ async fn test_consolidator_validate_contract_valid() {
         &ibkr_account(),
         "ibc_cons_vc_valid.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // Test valid stock contract
             let result = consolidator.validate_contract(aapl_contract(), Duration::from_secs(30));
@@ -146,6 +149,8 @@ async fn test_consolidator_validate_contract_valid() {
                 "validate_contract should return Some for EUR/USD"
             );
             println!("✅ validate_contract(EUR/USD): verified");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -161,7 +166,7 @@ async fn test_consolidator_validate_contract_invalid() {
         &ibkr_account(),
         "ibc_cons_vc_invalid.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // Test non-existent stock
             let bad_contract = Contract {
@@ -191,6 +196,8 @@ async fn test_consolidator_validate_contract_invalid() {
                 "validate_contract should return None for invalid forex pair"
             );
             println!("✅ validate_contract(FAKECUR/USD): correctly returned None");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -203,7 +210,7 @@ async fn test_consolidator_validate_contract_invalid() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_update_at_least_n_days_data_stock() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_update_stock.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         // Validate the contract first
         let contract = consolidator.validate_contract(qqq_contract(), Duration::from_secs(30))
@@ -236,6 +243,8 @@ async fn test_consolidator_update_at_least_n_days_data_stock() {
                 println!("update_at_least_n_days_data returned Err (may need market data subscription or market closed): {e}");
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -250,7 +259,7 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
         &ibkr_account(),
         "ibc_cons_update_forex.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // Validate the forex contract
             let contract = consolidator
@@ -287,6 +296,8 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
                     println!("update_at_least_n_days_data(EUR/USD) returned Err: {e}");
                 }
             }
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -299,7 +310,7 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_stock() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_price_stock.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         let price = consolidator.get_current_price(aapl_contract(), false, &[]);
         match price {
@@ -317,6 +328,8 @@ async fn test_consolidator_get_current_price_stock() {
                 );
             }
         }
+            
+        loop_until_async_drop!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -328,7 +341,7 @@ async fn test_consolidator_get_current_price_stock() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_forex() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_price_forex.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         let price = consolidator.get_current_price(eur_usd_contract(), false, &[]);
         match price {
@@ -344,9 +357,11 @@ async fn test_consolidator_get_current_price_forex() {
                 println!("get_current_price(EUR/USD) returned Err (may need market data subscription): {e}");
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 8. get_current_price — with VWAP flag ============================
@@ -355,7 +370,7 @@ async fn test_consolidator_get_current_price_forex() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_vwap() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_price_vwap.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         // vwap=true should use VWAP calculation
         let price = consolidator.get_current_price(aapl_contract(), true, &[]);
@@ -372,9 +387,11 @@ async fn test_consolidator_get_current_price_vwap() {
                 println!("get_current_price(vwap=true) returned Err (may need market data subscription): {e}");
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 9. get_current_price — with generic ticks ============================
@@ -383,7 +400,7 @@ async fn test_consolidator_get_current_price_vwap() {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_consolidator_get_current_price_generic_ticks() {
     with_live_ibkr(&ibkr_account(), "ibc_cons_price_ticks.log", |state| async move {
-        let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+        let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
         // Request with generic ticks (e.g. option implied volatility ticks)
         let price = consolidator.get_current_price(aapl_contract(), false, &["106"]);
@@ -396,9 +413,11 @@ async fn test_consolidator_get_current_price_generic_ticks() {
                 println!("get_current_price with ticks returned Err (may need specific subscription): {e}");
             }
         }
+
+        loop_until_async_drop!(consolidator);
     })
-.await
-.expect("Failed to boot live IBKR");
+    .await
+    .expect("Failed to boot live IBKR");
 }
 
 // ============================ 10. get_strategy_sgd_value ============================
@@ -410,7 +429,7 @@ async fn test_consolidator_get_strategy_sgd_value() {
         &ibkr_account(),
         "ibc_cons_sgd_value.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
             // get_strategy_sgd_value reads current_positions (FK → trading.strategy);
             // the "noise" row must exist. NOTE: deliberately do NOT create
             // "nonexistent_strategy" — that arm verifies the no-row path returns 0/Err.
@@ -440,9 +459,7 @@ async fn test_consolidator_get_strategy_sgd_value() {
                     println!("✅ get_strategy_sgd_value('noise'): {value}");
                 }
                 Err(e) => {
-                    println!(
-                        "get_strategy_sgd_value returned Err (expected if no positions): {e}"
-                    );
+                    println!("get_strategy_sgd_value returned Err (expected if no positions): {e}");
                 }
             }
 
@@ -465,6 +482,8 @@ async fn test_consolidator_get_strategy_sgd_value() {
                     println!("get_strategy_sgd_value('nonexistent') returned Err: {e}");
                 }
             }
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await
@@ -480,7 +499,7 @@ async fn test_consolidator_validate_contract_multiple_types() {
         &ibkr_account(),
         "ibc_cons_vc_types.log",
         |state| async move {
-            let consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
+            let mut consolidator = build_consolidator(state.pool.clone(), state.client_1.clone());
 
             // Test stock contract
             let stock_contract = Contract {
@@ -519,6 +538,8 @@ async fn test_consolidator_validate_contract_multiple_types() {
             let result = consolidator.validate_contract(forex_contract, Duration::from_secs(30));
             assert!(result.is_some(), "GBP/USD should validate");
             println!("✅ validate_contract(GBP/USD forex): verified");
+
+            loop_until_async_drop!(consolidator);
         },
     )
     .await

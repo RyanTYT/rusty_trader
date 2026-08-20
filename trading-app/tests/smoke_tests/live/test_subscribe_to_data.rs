@@ -34,7 +34,7 @@ async fn test_subscribe_to_data_live() {
             .expect("add_schedule failed");
         let scheduler = std::sync::Arc::new(scheduler);
 
-        let (ring_buffer, _producer) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
+        let (ring_buffer, mut producer) = subscribe_to_data::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>(
             std::sync::Arc::downgrade(&state.client_1),
             contract,
             RealtimeWhatToShow::Trades,
@@ -60,6 +60,8 @@ async fn test_subscribe_to_data_live() {
                 println!("No bars received (market may be closed) — acceptable");
             }
         }
+
+        producer.async_drop().await;
     })
     .await
     .expect("Failed to boot live IBKR");

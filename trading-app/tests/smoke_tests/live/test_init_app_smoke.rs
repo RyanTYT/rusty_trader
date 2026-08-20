@@ -19,14 +19,14 @@ async fn test_init_app_smoke_live() {
 
     assert!(
         with_gateway_retry("/test_init_app_smoke_live.log", 2, |_| async {
-            let state = init_app("127.0.0.1:4002", "DU111111", pool, "noise".to_string())
+            let mut state = init_app("127.0.0.1:4002", "DU111111", pool, "noise".to_string())
                 .await
                 .expect("init_app failed");
             println!("init_app bootstrapped successfully — full smoke test passed");
 
-            tokio::time::sleep(Duration::from_secs(10));
+            tokio::time::sleep(Duration::from_secs(10)).await;
 
-            drop(state);
+            state.async_drop().await;
         })
         .await
         .is_ok(),

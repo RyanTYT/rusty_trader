@@ -48,9 +48,7 @@ use trading_app::execution::order_update_stream::event_handlers::order_status;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
-use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
@@ -95,7 +93,7 @@ fn place_market_order(
     contract: Contract,
     action: Action,
     qty: f64,
-    strategy: &str
+    strategy: &str,
 ) -> i32 {
     let mut order = market_order(action, qty);
     order.order_ref = strategy.to_string();
@@ -121,7 +119,7 @@ async fn test_event_order_status_submitted() {
             // submitted handler writes open_orders (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-            let _controller = start_order_update_stream(&state, &order_store);
+            let mut controller = start_order_update_stream(&state, &order_store);
 
             // Place a limit order at unrealistic price so it stays open (Submitted status)
             let contract = aapl_contract();
@@ -167,6 +165,8 @@ async fn test_event_order_status_submitted() {
                     }))
                     .await;
             }
+
+            controller.async_drop().await;
         },
     )
     .await
@@ -185,7 +185,7 @@ async fn test_event_order_status_cancelled() {
             // cancelled handler deletes open_orders rows that the submitted path created (FK → trading.strategy).
             ensure_strategy_row(&state.pool, "noise").await;
             let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-            let _controller = start_order_update_stream(&state, &order_store);
+            let mut controller = start_order_update_stream(&state, &order_store);
 
             // Place a limit order at unrealistic price (stays open)
             let contract = aapl_contract();
@@ -237,6 +237,8 @@ async fn test_event_order_status_cancelled() {
                 "Cancelled event should delete open_order row for perm_id={perm_id}"
             );
             println!("✅ order_status::cancelled — open_order row deleted for perm_id={perm_id}");
+
+            controller.async_drop().await;
         },
     )
     .await
@@ -252,7 +254,7 @@ async fn test_event_execution_on_fill() {
         // execution handler writes transactions + current_positions (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-        let _controller = start_order_update_stream(&state, &order_store);
+        let mut controller = start_order_update_stream(&state, &order_store);
 
         // Place a market order — will fill immediately
         let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0, "noise");
@@ -297,6 +299,8 @@ async fn test_event_execution_on_fill() {
             // Cleanup: reverse + delete
             let _ = pos_crud.delete(&pk).await;
         }
+
+        controller.async_drop().await;
     })
 .await
 .expect("Failed to boot live IBKR");
@@ -312,7 +316,7 @@ async fn test_event_commission_report_on_fill() {
         // preceding execution path also writes transactions + positions (FK → trading.strategy).
         ensure_strategy_row(&state.pool, "noise").await;
         let order_store = Arc::new(OrderStore::open().expect("OrderStore::open failed"));
-        let _controller = start_order_update_stream(&state, &order_store);
+        let mut controller = start_order_update_stream(&state, &order_store);
 
         // Place a market order — will fill + trigger commission report
         let perm_id = place_market_order(&state, aapl_contract(), Action::Buy, 1.0, "noise");
@@ -347,6 +351,8 @@ async fn test_event_commission_report_on_fill() {
         let _ = sqlx::query("DELETE FROM trading.current_stock_positions WHERE strategy = 'noise' AND stock = 'AAPL'")
             .execute(&state.pool)
             .await;
+
+        controller.async_drop().await;
     })
     .await
     .expect("Failed to boot live IBKR");

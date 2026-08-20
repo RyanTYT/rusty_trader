@@ -19,6 +19,7 @@ use ibapi::contracts::Contract;
 use ibapi::market_data::realtime::WhatToShow;
 use ibapi::prelude::SecurityType;
 use spmc_ring::bench::RingBuffer;
+use trading_app::loop_until_async_drop;
 use trading_app::market_data::handler::{
     DataSubscription, DbSubscriptionMethod, MarketDataHandler,
 };
@@ -64,7 +65,7 @@ fn eur_usd_contract() -> Contract {
 #[ignore = "requires live IB Gateway + Postgres + DATABASE_URL"]
 async fn test_market_data_handler_new() {
     with_live_ibkr(&ibkr_account(), "ibc_mdh_new.log", |state| async move {
-        let handler = MarketDataHandler::new(state.pool.clone());
+        let mut handler = MarketDataHandler::new(state.pool.clone());
         println!("✅ MarketDataHandler::new succeeded (no panic)");
 
         // Verify the handler is usable — call get_subsription on a non-existent sub
@@ -75,6 +76,8 @@ async fn test_market_data_handler_new() {
             "get_subsription should return None for unsubscribed contract"
         );
         println!("✅ get_subsription(AAPL) before load: None (correct — not subscribed yet)");
+
+        handler.async_drop().await;
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -174,6 +177,8 @@ async fn test_load_all_subscription_producers_one_per_thread() {
                 tokio::runtime::Handle::current(),
             );
             println!("✅ idempotent load (calling again with same subscription — no-op)");
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -223,6 +228,8 @@ async fn test_load_all_subscription_producers_grouped_per_thread() {
                 assert!(ring_buffer.is_some(), "subscription should be registered");
             }
             println!("✅ get_subsription for both AAPL + MSFT after GroupedPerThread load: Some");
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -278,6 +285,8 @@ async fn test_load_all_subscription_producers_multiple_what_to_show() {
             println!(
                 "✅ Bid + Ask for same contract are separate subscriptions (different ring buffers)"
             );
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -293,7 +302,7 @@ async fn test_get_subsription_nonexistent_returns_none() {
         &ibkr_account(),
         "ibc_mdh_get_none.log",
         |state| async move {
-            let handler = MarketDataHandler::new(state.pool.clone());
+            let mut handler = MarketDataHandler::new(state.pool.clone());
 
             // Verify get_subsription returns None for a contract that was never subscribed
             let sub = DataSubscription::new(aapl_contract(), WhatToShow::Trades);
@@ -312,6 +321,8 @@ async fn test_get_subsription_nonexistent_returns_none() {
             );
 
             println!("✅ get_subsription for non-existent subscriptions: None (correct)");
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -327,7 +338,7 @@ async fn test_try_get_price_unknown_contract_id() {
         &ibkr_account(),
         "ibc_mdh_price_none.log",
         |state| async move {
-            let handler = MarketDataHandler::new(state.pool.clone());
+            let mut handler = MarketDataHandler::new(state.pool.clone());
 
             // try_get_price for a contract_id that was never cached → None
             let result = handler.try_get_price(99999);
@@ -337,6 +348,8 @@ async fn test_try_get_price_unknown_contract_id() {
             );
 
             println!("✅ try_get_price(unknown_contract_id): None (correct)");
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -386,7 +399,7 @@ async fn test_try_get_price_after_subscription() {
                 let contract_scheduler =
                     Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
                 let market_data_handler = MarketDataHandler::new(state.pool.clone());
-                let consolidator =
+                let mut consolidator =
                     Arc::new(trading_app::market_data::consolidator::Consolidator::new(
                         tokio::runtime::Handle::current(),
                         state.pool.clone(),
@@ -394,7 +407,10 @@ async fn test_try_get_price_after_subscription() {
                         market_data_handler,
                         contract_scheduler,
                     ));
-                consolidator.validate_contract(contract, Duration::from_secs(30))
+                let res = consolidator.validate_contract(contract, Duration::from_secs(30));
+                loop_until_async_drop!(consolidator);
+
+                res
             };
 
             if let Some(validated) = validated_contract {
@@ -416,6 +432,8 @@ async fn test_try_get_price_after_subscription() {
             } else {
                 println!("contract validation failed — skipping price check");
             }
+
+            handler.async_drop().await;
         },
     )
     .await
@@ -486,6 +504,8 @@ async fn test_market_data_handler_full_lifecycle() {
                     None => println!("get_new_consumer returned None (max consumers exceeded)"),
                 }
             }
+
+            handler.async_drop().await;
         },
     )
     .await
