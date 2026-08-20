@@ -381,8 +381,10 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let full_bar =
                     HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
 
+                println!("Calling on_bar_update");
                 let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
                 handle_bar_update_outcome(bar_update_outcome);
+                println!("on_bar_update returned for strategy");
             }
 
             _ => {
