@@ -1,7 +1,10 @@
 use core::str;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, Weak, atomic::AtomicUsize},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     time::Duration,
 };
 
@@ -53,7 +56,7 @@ pub struct OrderUpdateStreamController {
     // strategy_map: Arc<HashMap<String, StrategyEnum>>,
     // weak_client: Weak<Client>,
     // default_strategy: String,
-    stream_killer: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    is_alive: Arc<AtomicBool>,
 }
 
 impl OrderUpdateStreamController {
@@ -88,7 +91,8 @@ impl OrderUpdateStreamController {
         }
 
         let (sender, mut rx) = tokio::sync::mpsc::channel::<OrderUpdate>(1024);
-        let (kill_sender, mut kill_rcx) = tokio::sync::oneshot::channel::<()>();
+        let is_alive = Arc::new(AtomicBool::new(true));
+        let cloned_is_alive = is_alive.clone();
 
         // spawn a new os blocking thread to await for updates synchronously
         // - send updates via channel back to async runtime
@@ -112,7 +116,7 @@ impl OrderUpdateStreamController {
             };
             info!("Subscribed for updates for orders!");
 
-            loop {
+            while is_alive.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(e) = event_subscription.error() {
                     warn!(
                         "order_update_stream subscription died! but not killed:{e:?}\
@@ -146,22 +150,9 @@ impl OrderUpdateStreamController {
                         };
                     });
                 }
-                match kill_rcx.try_recv() {
-                    Ok(_) => {
-                        tracing::info!("Order Update Stream Killed via kill sender");
-                        return;
-                    }
-                    Err(e) => match e {
-                        TryRecvError::Empty => continue,
-                        TryRecvError::Closed => {
-                            tracing::warn!(
-                                "All receivers of OrderUpdateStream died => Ending OrderUpdateStream now!"
-                            );
-                            return;
-                        }
-                    },
-                }
             }
+
+            tracing::info!("Order Update Stream killed");
         });
 
         // async reciever that asynchronously awaits for updates
@@ -199,7 +190,7 @@ impl OrderUpdateStreamController {
         });
 
         Some(OrderUpdateStreamController {
-            stream_killer: Arc::new(Mutex::new(Some(kill_sender))),
+            is_alive: cloned_is_alive,
         })
     }
 }
@@ -207,17 +198,9 @@ impl OrderUpdateStreamController {
 impl Drop for OrderUpdateStreamController {
     fn drop(&mut self) {
         ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
+        self.is_alive
+            .store(false, std::sync::atomic::Ordering::Release);
         println!("Dropping order update stream");
-        if let Err(e) = self
-            .stream_killer
-            .lock()
-            .expect("Expected mutex lock for order_update_stream_killer not to be poisoned")
-            .take()
-            .expect("Expected stream_killer to be a Some")
-            .send(())
-        {
-            tracing::error!("Failed to send kill signal to OrderUpdateStream: {e:?}")
-        }
     }
 }
 
