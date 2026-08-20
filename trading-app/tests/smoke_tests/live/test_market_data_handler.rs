@@ -22,7 +22,7 @@ use spmc_ring::bench::RingBuffer;
 use trading_app::market_data::handler::{
     DataSubscription, DbSubscriptionMethod, MarketDataHandler,
 };
-use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
+use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
 use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
 
@@ -134,7 +134,13 @@ async fn test_load_all_subscription_producers_one_per_thread() {
         "ibc_mdh_load_one.log",
         |state| async move {
             let mut handler = MarketDataHandler::new(state.pool.clone());
-            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let mut raw_contract_scheduler = IbkrContractScheduler::new(state.client_1.clone());
+            assert!(
+                raw_contract_scheduler
+                    .add_schedule(&aapl_contract())
+                    .is_ok()
+            );
+            let contract_scheduler = Arc::new(raw_contract_scheduler);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
             let subscriptions = vec![DataSubscription::new(aapl_contract(), WhatToShow::Trades)];
@@ -184,7 +190,13 @@ async fn test_load_all_subscription_producers_grouped_per_thread() {
         "ibc_mdh_load_grouped.log",
         |state| async move {
             let mut handler = MarketDataHandler::new(state.pool.clone());
-            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let mut raw_contract_scheduler = IbkrContractScheduler::new(state.client_1.clone());
+            assert!(
+                raw_contract_scheduler
+                    .add_all_schedules(vec![aapl_contract(), msft_contract()])
+                    .is_ok()
+            );
+            let contract_scheduler = Arc::new(raw_contract_scheduler);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
             let subscriptions = vec![
@@ -227,7 +239,13 @@ async fn test_load_all_subscription_producers_multiple_what_to_show() {
         "ibc_mdh_load_wts.log",
         |state| async move {
             let mut handler = MarketDataHandler::new(state.pool.clone());
-            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let mut raw_contract_scheduler = IbkrContractScheduler::new(state.client_1.clone());
+            assert!(
+                raw_contract_scheduler
+                    .add_all_schedules(vec![eur_usd_contract()])
+                    .is_ok()
+            );
+            let contract_scheduler = Arc::new(raw_contract_scheduler);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
             // Same contract, different WhatToShow — should be treated as separate subscriptions
@@ -335,7 +353,13 @@ async fn test_try_get_price_after_subscription() {
         "ibc_mdh_price_after.log",
         |state| async move {
             let mut handler = MarketDataHandler::new(state.pool.clone());
-            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let mut raw_contract_scheduler = IbkrContractScheduler::new(state.client_1.clone());
+            assert!(
+                raw_contract_scheduler
+                    .add_all_schedules(vec![aapl_contract()])
+                    .is_ok()
+            );
+            let contract_scheduler = Arc::new(raw_contract_scheduler);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
             let contract = aapl_contract();
@@ -408,7 +432,13 @@ async fn test_market_data_handler_full_lifecycle() {
         "ibc_mdh_lifecycle.log",
         |state| async move {
             let mut handler = MarketDataHandler::new(state.pool.clone());
-            let contract_scheduler = Arc::new(IbkrContractScheduler::new(state.client_1.clone()));
+            let mut raw_contract_scheduler = IbkrContractScheduler::new(state.client_1.clone());
+            assert!(
+                raw_contract_scheduler
+                    .add_all_schedules(vec![aapl_contract()])
+                    .is_ok()
+            );
+            let contract_scheduler = Arc::new(raw_contract_scheduler);
             let weak_client: Weak<ibapi::Client> = Arc::downgrade(&state.client_1);
 
             // 1. Before load — subscription doesn't exist
