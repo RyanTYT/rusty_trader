@@ -58,12 +58,15 @@ pub struct Consolidator {
 
 impl Drop for Consolidator {
     fn drop(&mut self) {
+        tracing::info!("Dropping consolidator starting");
         // force drop of all db consumers && producers first
         // std::mem::drop(self.market_data_handler);
         unsafe {
             ManuallyDrop::drop(&mut self.market_data_handler);
         }
+        tracing::info!("Dropped MarketDataHandler");
         self.client.disconnect();
+        tracing::info!("Client disconnected");
     }
 }
 
