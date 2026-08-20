@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, mem::ManuallyDrop, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
@@ -44,20 +44,25 @@ pub enum MemoisedConsolidatorFns {
 }
 
 pub struct Consolidator {
-    pub(crate) client: Arc<Client>,
-
     // StrategyScheduler
     // pub(super) contract_coordinator: Arc<IbkrContractScheduler>,
 
     // AccountTracker
     pub pool: PgPool,
-    pub(crate) market_data_handler: MarketDataHandler,
+    pub(crate) market_data_handler: ManuallyDrop<MarketDataHandler>,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
     contract_scheduler: Arc<IbkrContractScheduler>,
+
+    pub(crate) client: Arc<Client>,
 }
 
 impl Drop for Consolidator {
     fn drop(&mut self) {
+        // force drop of all db consumers && producers first
+        // std::mem::drop(self.market_data_handler);
+        unsafe {
+            ManuallyDrop::drop(&mut self.market_data_handler);
+        }
         self.client.disconnect();
     }
 }
@@ -130,7 +135,7 @@ impl Consolidator {
         Self {
             pool: pool.clone(),
             client: client.clone(),
-            market_data_handler,
+            market_data_handler: ManuallyDrop::new(market_data_handler),
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
             contract_scheduler,
