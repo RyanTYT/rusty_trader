@@ -1,7 +1,10 @@
 use core::str;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, Weak, atomic::AtomicUsize},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     time::Duration,
 };
 
@@ -53,7 +56,44 @@ pub struct OrderUpdateStreamController {
     // strategy_map: Arc<HashMap<String, StrategyEnum>>,
     // weak_client: Weak<Client>,
     // default_strategy: String,
-    stream_killer: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    is_alive: Arc<AtomicBool>,
+    stream_handle: Option<std::thread::JoinHandle<()>>,
+    async_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl OrderUpdateStreamController {
+    pub async fn async_drop(&mut self) {
+        ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
+        self.is_alive
+            .store(false, std::sync::atomic::Ordering::Release);
+        let stream_handle_opt = self.stream_handle.take();
+        let async_handle_opt = self.async_handle.take();
+        tokio::task::spawn_blocking(move || {
+            if let Some(stream_handle) = stream_handle_opt {
+                if let Err(e) = stream_handle.join() {
+                    tracing::error!("Failed to kill stream_handle properly: {e:?}");
+                }
+            } else {
+                tracing::error!("Stream handle is empty");
+            }
+        });
+        if let Some(async_handle) = async_handle_opt {
+            if let Err(e) = async_handle.await {
+                tracing::error!("Failed to kill async order_update_stream handle properly: {e:?}");
+            }
+        } else {
+            tracing::error!("Stream handle is empty");
+        }
+    }
+}
+
+impl Drop for OrderUpdateStreamController {
+    fn drop(&mut self) {
+        ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
+        self.is_alive
+            .store(false, std::sync::atomic::Ordering::Release);
+        println!("Dropping order update stream");
+    }
 }
 
 impl OrderUpdateStreamController {
@@ -88,12 +128,13 @@ impl OrderUpdateStreamController {
         }
 
         let (sender, mut rx) = tokio::sync::mpsc::channel::<OrderUpdate>(1024);
-        let (kill_sender, mut kill_rcx) = tokio::sync::oneshot::channel::<()>();
+        let is_alive = Arc::new(AtomicBool::new(true));
+        let cloned_is_alive = is_alive.clone();
 
         // spawn a new os blocking thread to await for updates synchronously
         // - send updates via channel back to async runtime
         let weak_client_cloned = weak_client.clone();
-        std::thread::spawn(move || {
+        let stream_handle = std::thread::Builder::new().name("order_update_stream".to_string()).spawn(move || {
             let mut event_subscription = {
                 let client_opt = weak_client_cloned.upgrade();
                 if client_opt.is_none() {
@@ -146,23 +187,14 @@ impl OrderUpdateStreamController {
                         };
                     });
                 }
-                match kill_rcx.try_recv() {
-                    Ok(_) => {
-                        tracing::info!("Order Update Stream Killed via kill sender");
-                        return;
-                    }
-                    Err(e) => match e {
-                        TryRecvError::Empty => continue,
-                        TryRecvError::Closed => {
-                            tracing::warn!(
-                                "All receivers of OrderUpdateStream died => Ending OrderUpdateStream now!"
-                            );
-                            return;
-                        }
-                    },
+
+                if is_alive.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
                 }
             }
-        });
+
+            tracing::info!("Order Update Stream killed");
+        }).expect("Expected to be able to boot order_update_stream thread properly");
 
         // async reciever that asynchronously awaits for updates
         let pool = pool.clone();
@@ -171,7 +203,7 @@ impl OrderUpdateStreamController {
         let cloned_handle = handle.clone();
         let weak_client = weak_client.clone();
         let backed_up_orders = backed_up_orders.clone();
-        handle.spawn(async move {
+        let async_handle = handle.spawn(async move {
             loop {
                 match rx.recv().await {
                     Some(order_update) => {
@@ -199,25 +231,10 @@ impl OrderUpdateStreamController {
         });
 
         Some(OrderUpdateStreamController {
-            stream_killer: Arc::new(Mutex::new(Some(kill_sender))),
+            is_alive: cloned_is_alive,
+            stream_handle: Some(stream_handle),
+            async_handle: Some(async_handle),
         })
-    }
-}
-
-impl Drop for OrderUpdateStreamController {
-    fn drop(&mut self) {
-        ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
-        println!("Dropping order update stream");
-        if let Err(e) = self
-            .stream_killer
-            .lock()
-            .expect("Expected mutex lock for order_update_stream_killer not to be poisoned")
-            .take()
-            .expect("Expected stream_killer to be a Some")
-            .send(())
-        {
-            tracing::error!("Failed to send kill signal to OrderUpdateStream: {e:?}")
-        }
     }
 }
 

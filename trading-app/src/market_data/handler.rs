@@ -120,6 +120,25 @@ pub struct MarketDataHandler {
     pool: PgPool,
 }
 
+impl MarketDataHandler {
+    pub async fn async_drop(&mut self) {
+        let mut client_producers = std::mem::take(&mut self.client_producers);
+        futures::future::join_all(
+            client_producers
+                .iter_mut()
+                .map(|producer| producer.async_drop()),
+        )
+        .await;
+        let mut db_consumers = std::mem::take(&mut self.db_consumers);
+        futures::future::join_all(
+            db_consumers
+                .iter_mut()
+                .map(|consumer| consumer.async_drop()),
+        )
+        .await;
+    }
+}
+
 pub enum DbSubscriptionMethod {
     OnePerThread,
     GroupedPerThread,

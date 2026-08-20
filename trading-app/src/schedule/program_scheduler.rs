@@ -11,6 +11,7 @@ use crate::{
     ibc::with_gateway_retry,
     init_app::ApplicationState,
     logger::ConnectionAlert,
+    loop_until_async_drop,
     schedule::broker_scheduler::{
         BrokerScheduler, BrokerState, BrokerStateChecker, IbkrRegion, IbkrStateService,
     },
@@ -128,7 +129,7 @@ pub async fn run_program<F, Fut>(
                 let sigint = &mut sigint;
 
                 let app_return_state_res = with_gateway_retry("...", 3, |_| async {
-                    let app_state = match init_application().await {
+                    let mut app_state: Arc<ApplicationState> = match init_application().await {
                         Ok(app_state_res) => Arc::new(app_state_res),
                         Err(e) => {
                             return AppReturnState::InitAppErr(e.to_string());
@@ -143,6 +144,7 @@ pub async fn run_program<F, Fut>(
                         let next_unavailable = match cloned_scheduler.get_next_broker_unavailable() {
                             Ok(next_dt) => next_dt,
                             Err(e) => {
+                                loop_until_async_drop!(app_state);
                                 return AppReturnState::NoBrokerSchedule(e.to_string());
                             }
                         };
@@ -151,6 +153,7 @@ pub async fn run_program<F, Fut>(
                         tokio::select! {
                             // Window expires
                             _ = sleep_until(&next_unavailable_utc) => {
+                                loop_until_async_drop!(app_state);
                                 return AppReturnState::BrokerDown;
                             }
 
@@ -163,6 +166,7 @@ pub async fn run_program<F, Fut>(
                                         first_event_time: _
                                     } => {
                                         if timeout_occurred {
+                                loop_until_async_drop!(app_state);
                                             return AppReturnState::UnstableConnMktHours;
                                         } else {
                                             tracing::warn!("🚨 Unstable connection during market hours but no timeout occurred so cautiously proceeding!");
@@ -170,12 +174,15 @@ pub async fn run_program<F, Fut>(
                                         }
                                     }
                                     ConnectionAlert::UnstableConnectionOutsideMarketHours { first_event_time } => {
+                                loop_until_async_drop!(app_state);
                                         return AppReturnState::UnstableConnOutsideHours(first_event_time);
                                     }
                                     ConnectionAlert::BrokenPipe { first_event_time: _ } => {
+                                loop_until_async_drop!(app_state);
                                         return AppReturnState::UnstableConnBrokenPipe;
                                     }
                                     ConnectionAlert::APACRESET { first_event_time: _ } => {
+                                loop_until_async_drop!(app_state);
                                         return AppReturnState::UnstableConnAPAC;
                                     }
                                     ConnectionAlert::AutoRestarting => {
@@ -189,10 +196,12 @@ pub async fn run_program<F, Fut>(
                             // Graceful shutdown
                             _ = sigterm.recv() => {
                                 tracing::info!("SIGTERM received, producing final metrics report before exit");
+                                loop_until_async_drop!(app_state);
                                 return AppReturnState::SigtermTerminalSignal;
                             }
                             _ = sigint.recv() => {
                                 tracing::info!("SIGINT received, producing final metrics report before exit");
+                                loop_until_async_drop!(app_state);
                                 return AppReturnState::SigintTerminalSignal;
                             }
                         };

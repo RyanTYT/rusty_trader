@@ -34,15 +34,29 @@ pub struct MarketDataDbConsumer {
     thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
-impl Drop for MarketDataDbConsumer {
-    fn drop(&mut self) {
+impl MarketDataDbConsumer {
+    pub async fn async_drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
 
         if let Some(handle) = self.thread_handle.take() {
-            if let Err(e) = handle.join() {
-                tracing::error!("Failed to tear down MarketDataDbConsumer properly: {e:?}");
+            let drop_thread_handle = tokio::task::spawn_blocking(move || {
+                if let Err(e) = handle.join() {
+                    tracing::error!(
+                        "Failed to end tear down MarketDataDbConsumer thread properly: {e:?}"
+                    );
+                }
+            })
+            .await;
+            if let Err(e) = drop_thread_handle {
+                tracing::error!("Failed to drop MarketDataDbConsumer thread properly: {e:?}");
             }
         }
+    }
+}
+
+impl Drop for MarketDataDbConsumer {
+    fn drop(&mut self) {
+        self.is_alive.store(false, Ordering::Release);
     }
 }
 

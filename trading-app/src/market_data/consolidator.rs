@@ -49,24 +49,27 @@ pub struct Consolidator {
 
     // AccountTracker
     pub pool: PgPool,
-    pub(crate) market_data_handler: ManuallyDrop<MarketDataHandler>,
+    pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
     contract_scheduler: Arc<IbkrContractScheduler>,
 
     pub(crate) client: Arc<Client>,
 }
 
+impl Consolidator {
+    pub async fn async_drop(&mut self) {
+        self.market_data_handler.async_drop().await;
+        tracing::info!("Client disconnected");
+        self.client.disconnect();
+    }
+}
+
 impl Drop for Consolidator {
     fn drop(&mut self) {
-        tracing::info!("Dropping consolidator starting");
-        // force drop of all db consumers && producers first
-        // std::mem::drop(self.market_data_handler);
-        unsafe {
-            ManuallyDrop::drop(&mut self.market_data_handler);
+        if self.client.is_connected() {
+            self.client.disconnect();
+            tracing::info!("Client disconnected");
         }
-        tracing::info!("Dropped MarketDataHandler");
-        self.client.disconnect();
-        tracing::info!("Client disconnected");
     }
 }
 
@@ -138,7 +141,7 @@ impl Consolidator {
         Self {
             pool: pool.clone(),
             client: client.clone(),
-            market_data_handler: ManuallyDrop::new(market_data_handler),
+            market_data_handler: market_data_handler,
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
             contract_scheduler,

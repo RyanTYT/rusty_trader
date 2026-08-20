@@ -85,22 +85,35 @@ pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS
     thread_handles: Vec<std::thread::JoinHandle<()>>,
 }
 
-impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
-    for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
+    StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
-    fn drop(&mut self) {
-        println!("Dropping StrategyDataBundler");
+    pub async fn async_drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
-        println!("Dropping StrategyDataBundler 1");
 
-        for thread_handle in std::mem::take(&mut self.thread_handles) {
-            if let Err(e) = thread_handle.join() {
-                tracing::error!("Failed to end strategy thread handle: {e:?}");
+        let thread_handles = std::mem::take(&mut self.thread_handles);
+        let drop_threads_handle = tokio::task::spawn_blocking(move || {
+            for thread_handle in thread_handles.into_iter() {
+                if let Err(e) = thread_handle.join() {
+                    tracing::error!("Failed to end strategy thread handle: {e:?}");
+                }
             }
+        })
+        .await;
+        if let Err(e) = drop_threads_handle {
+            tracing::error!("Failed to drop strategy threads properly: {e:?}");
         }
     }
 }
 
+impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
+    for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
+{
+    fn drop(&mut self) {
+        // best effort drop but doesn't guarantee threads are dropped
+        self.is_alive.store(false, Ordering::Release);
+    }
+}
 
 #[hotpath::measure_all]
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>

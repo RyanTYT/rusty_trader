@@ -187,6 +187,18 @@ pub mod test_internals {
     }
 }
 
+#[macro_export]
+macro_rules! loop_until_async_drop {
+    ($app_state:ident) => {
+        loop {
+            if let Some(app_state_uno) = Arc::get_mut(&mut $app_state) {
+                app_state_uno.async_drop().await;
+                break;
+            }
+        }
+    };
+}
+
 #[async_trait]
 pub trait Insertable {
     fn table_name() -> &'static str;

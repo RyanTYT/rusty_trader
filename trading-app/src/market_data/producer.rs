@@ -22,14 +22,28 @@ pub struct MarketDataProducer {
     thread_handle: Option<std::thread::JoinHandle<()>>
 }
 
+impl MarketDataProducer {
+    pub async fn async_drop(&mut self) {
+        self.is_alive.store(false, Ordering::Release);
+        if let Some(handle) = self.thread_handle.take() {
+            let drop_thread_handle = tokio::task::spawn_blocking(move || {
+                if let Err(e) = handle.join() {
+                    tracing::error!(
+                        "Failed to end tear down producer thread properly: {e:?}"
+                    );
+                }
+            })
+            .await;
+            if let Err(e) = drop_thread_handle {
+                tracing::error!("Failed to drop producer thread properly: {e:?}");
+            }
+        }
+    }
+}
+
 impl Drop for MarketDataProducer {
     fn drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
-        if let Some(handle) = self.thread_handle.take() {
-            if let Err(e) = handle.join() {
-                tracing::error!("Failed to kill producer thread: {e:?}");
-            }
-        }
     }
 }
 
