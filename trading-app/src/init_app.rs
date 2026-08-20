@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, mem::ManuallyDrop, sync::Arc, time::Duration};
 
 use ibapi::{Client, contracts::Contract, prelude::RealtimeWhatToShow};
 use spmc_ring::bench::RingBuffer;
@@ -38,8 +38,48 @@ pub struct IbkrState {
     pub consolidator: Arc<Consolidator>,
 }
 
+impl IbkrState {
+    pub async fn async_drop(&mut self) {
+        self.order_update_stream_controller.async_drop().await;
+        futures::future::join_all(
+            self.strategy_handlers
+                .iter_mut()
+                .map(|strategy_handler| strategy_handler.async_drop()),
+        )
+        .await;
+
+        // Notably there is an infinite loop here - either consolidator is torn down
+        // properly, or the thread stalls until such
+        loop {
+            match Arc::get_mut(&mut self.consolidator) {
+                Some(consolidator) => {
+                    consolidator.async_drop().await;
+                    break;
+                }
+                None => continue,
+            };
+        }
+    }
+}
+
+impl Drop for IbkrState {
+    fn drop(&mut self) {
+        let count = Arc::strong_count(&self.consolidator);
+        println!("Dropping IBKRState");
+        println!("consolidator arc count: {:?}", count);
+    }
+}
+
 pub enum ApplicationState {
     IbkrState(IbkrState),
+}
+
+impl ApplicationState {
+    pub async fn async_drop(&mut self) {
+        match self {
+            Self::IbkrState(state) => state.async_drop().await,
+        }
+    }
 }
 
 #[derive(Clone)]
