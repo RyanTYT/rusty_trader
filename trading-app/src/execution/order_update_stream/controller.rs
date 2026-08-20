@@ -208,16 +208,16 @@ impl Drop for OrderUpdateStreamController {
     fn drop(&mut self) {
         ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
         println!("Dropping order update stream");
-        // if let Err(e) = self
-        //     .stream_killer
-        //     .lock()
-        //     .expect("Expected mutex lock for order_update_stream_killer not to be poisoned")
-        //     .take()
-        //     .expect("Expected stream_killer to be a Some")
-        //     .send(())
-        // {
-        //     tracing::error!("Failed to send kill signal to OrderUpdateStream: {e:?}")
-        // }
+        if let Err(e) = self
+            .stream_killer
+            .lock()
+            .expect("Expected mutex lock for order_update_stream_killer not to be poisoned")
+            .take()
+            .expect("Expected stream_killer to be a Some")
+            .send(())
+        {
+            tracing::error!("Failed to send kill signal to OrderUpdateStream: {e:?}")
+        }
     }
 }
 
