@@ -358,7 +358,8 @@ impl Consolidator {
         handle: &tokio::runtime::Handle,
     ) -> Result<Option<f64>, String> {
         let yahoo_ticker = yahoo_ticker.to_string();
-        handle.block_on(async move {
+
+        let join_handle = handle.spawn(async move {
             let client = YfClient::default();
             let ticker = Ticker::new(&client, &yahoo_ticker);
             let fast_info = ticker
@@ -366,7 +367,9 @@ impl Consolidator {
                 .await
                 .map_err(|e| format!("yfinance-rs fast_info failed for {yahoo_ticker}: {e:?}"))?;
             Ok(fast_info.last.map(|v| v.amount().as_f64()))
-        })
+        });
+
+        futures::executor::block_on(join_handle).map_err(|e| e.to_string())?
     }
 
     /// Returns true if the IBKR error string indicates a market data permission/access issue,

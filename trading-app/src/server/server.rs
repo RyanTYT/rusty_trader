@@ -418,51 +418,53 @@ pub fn init_server(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-    let thread_handle = thread::spawn(move || {
-        let axum_runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()  // propagates as a panic in the worker thread if it fails
-            .unwrap();
+    let thread_handle = std::thread::Builder::new()
+        .name("Trading Bot Server".to_string())
+        .spawn(move || {
+            let axum_runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build() // propagates as a panic in the worker thread if it fails
+                .unwrap();
 
-        axum_runtime.block_on(async move {
-            // Convert the already-bound std listener into a tokio listener
-            // inside this runtime.
-            let listener = tokio::net::TcpListener::from_std(std_listener)
-                .expect("from_std on a bound non-blocking listener cannot fail");
-            tracing::info!("[Axum Thread] Server listening on http://{}", local_addr);
+            axum_runtime.block_on(async move {
+                // Convert the already-bound std listener into a tokio listener
+                // inside this runtime.
+                let listener = tokio::net::TcpListener::from_std(std_listener)
+                    .expect("from_std on a bound non-blocking listener cannot fail");
+                tracing::info!("[Axum Thread] Server listening on http://{}", local_addr);
 
-            let app_state = AppState {
-                trading_app_state: Arc::new(Mutex::new(None)),
-            };
-            let cloned_app_state = app_state.clone();
-            tokio::spawn(async move {
-                while let Some(application_state) = app_state_rcx.recv().await {
-                    let mut trading_app_state = cloned_app_state.trading_app_state.lock().await;
-                    trading_app_state.replace(application_state);
-                }
+                let app_state = AppState {
+                    trading_app_state: Arc::new(Mutex::new(None)),
+                };
+                let cloned_app_state = app_state.clone();
+                tokio::spawn(async move {
+                    while let Some(application_state) = app_state_rcx.recv().await {
+                        let mut trading_app_state = cloned_app_state.trading_app_state.lock().await;
+                        trading_app_state.replace(application_state);
+                    }
+                });
+
+                let app = Router::new()
+                    .route(
+                        "/contracts/stock",
+                        axum::routing::get(get_possible_stock_contracts),
+                    )
+                    .route("/strategy/capital", axum::routing::get(get_strategy_value))
+                    .route("/exchange_rate", axum::routing::get(get_exchange_rate))
+                    .route("/contract/price", axum::routing::get(get_current_price))
+                    .route("/check-health", axum::routing::get(check_health))
+                    .with_state(app_state);
+
+                // Graceful shutdown: when `shutdown_tx` is dropped (or sent),
+                // `shutdown_rx` resolves and axum::serve returns Ok(()).
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+                    .ok(); // don't panic on graceful shutdown / runtime errors
             });
-
-            let app = Router::new()
-                .route(
-                    "/contracts/stock",
-                    axum::routing::get(get_possible_stock_contracts),
-                )
-                .route("/strategy/capital", axum::routing::get(get_strategy_value))
-                .route("/exchange_rate", axum::routing::get(get_exchange_rate))
-                .route("/contract/price", axum::routing::get(get_current_price))
-                .route("/check-health", axum::routing::get(check_health))
-                .with_state(app_state);
-
-            // Graceful shutdown: when `shutdown_tx` is dropped (or sent),
-            // `shutdown_rx` resolves and axum::serve returns Ok(()).
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .ok();  // don't panic on graceful shutdown / runtime errors
-        });
-    });
+        })?;
 
     Ok(ServerHandle {
         shutdown_tx: Some(shutdown_tx),
