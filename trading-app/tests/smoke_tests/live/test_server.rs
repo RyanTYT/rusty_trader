@@ -36,8 +36,8 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use trading_app::init_app::{ApplicationState, init_app};
 use trading_app::ibc::with_gateway_retry;
+use trading_app::init_app::{ApplicationState, init_app};
 use trading_app::server::server::init_server;
 
 use crate::live::init::{api_port_addr, get_pool};
@@ -93,7 +93,9 @@ async fn test_server_init_boots() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -153,7 +155,9 @@ async fn test_server_check_health() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -201,21 +205,22 @@ async fn test_server_get_current_price() {
                 .expect("HTTP request failed");
 
             let status = response.status();
-            let body = response.text().await.expect("failed to parse JSON");
-            println!("contract/price response: status={status}, body={body}");
+            let body: serde_json::Value = response.json().await.expect("failed to parse JSON");
 
-            // if status.is_success() {
-            //     let price = body["price"].as_f64();
-            //     assert!(price.is_some());
-            //     let price = price.unwrap();
-            //     assert!(price > 0.0 && (50.0..=500.0).contains(&price));
-            //     println!("✅ /contract/price: AAPL = ${price}");
-            // }
+            if status.is_success() {
+                let price = body["price"].as_f64();
+                assert!(price.is_some());
+                let price = price.unwrap();
+                assert!(price > 0.0 && (50.0..=500.0).contains(&price));
+                println!("✅ /contract/price: AAPL = ${price}");
+            }
 
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -273,7 +278,9 @@ async fn test_server_get_exchange_rate() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -331,7 +338,9 @@ async fn test_server_get_strategy_value() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -390,7 +399,9 @@ async fn test_server_get_possible_stock_contracts() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
@@ -439,7 +450,9 @@ async fn test_server_invalid_query_params() {
             drop(client);
             drop(app_state_sender);
             drop(app_state);
-            let handle = tokio::task::spawn_blocking(move || { server.shutdown(); });
+            let handle = tokio::task::spawn_blocking(move || {
+                server.shutdown();
+            });
             handle.await.unwrap();
             true
         })
