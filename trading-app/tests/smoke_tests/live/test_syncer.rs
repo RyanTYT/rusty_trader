@@ -25,7 +25,7 @@ use trading_app::database::models_crud::open_orders::open_orders::{OpenOrdersCRU
 use trading_app::execution::fx_backed_up_order::OrderStore;
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
 use trading_app::execution::syncer::{SyncOps, SyncerEngine};
-use trading_app::loop_until_async_drop;
+use trading_app::arc_drop_async;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::{DataSubscription, MarketDataHandler};
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
@@ -102,7 +102,7 @@ async fn test_syncer_new_constructor() {
         syncer.sync_open_orders(&state.client_1, &consolidator, Some("noise".to_string()));
         println!("✅ SyncerEngine internal state verified — sync_open_orders ran without error");
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -142,7 +142,7 @@ async fn test_sync_open_orders_empty_account() {
         assert!(our_orders.is_empty(), "no open orders should exist for AAPL after sync on empty account");
         println!("✅ sync_open_orders(empty): no spurious open orders created");
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -202,7 +202,7 @@ async fn test_sync_open_orders_with_open_order() {
             )).await;
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -321,7 +321,7 @@ async fn test_sync_positions_reconcile() {
             positions.len()
         );
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -355,7 +355,7 @@ async fn test_sync_open_orders_default_strategy_fallback() {
                 .await
                 .expect("get_orders_for_strat failed");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -450,7 +450,7 @@ async fn test_syncer_full_lifecycle() {
             .execute(&state.pool).await;
         println!("✅ full sync lifecycle cleanup complete");
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");

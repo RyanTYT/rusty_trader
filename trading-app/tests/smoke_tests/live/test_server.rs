@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use trading_app::ibc::with_gateway_retry;
 use trading_app::init_app::{ApplicationState, init_app};
-use trading_app::loop_until_async_drop;
+use trading_app::arc_drop_async;
 use trading_app::server::server::init_server;
 
 use crate::common::init_tracing;
@@ -95,7 +95,7 @@ async fn test_server_init_boots() {
             // Explicit teardown: server before app_state (server borrows app_state).
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -159,7 +159,7 @@ async fn test_server_check_health() {
             drop(client);
             drop(app_state_sender);
             println!("app_state count: {}", Arc::strong_count(&app_state));
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 println!("server drop");
                 server.shutdown();
@@ -224,7 +224,7 @@ async fn test_server_get_current_price() {
 
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -285,7 +285,7 @@ async fn test_server_get_exchange_rate() {
 
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -346,7 +346,7 @@ async fn test_server_get_strategy_value() {
 
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -408,7 +408,7 @@ async fn test_server_get_possible_stock_contracts() {
 
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });
@@ -461,7 +461,7 @@ async fn test_server_invalid_query_params() {
 
             drop(client);
             drop(app_state_sender);
-            loop_until_async_drop!(app_state);
+            arc_drop_async!(app_state);
             let handle = tokio::task::spawn_blocking(move || {
                 server.shutdown();
             });

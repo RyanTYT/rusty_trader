@@ -19,7 +19,7 @@ use ibapi::prelude::SecurityType;
 use trading_app::database::models_crud::historical_data::historical_data::{
     HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
 };
-use trading_app::loop_until_async_drop;
+use trading_app::arc_drop_async;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::PriceSupplier;
@@ -97,7 +97,7 @@ async fn test_consolidator_new_constructor() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -150,7 +150,7 @@ async fn test_consolidator_validate_contract_valid() {
             );
             println!("✅ validate_contract(EUR/USD): verified");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -197,7 +197,7 @@ async fn test_consolidator_validate_contract_invalid() {
             );
             println!("✅ validate_contract(FAKECUR/USD): correctly returned None");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -244,7 +244,7 @@ async fn test_consolidator_update_at_least_n_days_data_stock() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -297,7 +297,7 @@ async fn test_consolidator_update_at_least_n_days_data_forex() {
                 }
             }
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -329,7 +329,7 @@ async fn test_consolidator_get_current_price_stock() {
             }
         }
             
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -358,7 +358,7 @@ async fn test_consolidator_get_current_price_forex() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -388,7 +388,7 @@ async fn test_consolidator_get_current_price_vwap() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -414,7 +414,7 @@ async fn test_consolidator_get_current_price_generic_ticks() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -483,7 +483,7 @@ async fn test_consolidator_get_strategy_sgd_value() {
                 }
             }
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -539,7 +539,7 @@ async fn test_consolidator_validate_contract_multiple_types() {
             assert!(result.is_some(), "GBP/USD should validate");
             println!("✅ validate_contract(GBP/USD forex): verified");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await

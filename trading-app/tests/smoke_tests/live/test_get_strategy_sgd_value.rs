@@ -9,7 +9,7 @@ use ibapi::prelude::SecurityType;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
-use trading_app::{loop_until_async_drop, market_data::consolidator::Consolidator};
+use trading_app::{arc_drop_async, market_data::consolidator::Consolidator};
 
 use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
@@ -64,7 +64,7 @@ async fn test_get_strategy_sgd_value_live() {
             }
         }
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
