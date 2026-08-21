@@ -236,7 +236,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
-                    hotpath::measure_block!(gauge_name.as_str(), {
+                    hotpath::measure_block!(gauge_name, {
                         loop {
                             let mut all_done = true;
 
