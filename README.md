@@ -121,3 +121,8 @@ desktop/mobile dashboard.
   a future port to a different broker a matter of implementing the trait rather than
   rewriting core logic.
 ---
+
+
+If one has no permission to get prices or the contract is invalid - for e.g. with Option contracts, get_current_price can hang for up to around 30~45s. Multiply that by a few option contracts and using PendingDbQuery as the bar update outcome with this can very easily exceed the 1 minute threshold set by the FOREX contract subscribed to by unknown/manual/any strategy you build that takes 1 minute bars.
+
+In a nutshell, if you encounter "Consumer Stall" error logs, you should first check hotpath-console to see which thread is blocking, and consequently which function in that thread is blocking, then read the logs as well; typically, some consumer thread IS stalling for some reason, typically having to do with get_current_price or an IBKR client side sync function.
