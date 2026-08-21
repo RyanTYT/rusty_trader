@@ -81,11 +81,12 @@ impl Consolidator {
         market_data_handler: MarketDataHandler,
         contract_scheduler: Arc<IbkrContractScheduler>,
     ) -> Self {
+        let price_ttl = Duration::from_mins(15);
         let ttl = Duration::from_secs(60);
         let mut memoisers: HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>> =
             HashMap::new();
         let get_price_fn: Arc<Box<dyn AnyMemoized>> = Arc::new(Box::new(Memoized::new(
-            ttl,
+            price_ttl,
             // I = (Contract, bool, Vec<String>, bool) — everything owned,
             // so it's Send + 'static and can go through the type-erased map.
             |input: &(Arc<Client>, Contract, bool, Vec<String>, bool)| {
