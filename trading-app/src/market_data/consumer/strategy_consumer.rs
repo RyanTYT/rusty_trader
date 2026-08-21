@@ -232,7 +232,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
-                    hotpath::measure_block!("bar_receive_spin_loop", {
+                    hotpath::measure_block!(format!("{}_strat_bar_rcv_spin_loop", strategy.get_name()), {
                         loop {
                             let mut all_done = true;
 

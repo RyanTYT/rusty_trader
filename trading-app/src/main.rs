@@ -91,6 +91,7 @@ async fn tokio_main() {
     let state = Arc::new(Mutex::new(ConnectionState::new(alert_tx)));
     let stdout_layer = fmt::layer()
         .pretty()
+        .with_ansi(true)
         .with_target(true)
         .with_timer(NewYorkTime {})
         .with_filter(LevelFilter::INFO); // show function/module name
