@@ -23,6 +23,7 @@ use ibapi::orders::Action;
 use ibapi::orders::order_builder::{limit_order, market_order};
 use ibapi::prelude::SecurityType;
 use sqlx::PgPool;
+use trading_app::arc_drop_async;
 use trading_app::database::crud::CRUDTrait;
 use trading_app::database::models::AssetType;
 use trading_app::database::models_crud::open_orders::open_orders::{
@@ -31,16 +32,13 @@ use trading_app::database::models_crud::open_orders::open_orders::{
 };
 use trading_app::execution::fx_backed_up_order::OrderStore;
 use trading_app::execution::order_engine::{OrderEngine, OrderIBKR};
-use trading_app::loop_until_async_drop;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 use trading_app::strategy::noise::Noise;
 use trading_app::strategy::strategy::{BarUpdateOutcome, StrategyEnum};
 
-use crate::live::init::{
-    api_port_addr, ensure_strategy_row, ibkr_account, server_base_url, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {

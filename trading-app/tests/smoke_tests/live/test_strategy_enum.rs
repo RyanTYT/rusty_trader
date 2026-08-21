@@ -28,7 +28,7 @@ use trading_app::database::models_crud::historical_data::historical_data::{
 use trading_app::database::models_crud::target_positions::target_positions::{
     TargetPositionsCRUD, TargetPositionsOps,
 };
-use trading_app::loop_until_async_drop;
+use trading_app::arc_drop_async;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;

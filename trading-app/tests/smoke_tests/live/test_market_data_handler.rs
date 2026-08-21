@@ -18,14 +18,13 @@ use std::time::Duration;
 use ibapi::contracts::Contract;
 use ibapi::market_data::realtime::WhatToShow;
 use ibapi::prelude::SecurityType;
-use spmc_ring::bench::RingBuffer;
-use trading_app::loop_until_async_drop;
+use trading_app::arc_drop_async;
 use trading_app::market_data::handler::{
     DataSubscription, DbSubscriptionMethod, MarketDataHandler,
 };
 use trading_app::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
-use crate::live::init::{api_port_addr, ibkr_account, server_base_url, with_live_ibkr};
+use crate::live::init::{ibkr_account, with_live_ibkr};
 
 fn aapl_contract() -> Contract {
     Contract {
