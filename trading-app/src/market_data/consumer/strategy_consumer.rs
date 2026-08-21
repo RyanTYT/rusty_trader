@@ -212,7 +212,10 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 });
                 let mut small_bars: Vec<VecDeque<Bar>> = vec![VecDeque::new(); consumers.len()];
                 let mut agg_bars: Vec<Option<HistoricalDataFullKeys>> = vec![None; consumers.len()];
-                let gauge_name = format!("{}_strat_bar_rcv_spin_loop", strategy.get_name());
+                // let gauge_name = format!("{}_strat_bar_rcv_spin_loop", strategy.get_name());
+                let gauge_name: &'static str = Box::leak(
+                    format!("{}_strat_bar_rcv_spin_loop", strategy.get_name()).into_boxed_str()
+                );
 
                 while is_alive.load(Ordering::Acquire) {
                     let now = Utc::now();
