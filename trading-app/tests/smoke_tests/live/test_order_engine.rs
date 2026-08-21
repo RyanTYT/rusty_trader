@@ -329,7 +329,7 @@ async fn test_handle_bar_update_outcome_no_action() {
 
         println!("✅ handle_bar_update_outcome(NoAction) completed without error");
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");
@@ -401,7 +401,7 @@ async fn test_handle_bar_update_outcome_emit_orders() {
                     .await;
             }
         }
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
         println!("✅ EmitOrders cleanup complete");
     })
     .await
@@ -452,7 +452,7 @@ async fn test_handle_bar_update_outcome_pending_db_query() {
         tokio::time::sleep(Duration::from_secs(2)).await;
         println!("✅ PendingDbQuery completed without error");
 
-        loop_until_async_drop!(consolidator);
+        arc_drop_async!(consolidator);
     })
     .await
     .expect("Failed to boot live IBKR");

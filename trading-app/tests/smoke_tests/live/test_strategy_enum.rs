@@ -261,7 +261,7 @@ async fn test_strategy_warm_up_data_noise() {
             );
             println!("✅ warm_up_data(Noise): QQQ historical data verified in DB");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -285,7 +285,7 @@ async fn test_strategy_warm_up_data_manual() {
             assert!(result.is_ok(), "Manual warm_up_data should succeed");
             println!("✅ warm_up_data(Manual): no-op completed without error");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -309,7 +309,7 @@ async fn test_strategy_warm_up_data_unknown() {
             assert!(result.is_ok(), "Unknown warm_up_data should succeed");
             println!("✅ warm_up_data(Unknown): no-op completed without error");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -383,7 +383,7 @@ async fn test_strategy_on_bar_update_manual() {
             }
             println!("✅ on_bar_update(Manual): returns PendingDbQuery([Stock, Option])");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -445,7 +445,7 @@ async fn test_strategy_on_bar_update_unknown() {
             }
             println!("✅ on_bar_update(Unknown): returns PendingDbQuery([Stock, Option])");
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await
@@ -557,7 +557,7 @@ async fn test_strategy_on_bar_update_noise() {
             let target_crud = TargetPositionsCRUD::stock(state.pool.clone());
             let _ = target_crud.clear_strat_pos("noise").await;
 
-            loop_until_async_drop!(consolidator);
+            arc_drop_async!(consolidator);
         },
     )
     .await

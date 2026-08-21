@@ -407,7 +407,7 @@ async fn test_try_get_price_after_subscription() {
                         contract_scheduler,
                     ));
                 let res = consolidator.validate_contract(contract, Duration::from_secs(30));
-                loop_until_async_drop!(consolidator);
+                arc_drop_async!(consolidator);
 
                 res
             };

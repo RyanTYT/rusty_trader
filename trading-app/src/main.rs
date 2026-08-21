@@ -34,41 +34,13 @@ pub mod server;
 pub mod strategy;
 
 #[macro_export]
-macro_rules! loop_until_async_drop {
+macro_rules! arc_drop_async {
     ($app_state:ident) => {
-        loop {
-            if let Some(app_state_uno) = Arc::get_mut(&mut $app_state) {
-                app_state_uno.async_drop().await;
-                break;
-            }
-        }
+        let mut app_state =
+            std::sync::Arc::into_inner($app_state).expect("Expected only 1 strong reference");
+        app_state.async_drop().await;
     };
 }
-
-// #[async_trait]
-// pub trait Insertable {
-//     fn table_name() -> &'static str;
-//     fn pri_column_names(&self) -> Vec<&'static str>;
-//     fn opt_column_names(&self) -> Vec<&'static str>;
-//     fn bind_pri<'q>(&'q self, sql: &'q str) -> sqlx::query::Query<'q, sqlx::Postgres, PgArguments>;
-//     fn bind_pri_to_query<'q>(
-//         &'q self,
-//         query: sqlx::query::Query<'q, sqlx::Postgres, PgArguments>,
-//     ) -> sqlx::query::Query<'q, sqlx::Postgres, PgArguments>;
-//     fn bind_pri_to_query_as<'q, T>(
-//         &'q self,
-//         query: QueryAs<'q, Postgres, T, PgArguments>,
-//     ) -> QueryAs<'q, Postgres, T, PgArguments>;
-//     fn bind_opt<'q>(&'q self, sql: &'q str) -> sqlx::query::Query<'q, sqlx::Postgres, PgArguments>;
-//     fn bind_opt_to_query<'q>(
-//         &'q self,
-//         query: sqlx::query::Query<'q, sqlx::Postgres, PgArguments>,
-//     ) -> sqlx::query::Query<'q, sqlx::Postgres, PgArguments>;
-//     fn bind_opt_to_query_as<'q, T>(
-//         &'q self,
-//         query: QueryAs<'q, Postgres, T, PgArguments>,
-//     ) -> QueryAs<'q, Postgres, T, PgArguments>;
-// }
 
 /// for logger
 struct NewYorkTime {}
