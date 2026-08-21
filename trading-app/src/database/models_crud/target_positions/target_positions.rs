@@ -44,6 +44,22 @@ pub enum TargetPositionsQtyDiff {
     Options(TargetOptionPositionsQtyDiff),
 }
 
+impl TargetPositionsQtyDiff {
+    pub fn update_qty_diff(&mut self, qty_diff: f64) -> f64 {
+        match self {
+            Self::Stock(v) => { v.qty_diff += qty_diff; v.qty_diff }
+            Self::Options(v) => { v.qty_diff += qty_diff; v.qty_diff }
+        }
+    }
+
+    pub fn get_qty_diff(&self) -> f64 {
+        match self {
+            Self::Stock(TargetStockPositionsQtyDiff {qty_diff, ..}) => *qty_diff,
+            Self::Options(TargetOptionPositionsQtyDiff {qty_diff, ..}) => *qty_diff
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TargetPositionsPrimaryKeys {
     Stock(TargetStockPositionsPrimaryKeys),

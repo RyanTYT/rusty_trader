@@ -2,9 +2,13 @@ use ibapi::prelude::{Contract, ContractMonth, SecurityType, Symbol};
 use std::hash::Hash;
 
 use crate::database::{
-    models::{AssetType, CurrentOptionPositionsFullKeys, CurrentStockPositionsFullKeys},
+    models::{
+        AssetType, CurrentOptionPositionsFullKeys, CurrentStockPositionsFullKeys,
+        OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys,
+    },
     models_crud::{
         current_positions::current_positions::CurrentPositionsFullKeys,
+        open_orders::open_orders::OpenOrdersFullKeys,
         target_positions::{
             target_option_positions::TargetOptionPositionsQtyDiff,
             target_positions::TargetPositionsQtyDiff,
@@ -59,6 +63,7 @@ pub(crate) fn get_local_symbol(contract: &Contract) -> String {
 pub enum LocalContractTypes {
     TargetPosQtyDiff(TargetPositionsQtyDiff),
     CurrentPosFk(CurrentPositionsFullKeys),
+    OpenOrders(OpenOrdersFullKeys),
 }
 
 pub(crate) fn build_contract_from_stock(
@@ -143,6 +148,29 @@ pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
                 ..
             }) => build_contract_from_stock(stock, primary_exchange, currency),
             CurrentPositionsFullKeys::Options(CurrentOptionPositionsFullKeys {
+                stock,
+                expiry,
+                strike,
+                option_type,
+                ..
+            }) => Contract::option(
+                &stock,
+                &expiry,
+                *strike,
+                match option_type {
+                    crate::database::models::OptionType::Put => "P",
+                    crate::database::models::OptionType::Call => "C",
+                },
+            ),
+        },
+        LocalContractTypes::OpenOrders(v) => match v {
+            OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                stock,
+                primary_exchange,
+                currency,
+                ..
+            }) => build_contract_from_stock(stock, primary_exchange, currency),
+            OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
                 stock,
                 expiry,
                 strike,

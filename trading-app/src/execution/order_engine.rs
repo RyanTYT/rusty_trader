@@ -211,6 +211,46 @@ impl OrderEngine {
                                 continue;
                             }
                         };
+                    // Check if all orders alr open
+                    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+                    let mut open_orders = match self.tokio_handle.block_on(async move {
+                        open_orders_crud
+                            .get_orders_for_strat(&strategy.get_name())
+                            .await
+                    }) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::error!("open orders crud error: {e:?}");
+                            continue;
+                        }
+                    }
+                    .into_iter()
+                    .map(|open_order| LocalOpenOrder {
+                        order: open_order,
+                        is_from_db: true,
+                    })
+                    .collect::<Vec<LocalOpenOrder>>();
+                    match order_store.load_orders(&strategy.get_name()) {
+                        Ok(v) => v.unwrap_or(vec![]),
+                        Err(e) => {
+                            tracing::error!("Failed to load_orders - panicked!: {e:?}");
+                            continue;
+                        }
+                    }
+                    .into_iter()
+                    .for_each(|order| {
+                        open_orders.push(LocalOpenOrder {
+                            order: OpenOrdersFullKeys::from_contract_and_order(
+                                &order.contract,
+                                &order.order,
+                                0.0,
+                            ),
+                            is_from_db: false,
+                        })
+                    });
+                    if !requires_reconciliation(&target_pos_diffs, open_orders) {
+                        continue;
+                    }
                     // tracing::info!(
                     //     message = %format!("Detected pos_diffs: \n{}",
                     //         &target_pos_diffs
@@ -234,7 +274,7 @@ impl OrderEngine {
                             let mut insufficient_funds = HashMap::new();
 
                             let mut pos_to_open = Vec::new();
-                            for pos_diff in target_pos_diffs.clone() {
+                            for pos_diff in target_pos_diffs.clone().into_iter() {
                                 if let TargetPositionsQtyDiff::Stock(
                                     TargetStockPositionsQtyDiff {
                                         ref stock,
@@ -689,4 +729,29 @@ impl OrderEngine {
 
         Ok(())
     }
+}
+
+fn requires_reconciliation(
+    target_pos_diffs: &Vec<TargetPositionsQtyDiff>,
+    open_orders: Vec<LocalOpenOrder>,
+) -> bool {
+    let mut orders_map = HashMap::new();
+    for order in open_orders.into_iter() {
+        let qty = order.order.get_qty();
+        let contract = get_contract_from(&LocalContractTypes::OpenOrders(order.order));
+        let hash_contract = HashContract { contract };
+        match orders_map.get(&hash_contract) {
+            Some(v) => orders_map.insert(hash_contract, v + qty),
+            None => orders_map.insert(hash_contract, qty),
+        };
+    }
+
+    target_pos_diffs.into_iter().any(|pos_diff| {
+        let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
+        let hash_contract = HashContract { contract };
+        let open_orders_qty = orders_map.get(&hash_contract).unwrap_or(&0.0);
+        let diff = pos_diff.get_qty_diff() + *open_orders_qty;
+
+        if diff == 0.0 { false } else { true }
+    })
 }

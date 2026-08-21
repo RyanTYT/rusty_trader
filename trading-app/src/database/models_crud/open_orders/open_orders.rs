@@ -33,6 +33,13 @@ pub enum OpenOrdersFullKeys {
 }
 
 impl OpenOrdersFullKeys {
+    pub fn get_qty(&self) -> f64 {
+        match self {
+            OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys { quantity, .. }) => *quantity,
+            OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys { quantity, .. }) => *quantity,
+        }
+    }
+
     pub fn from_contract_and_order(contract: &Contract, order: &Order, filled: f64) -> Self {
         let asset_type = AssetType::from_str(&contract.security_type);
         match asset_type {
