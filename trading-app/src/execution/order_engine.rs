@@ -26,7 +26,7 @@ use ibapi::{
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Weak,
 };
 
@@ -85,6 +85,11 @@ impl OrderIBKR {
             references_parent_order,
         }
     }
+}
+
+struct LocalOpenOrder {
+    order: OpenOrdersFullKeys,
+    is_from_db: bool,
 }
 
 #[hotpath::measure_all]
@@ -433,6 +438,110 @@ impl OrderEngine {
         }
     }
 
+    fn cancel_orders(
+        &self,
+        asset_type: &AssetType,
+        weak_client: &Weak<Client>,
+        local_open_orders: Vec<LocalOpenOrder>,
+        order_store: &OrderStore,
+    ) {
+        if local_open_orders.is_empty() {
+            return;
+        }
+
+        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+        let mut strategy_name = "".to_string();
+        let orders_from_backed_up_map = local_open_orders
+            .iter()
+            .filter_map(|open_order| {
+                let (order_perm_id, order_id, strategy) = match &open_order.order {
+                    OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                        order_perm_id,
+                        order_id,
+                        strategy,
+                        ..
+                    }) => (order_perm_id, order_id, strategy.clone()),
+                    OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
+                        order_perm_id,
+                        order_id,
+                        strategy,
+                        ..
+                    }) => (order_perm_id, order_id, strategy.clone()),
+                };
+                strategy_name = strategy;
+
+                if *order_perm_id != -1 {
+                    // Cancel on IBKR side
+                    let cloned_weak_client = weak_client.clone();
+                    let owned_order_id = *order_id;
+                    std::thread::spawn(move || {
+                        hotpath::measure_block!("cancel_order_on_ibkr", {
+                            let client_opt = cloned_weak_client.upgrade();
+                            if client_opt.is_none() {
+                                tracing::warn!("client died while cancelling order!");
+                                return;
+                            }
+                            let client = client_opt.unwrap();
+                            if let Err(e) = client.cancel_order(owned_order_id, "") {
+                                tracing::warn!("Could not cancel order: {e:?}");
+                            };
+                        });
+                    });
+                }
+
+                if open_order.is_from_db {
+                    // Cancel on Local Side (i.e. DB)
+                    let open_orders_crud_cloned = open_orders_crud.clone();
+                    let open_order_pk =
+                        OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
+                    self.tokio_handle.spawn(hotpath::future!(
+                        async move {
+                            if let Err(e) = open_orders_crud_cloned.delete(&open_order_pk).await {
+                                tracing::error!(
+                                    "Error trying to delete OpenOptionOrder entry: {e:?}"
+                                )
+                            };
+                        },
+                        label = "delete_open_order"
+                    ));
+                    None
+                } else {
+                    Some(*order_id)
+                }
+            })
+            .collect::<Vec<i32>>();
+
+        if !orders_from_backed_up_map.is_empty() {
+            let open_orders = match order_store.load_orders(&strategy_name) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        "Error trying to access order store while managing open orders: {e:?}"
+                    );
+                    return;
+                }
+            };
+            if open_orders.is_none() {
+                tracing::error!(
+                    "Order Store doesn't contain open order, but was trying to cancel open order!"
+                );
+                return;
+            }
+
+            let orders_to_remove: HashSet<i32> = orders_from_backed_up_map.into_iter().collect();
+            let new_open_orders = open_orders
+                .unwrap()
+                .into_iter()
+                .filter(|order| orders_to_remove.contains(&order.order.order_id))
+                .collect::<Vec<OrderIBKR>>();
+            if let Err(e) = order_store.store_orders(&strategy_name, &new_open_orders) {
+                tracing::error!(
+                    "Failed to store updated open orders to redb backed_up_orders after cancelling open orders!"
+                );
+            };
+        }
+    }
+
     /// Provides the logic to handle open order
     /// - i.e. cancelling and placing orders efficiently
     /// - 1st order MUST be correct strategy (i.e. order_ref == strategy)
@@ -467,18 +576,27 @@ impl OrderEngine {
                     tracing::error!("Failed to get orders for strategy: {e:?}");
                     return Err("Failed to get orders for strategy".to_string());
                 }
-            };
+            }
+            .into_iter()
+            .map(|open_order| LocalOpenOrder {
+                order: open_order,
+                is_from_db: true,
+            })
+            .collect::<Vec<LocalOpenOrder>>();
 
             if let Some(backed_up_orders) = order_store
                 .load_orders(&order.order_ref)
                 .expect("Expected load_orders function to work")
             {
                 backed_up_orders.iter().for_each(|order| {
-                    open_orders_db.push(OpenOrdersFullKeys::from_contract_and_order(
-                        &order.contract,
-                        &order.order,
-                        0.0,
-                    ));
+                    open_orders_db.push(LocalOpenOrder {
+                        order: OpenOrdersFullKeys::from_contract_and_order(
+                            &order.contract,
+                            &order.order,
+                            0.0,
+                        ),
+                        is_from_db: false,
+                    });
                 });
             }
 
@@ -487,7 +605,7 @@ impl OrderEngine {
 
         let tot_qty_dir = open_orders
             .iter()
-            .map(|open_order| match open_order {
+            .map(|open_order| match open_order.order {
                 OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys { quantity, .. }) => {
                     quantity.signum()
                 }
@@ -509,14 +627,14 @@ impl OrderEngine {
         let (curr_open_orders_filled, curr_open_orders_quantity): (f64, f64) = (
             open_orders
                 .iter()
-                .map(|open_order| match open_order {
+                .map(|open_order| match open_order.order {
                     OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys { filled, .. }) => filled,
                     OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys { filled, .. }) => filled,
                 })
                 .sum(),
             open_orders
                 .iter()
-                .map(|open_order| match open_order {
+                .map(|open_order| match open_order.order {
                     OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys { quantity, .. }) => quantity,
                     OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys { quantity, .. }) => {
                         quantity
@@ -530,52 +648,10 @@ impl OrderEngine {
             * (curr_open_orders_quantity.signum());
 
         // Alr correct
+        // i.e. cancel all open orders (since positions are alr correct)
         if qty_diff == 0.0 {
             // Cancel Open Orders
-            open_orders.iter().for_each(|open_order| {
-                let (order_perm_id, order_id) = match open_order {
-                    OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
-                        order_perm_id,
-                        order_id,
-                        ..
-                    }) => (order_perm_id, order_id),
-                    OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
-                        order_perm_id,
-                        order_id,
-                        ..
-                    }) => (order_perm_id, order_id),
-                };
-
-                // Cancel on IBKR side
-                let cloned_weak_client = weak_client.clone();
-                let owned_order_id = *order_id;
-                std::thread::spawn(move || {
-                    hotpath::measure_block!("cancel_order_on_ibkr", {
-                        let client_opt = cloned_weak_client.upgrade();
-                        if client_opt.is_none() {
-                            tracing::warn!("client died while cancelling order!");
-                            return;
-                        }
-                        let client = client_opt.unwrap();
-                        if let Err(e) = client.cancel_order(owned_order_id, "") {
-                            tracing::warn!("Could not cancel order: {e:?}");
-                        };
-                    });
-                });
-
-                // Cancel on Local Side (i.e. DB)
-                let open_orders_crud_cloned = open_orders_crud.clone();
-                let open_order_pk =
-                    OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
-                self.tokio_handle.spawn(hotpath::future!(
-                    async move {
-                        if let Err(e) = open_orders_crud_cloned.delete(&open_order_pk).await {
-                            tracing::error!("Error trying to delete OpenOptionOrder entry: {e:?}")
-                        };
-                    },
-                    label = "delete_open_order_full_cancel"
-                ));
-            });
+            self.cancel_orders(&asset_type, &weak_client, open_orders, order_store);
             return Ok(());
         }
 
@@ -585,46 +661,7 @@ impl OrderEngine {
                 && current_qty_diff.abs() > qty_diff.abs())
         {
             // Cancel all open orders first
-            open_orders.iter().for_each(|open_order| {
-                let (order_perm_id, order_id) = match open_order {
-                    OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
-                        order_perm_id,
-                        order_id,
-                        ..
-                    }) => (order_perm_id, order_id),
-                    OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
-                        order_perm_id,
-                        order_id,
-                        ..
-                    }) => (order_perm_id, order_id),
-                };
-                let weak_client_cloned = weak_client.clone();
-                let owned_order_id = *order_id;
-                std::thread::spawn(move || {
-                    hotpath::measure_block!("cancel_order_on_ibkr", {
-                        let client_opt = weak_client_cloned.upgrade();
-                        if client_opt.is_none() {
-                            tracing::warn!("client died while cancelling multiple orders!");
-                            return;
-                        }
-                        let client = client_opt.unwrap();
-                        if let Err(e) = client.cancel_order(owned_order_id, "") {
-                            tracing::warn!("Could not cancel order: {e:?}");
-                        };
-                    });
-                });
-                let open_order_pk =
-                    OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
-                let open_orders_crud_cloned = open_orders_crud.clone();
-                self.tokio_handle.spawn(hotpath::future!(
-                    async move {
-                        if let Err(e) = open_orders_crud_cloned.delete(&open_order_pk).await {
-                            tracing::error!("Error trying to delete entry in OpenOrders: {e:?}")
-                        }
-                    },
-                    label = "delete_open_order_direction_change"
-                ));
-            });
+            self.cancel_orders(&asset_type, &weak_client, open_orders, order_store);
 
             let weak_client_cloned = weak_client;
             orders.push_front(OrderIBKR::new(contract, order, -1));
@@ -638,6 +675,7 @@ impl OrderEngine {
         }
 
         // If it's here: Order is in same dirction of qty_diff
+        // i.e. no need to cancel open orders
         if current_qty_diff.abs() < qty_diff.abs() {
             let handle = self.tokio_handle.clone();
             let pool = self.pool.clone();

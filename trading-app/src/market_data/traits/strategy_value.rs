@@ -50,11 +50,6 @@ impl Consolidator {
         let current_stock_positions_crud =
             CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
 
-        // let positions = handle.block_on(async move {
-        //     current_stock_positions_crud
-        //         .get_pos_by_strat(strategy)
-        //         .await
-        // })?;
         // 1. Offload the async task to Runtime 1's worker threads
         let strategy = strategy.to_string();
         let join_handle = handle.spawn(async move {
@@ -62,7 +57,6 @@ impl Consolidator {
                 .get_pos_by_strat(&strategy)
                 .await
         });
-
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 
         tracing::info!("Retrieved current positions for get_strategy_sgd_value");
