@@ -255,7 +255,10 @@ async fn on_order_update_received(
                     );
                     Ok(())
                 }
-                StatusOfOrderStatus::ApiCancelled | StatusOfOrderStatus::Cancelled => {
+                StatusOfOrderStatus::PendingCancel
+                | StatusOfOrderStatus::Inactive
+                | StatusOfOrderStatus::ApiCancelled
+                | StatusOfOrderStatus::Cancelled => {
                     order_update_stream::event_handlers::order_status::cancelled(
                         pool.clone(),
                         &status,
@@ -270,9 +273,7 @@ async fn on_order_update_received(
                 }
                 StatusOfOrderStatus::ApiPending
                 | StatusOfOrderStatus::PendingSubmit
-                | StatusOfOrderStatus::PendingCancel
                 | StatusOfOrderStatus::Filled
-                | StatusOfOrderStatus::Inactive
                 | StatusOfOrderStatus::PreSubmitted => Ok(()),
             }
         }
@@ -301,7 +302,10 @@ async fn on_order_update_received(
                     };
                     Ok(())
                 }
-                StatusOfOrderStatus::Cancelled | StatusOfOrderStatus::ApiCancelled => Ok(()),
+                StatusOfOrderStatus::Inactive
+                | StatusOfOrderStatus::PendingCancel
+                | StatusOfOrderStatus::Cancelled
+                | StatusOfOrderStatus::ApiCancelled => Ok(()),
                 _ => Ok(()),
             }
         }
