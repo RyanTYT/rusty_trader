@@ -227,7 +227,6 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     });
                     let mut received = vec![false; active.len()];
 
-                    println!("Next deadline: {:?}", next_deadline - HOT_WINDOW);
                     hotpath::measure_block!("sleep_until_deadline", {
                         sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy.get_name());
                     });
@@ -361,7 +360,9 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                         })
                         .collect::<Vec<String>>()
                         .join("\n");
-                    tracing::warn!("{}", errs);
+                    if errs.len() > 0 {
+                        tracing::warn!("{}", errs);
+                    }
                     // for (slot, &idx) in active.iter().enumerate() {
                     //     if !received[slot] {
                     //         tracing::warn!(
@@ -418,10 +419,8 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let full_bar =
                     HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
 
-                println!("Calling on_bar_update");
                 let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
                 handle_bar_update_outcome(bar_update_outcome);
-                println!("on_bar_update returned for strategy");
             }
 
             _ => {
