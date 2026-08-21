@@ -251,6 +251,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                         match consumers[idx].get_bar_type() {
                                             IbkrBarType::Normal => {
                                                 if let Err(e) = Self::dispatch_bar(
+                                                    &strategy.get_name(),
                                                     &consumers[idx].contract,
                                                     &consumers[idx].what_to_show,
                                                     &mut small_bars[idx],
@@ -267,6 +268,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                 if received[slot + 1] {
                                                     // build bar
                                                     if let Err(e) = Self::dispatch_bar(
+                                                        &strategy.get_name(),
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
@@ -300,6 +302,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                 if received[slot - 1] {
                                                     // build bar
                                                     if let Err(e) = Self::dispatch_bar(
+                                                        &strategy.get_name(),
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
@@ -385,6 +388,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     }
 
     fn dispatch_bar<OnBarUpdate, HandleBarUpdate>(
+        strategy: &str,
         contract: &Contract,
         what_to_show: &WhatToShow,
         small_bars: &mut VecDeque<Bar>,
@@ -423,8 +427,13 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let full_bar =
                     HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
 
-                let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
-                handle_bar_update_outcome(bar_update_outcome);
+                let bar_update_name: &'static str = Box::leak(
+                    format!("{}_strat_bar_update", strategy).into_boxed_str()
+                );
+                hotpath::measure_block!(bar_update_name, {
+                    let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
+                    handle_bar_update_outcome(bar_update_outcome);
+                });
             }
 
             _ => {
