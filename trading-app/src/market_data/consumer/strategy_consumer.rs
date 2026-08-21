@@ -190,14 +190,21 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     )
                 };
                 let handle_bar_update_outcome = |bar_update_outcome: BarUpdateOutcome| {
+                    let order_store_arc = 
+                        match order_store
+                            .upgrade() {
+                                Some(order_store_some) => order_store_some,
+                                None => {
+                                    tracing::warn!("Tried to access OrderStore when it is dropped - app may be tearing down");
+                                    return;
+                                }
+                            };
                     order_engine.handle_bar_update_outcome(
                         &client,
                         &consolidator,
                         bar_update_outcome,
                         &strategy,
-                        &order_store
-                            .upgrade()
-                            .expect("Expected OrderStore to be alive on handle_bar_update_outcome"),
+                        &order_store_arc
                     );
                 };
                 let mut next_deadline = hotpath::measure_block!("align_and_prime_schedule", {
