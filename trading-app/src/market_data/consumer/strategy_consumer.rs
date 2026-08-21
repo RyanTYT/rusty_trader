@@ -212,6 +212,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 });
                 let mut small_bars: Vec<VecDeque<Bar>> = vec![VecDeque::new(); consumers.len()];
                 let mut agg_bars: Vec<Option<HistoricalDataFullKeys>> = vec![None; consumers.len()];
+                let gauge_name = format!("{}_strat_bar_rcv_spin_loop", strategy.get_name());
 
                 while is_alive.load(Ordering::Acquire) {
                     let now = Utc::now();
@@ -232,7 +233,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
-                    hotpath::measure_block!(format!("{}_strat_bar_rcv_spin_loop", strategy.get_name()).as_str(), {
+                    hotpath::measure_block!(&gauge_name, {
                         loop {
                             let mut all_done = true;
 
