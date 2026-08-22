@@ -16,8 +16,8 @@ A personal live-trading system written in Rust and Python against Interactive Br
 | `IB/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
 
 ```mermaid
-flowchart LR
-    HC["hotpathconsole"] -.-> TB
+graph TD
+    A --> B
 ```
 
 
