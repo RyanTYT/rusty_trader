@@ -6,23 +6,6 @@ The Rust trading bot at the core of [rusty_trader](../README.md). It connects to
 
 ---
 
-## Motivation: Why a Complete Refactor from Python?
-
-I had a key preconceived notion that was mostly wrong:
-- I thought Rust would only shine if the IBKR client library was fully asynchronous.
-  - I realized that most strategies operate synchronously, with each strategy on its own thread.
-
-In fact, other than that, Rust provided key upgrades over Python:
-- **Static typing & compiler guarantees** → caught bugs early, cleaner abstractions.
-- **Closer to the metal** → avoiding "black box" async wrappers (`ib_async`) made architecture more intuitive.
-- **Transparent subscriptions** → unlike global, opaque event handlers, `rust-ibapi` gives crystal-clear control over what gets subscribed to, and how events are processed.
-
-Funnily enough, building this wasn't as trivial as I initially envisioned. While the current repo looks clean and straightforward, it took a month of full-time work — multiple iterations of schema design, careful choice of concurrency primitives (`std::sync::Mutex` vs `tokio::sync::Mutex`, OS kernel threads vs tokio tasks for infinite loops), and iterative improvements to ensure stability and scalability.
-
-The actual strategies remain private while I test and refine them.
-
----
-
 ## Threading model & sync ibapi
 
 The defining design decision: **`ibapi` is compiled with its `sync` feature** — every IBKR call blocks. This forces a split-world architecture: blocking IBKR I/O runs on raw `std::thread`s, async DB/HTTP work runs on a tokio multi-threaded runtime, and the two are bridged by captured `tokio::runtime::Handle`s.
@@ -63,9 +46,8 @@ let (avg_move_since_open_joined, most_recent_open_joined,
 });
 ```
 
-**Why I stuck with sync:**
+**Benefits of sync:**
 - **No async colour propagation.** If `on_bar_update` were `async`, every I/O function it calls would need `.await` + `Send + 'static` bounds rippling through the strategy layer. Sync keeps it a plain function; only the single DB seam pays the async tax.
-- **Borrowing across I/O.** Sync holds `&self`, `&mut VecDeque<Bar>`, `&Contract` across a blocking call naturally. Async would force `Arc` and owned data.
 - **Real backtraces.** A panic on a strategy thread gives a stack trace through code → ibapi → syscall. Async task panics give a waker chain that's much harder to read.
 - **Simple shutdown.** `std::thread` + `is_alive: Arc<AtomicBool>` checked in the loop is dead-simple. Async cancellation is subtler — abort is async, tasks may be mid-`.await`.
 
@@ -79,7 +61,7 @@ let (avg_move_since_open_joined, most_recent_open_joined,
 
 ## Database & CRUD methods
 
-A three-tier design that gets ~98 method bodies (7 operations × ~14 tables) from one template. The trick: `Option`-ness *is* the schema metadata.
+A three-tier design that gets ~98 method bodies (7 operations × ~14 tables) from one template. Design leverages `Option`-ness to deduce the schema metadata.
 
 ```rust
 // database/models.rs:280 — Option-ness determines key-set membership
@@ -164,7 +146,7 @@ Other execution subsystems:
 
 ## Strategy
 
-The `StrategyExecutor` trait carries a heavy super-trait bound — not for `dyn` dispatch, but because strategies are aggregated into a macro-generated closed enum:
+The `StrategyExecutor` trait carries a heavy super-trait bound - from legacy implementation:
 
 ```rust
 // strategy/strategy.rs:25 — the trait
@@ -183,7 +165,7 @@ pub trait StrategyExecutor: Ord + PartialOrd + Eq + PartialEq + Clone + Send + S
 }
 ```
 
-Adding a strategy is one line in the macro invocation:
+Adding a strategy is implementation of trait and one line in the macro invocation:
 
 ```rust
 // strategy/strategy.rs:110 — adding a strategy is just one line
@@ -193,8 +175,6 @@ strategy_enum! {
     Unknown(Unknown)
 }
 ```
-
-The macro generates the enum, a `Hash` impl that hashes by `get_name()` (identity = name string), and a full `StrategyExecutor` delegation impl via `match`. Why a macro-enum instead of `dyn StrategyExecutor`? `Ord + Eq + Clone` aren't object-safe in a usable way; `async_trait` with `dyn` would heap-box every future and virtualize every call. The enum gives static dispatch and a concrete future. Trade: closed set, recompile to add.
 
 The strategy → execution contract is a two-path enum:
 
@@ -224,6 +204,7 @@ A clean three-tier model, separated by purity:
 - **Tier 3 (per-contract) — `IbkrContractScheduler`.** Parses IBKR `liquid_hours`/`trading_hours` strings into a `BTreeMap<NaiveDate, Option<TradingHours>>`, imputes missing days, and checks *yesterday's* schedule first to catch sessions spanning midnight.
 
 The subtlest helper is `HashContract` — custom `Hash` on a normalized subset, bare `impl Eq` backed by derived raw `PartialEq`:
+- Notably, this design is not as good as I would like it and am thinking of phasing this out soon
 
 ```rust
 // helpers/contract.rs:16
@@ -249,8 +230,6 @@ impl Hash for HashContract {
 
 impl Eq for HashContract {}  // relies on derived PartialEq (raw, no trim)
 ```
-
-This is **not** a `Hash`/`Eq` invariant violation — the contract only requires `a == b → hash(a) == hash(b)`, and hashing a subset of the eq-compared fields can only coarsen the hash space. The trim is the *safe direction* of normalization.
 
 `sync_timeout` is a pure std-only timeout for sync ibapi calls: spawn OS thread + `mpsc` + `recv_timeout`. Bounds blocking calls without holding a tokio worker. Cost: the worker thread is leaked on timeout — Rust threads can't be cancelled.
 
@@ -353,9 +332,9 @@ Three test binaries, each with a different dependency profile:
 
 | Binary | Tests | Needs | How to run |
 |---|---|---|---|
-| `unit_tests` | 275 passing, 3 ignored (bugs) | Nothing (offline) | `SQLX_OFFLINE=true cargo test --test unit_tests` |
-| `integration_tests` | 18 per-table CRUD + 3 advanced DB test files | PostgreSQL | `DATABASE_URL=… cargo test --test integration_tests` |
-| `smoke_tests` | 16 `#[ignore]`d live tests | IB Gateway + PostgreSQL | `cargo test --test smoke_tests -- --ignored` |
+| `unit_tests` | 278 passing | Nothing (offline) | `SQLX_OFFLINE=true cargo test --test unit_tests` |
+| `integration_tests` | 168 passing (18 per-table CRUD + 3 advanced DB test files) | PostgreSQL | `DATABASE_URL=… cargo test --test integration_tests` |
+| `smoke_tests` | 91 passing (16 `#[ignore]`d live tests | IB Gateway + PostgreSQL | `cargo test --test smoke_tests -- --ignored` |
 
 The offline unit suite (275 tests, no DB/IBKR) is the bulk of coverage. It tests the pure functions that the sync architecture keeps pure: FX attachment math, bar aggregation, rolling stats, `HashContract` hash/eq, FX datetime predicates. The `test_internals` seam (above) is what makes this possible — `pub(crate)` functions become reachable from `tests/` without touching prod visibility.
 
@@ -385,6 +364,16 @@ That's the entire wiring — the macro generates the enum variant, the `Hash`-by
 ### Use the test seam
 
 Add `#[cfg(any(test, feature = "test-utils"))]` to keep source items `pub(crate)` in prod but reachable from `tests/` via `trading_app::test_internals::…`. The `test-utils` cargo feature + self-dev-dependency auto-enables it for `cargo test`.
+
+---
+
+## Thoughts
+
+If you've been following since the beginning, you might remember a trading-app-old service that was the legacy Python Build. Firstly, that was really badly built as I didn't fully understand async runtimes back then, nor did I understand locks, and many other things I learnt along the way. Python is nice for quick and easy, but gets really bad and annoying to follow after significant code buildup (i.e. it offers ease in trade for significant technical debt). I initially pursued the Rust version only because I wanted the static typing, and wanted to learn Rust, but it's taught me more than a few things along the way, and this current architecture would certainly be significantly more laborious to implement in Python now - using a multi-threaded async runtime alongside kernel threads (which would have flown right over my head back then). 
+
+Anyway, locks are lame and annoying but is something you reach for when you start learning Rust from scratch. After a while though, you realise most of the time locks like Mutexes just introduce unnecessary complexity as well as overhead - most of the time, locks aren't fully necessary; use a lock-free data structure or create one yourself instead (though arguably atomic operations use hardware locks so you never really do stray too far away from locks).
+
+The actual strategies remain private while I test and refine them.
 
 ---
 

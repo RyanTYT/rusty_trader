@@ -6,14 +6,14 @@ A personal live-trading system written in Rust and Python against Interactive Br
 
 ## Services
 
-| Service | Lang | Port | Description |
-|---|---|---|---|
-| [`trading-app/`](trading-app/README.md) | Rust | 8000 | The trading bot: sync `ibapi`, real-time bars, strategy execution, order management, self-healing |
-| [`backend/`](backend/README.md) | Rust | 3000 | REST API: CRUD for positions/orders/transactions, portfolio, strategy control, notifications |
-| [`llm_service/`](llm_service/README.md) | Python | 8001 | LLM research pipeline: KB triage (STALE/COMPRESS/KEEP) → 5-stage proposal → counter-proposer |
-| [`scraper/`](scraper/) | Rust | — | Playwright article scraper → feeds `llm_service` |
-| [`hotpath-console/`](hotpath-console/) | — | — | Debug console sharing network with `trading-bot` |
-| `IB/` | — | 4002 | IB Gateway (TWS) Docker image |
+| Service                                 | Lang   | Port | Description                                                                                       |
+| --------------------------------------- | ------ | ---- | ------------------------------------------------------------------------------------------------- |
+| [`trading-app/`](trading-app/README.md) | Rust   | 8000 | The trading bot: sync `ibapi`, real-time bars, strategy execution, order management, self-healing |
+| [`backend/`](backend/README.md)         | Rust   | 3000 | REST API: CRUD for positions/orders/transactions, portfolio, strategy control, notifications      |
+| [`llm_service/`](llm_service/README.md) | Python | 8001 | LLM research pipeline: KB triage (STALE/COMPRESS/KEEP) → 5-stage proposal → counter-proposer      |
+| [`scraper/`](scraper/)                  | Rust   | —    | Playwright article scraper → feeds `llm_service`                                                  |
+| [`hotpath-console/`](hotpath-console/)  | —      | —    | Debug console sharing network with `trading-bot`                                                  |
+| `IB/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
 
 ```
 scraper ──→ llm_service ──→ backend ──→ trading-bot ──→ tws (IB Gateway)
@@ -108,36 +108,29 @@ Each subsystem is documented in [`trading-app/README.md`](trading-app/README.md)
 
 From [`.env.example`](.env.example):
 
-| Var | Purpose |
-|---|---|
-| `TRADING_DB_URL` | Postgres connection string for trading-bot |
-| `TEST_TRADING_DB_URL` | Separate Postgres for tests (port 5433) |
-| `ASYNC_TRADING_DB_URL` | Asyncpg connection string (Python backend) |
-| `DB_USER` / `DB_PW` / `DB_DB` | Postgres credentials (used by docker-compose) |
-| `BACKEND_BEARER_TOKEN` | Bearer token for backend REST API |
-| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | LLM provider keys |
-| `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Alpaca market data keys |
-| `TRADING_BOT_URL` | Backend → trading-bot inter-service URL |
+| Var                                                           | Purpose                                       |
+| ------------------------------------------------------------- | --------------------------------------------- |
+| `TRADING_DB_URL`                                              | Postgres connection string for trading-bot    |
+| `TEST_TRADING_DB_URL`                                         | Separate Postgres for tests (port 5433)       |
+| `ASYNC_TRADING_DB_URL`                                        | Asyncpg connection string (Python backend)    |
+| `DB_USER` / `DB_PW` / `DB_DB`                                 | Postgres credentials (used by docker-compose) |
+| `BACKEND_BEARER_TOKEN`                                        | Bearer token for backend REST API             |
+| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | LLM provider keys                             |
+| `ALPACA_API_KEY` / `ALPACA_API_SECRET`                        | Alpaca market data keys                       |
+| `TRADING_BOT_URL`                                             | Backend → trading-bot inter-service URL       |
 
 ## Build & test
 
-```sh
-docker-compose up                    # full stack (IB Gateway + db + all services)
-cd trading-app && cargo check --lib  # type-check the library
-```
-
 Three test binaries in `trading-app/`:
 
-| Binary | Tests | Needs |
-|---|---|---|
-| `unit_tests` | 275 passing, 3 ignored (bugs) | Nothing (offline) |
-| `integration_tests` | 18 per-table CRUD + advanced DB ops | PostgreSQL |
-| `smoke_tests` | 16 live tests | IB Gateway + PostgreSQL |
+| Binary              | Tests                                             | Needs                   |
+| ------------------- | ------------------------------------------------- | ----------------------- |
+| `unit_tests`        | 278 passing                                       | Nothing (offline)       |
+| `integration_tests` | 168 passing (18 per-table CRUD + advanced DB ops) | PostgreSQL              |
+| `smoke_tests`       | 91 passing (16 live tests)| IB Gateway + PostgreSQL |
 
 ```sh
-SQLX_OFFLINE=true cargo test --test unit_tests          # offline, bulk of coverage
-DATABASE_URL=… cargo test --test integration_tests       # needs Postgres
-cargo test --test smoke_tests -- --ignored              # needs live IB Gateway
+docker-compose up test-trading-bot # Runs all tests from unit -> integration -> smoke tests
 ```
 
 ## Known rough edges & debt
