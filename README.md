@@ -43,32 +43,6 @@ flowchart LR
 The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature**: every IBKR call blocks. This forces a split-world architecture — blocking IBKR I/O on raw `std::thread`s, async DB/HTTP on a tokio multi-threaded runtime, bridged by captured `tokio::runtime::Handle`s:
 
 ```mermaid
-flowchart LR
-    SCR["scraper<br/>Rust"] -->|"scraped articles"| LLM["llm_service<br/>Python :8001"]
-    LLM -->|"Pydantic proposals"| BE["backend<br/>Rust :3000"]
-    BE -->|"REST API"| TB["trading-bot<br/>Rust :8000"]
-    TB -->|"sync ibapi"| TWS["tws<br/>IB Gateway :4002"]
-
-    DB[("TimescaleDB :5432")]
-    BE -.-> DB
-    TB -.-> DB
-
-    HC["hotpath-console"] -.-> TB
-
-    style SCR fill:#dea584,stroke:#333,color:#333
-    style BE fill:#dea584,stroke:#333,color:#333
-    style TB fill:#dea584,stroke:#333,color:#333
-    style LLM fill:#3776ab,stroke:#333,color:#fff
-    style TWS fill:#f0f0f0,stroke:#666,color:#333
-    style DB fill:#f0f0f0,stroke:#666,color:#333
-    style HC fill:#f0f0f0,stroke:#666,color:#333
-```
-
-## Architecture at a glance
-
-The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature**: every IBKR call blocks. This forces a split-world architecture — blocking IBKR I/O on raw `std::thread`s, async DB/HTTP on a tokio multi-threaded runtime, bridged by captured `tokio::runtime::Handle`s:
-
-```mermaid
 flowchart TB
     subgraph tokio["tokio multi-threaded runtime (main.rs)"]
         SQLX["sqlx DB queries"]
