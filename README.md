@@ -15,46 +15,89 @@ A personal live-trading system written in Rust and Python against Interactive Br
 | [`hotpath-console/`](hotpath-console/)  | —      | —    | Debug console sharing network with `trading-bot`                                                  |
 | `IB/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
 
+```mermaid
+flowchart LR
+    SCR["scraper<br/>Rust"] -->|"scraped articles"| LLM["llm_service<br/>Python :8001"]
+    LLM -->|"Pydantic proposals"| BE["backend<br/>Rust :3000"]
+    BE -->|"REST API"| TB["trading-bot<br/>Rust :8000"]
+    TB -->|"sync ibapi"| TWS["tws<br/>IB Gateway :4002"]
+
+    DB[("TimescaleDB :5432")]
+    BE -.-> DB
+    TB -.-> DB
+
+    HC["hotpath-console"] -.-> TB
+
+    style SCR fill:#dea584,stroke:#333,color:#333
+    style BE fill:#dea584,stroke:#333,color:#333
+    style TB fill:#dea584,stroke:#333,color:#333
+    style LLM fill:#3776ab,stroke:#333,color:#fff
+    style TWS fill:#f0f0f0,stroke:#666,color:#333
+    style DB fill:#f0f0f0,stroke:#666,color:#333
+    style HC fill:#f0f0f0,stroke:#666,color:#333
 ```
-scraper ──→ llm_service ──→ backend ──→ trading-bot ──→ tws (IB Gateway)
-                                  │           │
-                                  └──── db ────┘    (TimescaleDB)
+
+
+## Architecture at a glance
+
+The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature**: every IBKR call blocks. This forces a split-world architecture — blocking IBKR I/O on raw `std::thread`s, async DB/HTTP on a tokio multi-threaded runtime, bridged by captured `tokio::runtime::Handle`s:
+
+```mermaid
+flowchart LR
+    SCR["scraper<br/>Rust"] -->|"scraped articles"| LLM["llm_service<br/>Python :8001"]
+    LLM -->|"Pydantic proposals"| BE["backend<br/>Rust :3000"]
+    BE -->|"REST API"| TB["trading-bot<br/>Rust :8000"]
+    TB -->|"sync ibapi"| TWS["tws<br/>IB Gateway :4002"]
+
+    DB[("TimescaleDB :5432")]
+    BE -.-> DB
+    TB -.-> DB
+
+    HC["hotpath-console"] -.-> TB
+
+    style SCR fill:#dea584,stroke:#333,color:#333
+    style BE fill:#dea584,stroke:#333,color:#333
+    style TB fill:#dea584,stroke:#333,color:#333
+    style LLM fill:#3776ab,stroke:#333,color:#fff
+    style TWS fill:#f0f0f0,stroke:#666,color:#333
+    style DB fill:#f0f0f0,stroke:#666,color:#333
+    style HC fill:#f0f0f0,stroke:#666,color:#333
 ```
 
 ## Architecture at a glance
 
 The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature**: every IBKR call blocks. This forces a split-world architecture — blocking IBKR I/O on raw `std::thread`s, async DB/HTTP on a tokio multi-threaded runtime, bridged by captured `tokio::runtime::Handle`s:
 
-```
-                ┌──────────────────────────────────────────────┐
-                │   tokio multi-threaded runtime (main.rs)     │
-                │   • sqlx DB queries                          │
-                │   • yfinance fallback                        │
-                │   • run_program select! loop                 │
-                │   • order-update async receiver              │
-                │   • axum HTTP (own separate runtime)         │
-                └──────────────────────────────────────────────┘
-                        ▲  Handle.spawn / Handle.block_on
-                        │  (the bridge: OS threads dispatch async
-                        │   work onto runtime workers, then park)
-   ┌────────────────────┴────────────────────────────────────────┐
-   │  Raw std::threads — blocking ibapi lives here               │
-   │                                                             │
-   │   producer thread (1/contract) ── try_push ──┐              │
-   │                                              ▼              │
-   │                                  ┌────────────────────┐     │
-   │                                  │  SpmcRingBuffer    │     │
-   │                                  └────────────────────┘     │
-   │                                    │ independent            │
-   │                          ┌─────────┴─────────┐              │
-   │                          ▼                   ▼              │
-   │                  DB consumer         strategy thread        │
-   │                  (persists bars)     (hot spin → on_bar_    │
-   │                                       update → block_on)    │
-   │                                                             │
-   │   order_update_stream thread ── mpsc ──► async receiver     │
-   │   ephemeral: sync_timeout, place_order, cancel_orders       │
-   └─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph tokio["tokio multi-threaded runtime (main.rs)"]
+        SQLX["sqlx DB queries"]
+        YFIN["yfinance fallback"]
+        SELECT["run_program select! loop"]
+        OR["order-update async receiver"]
+        AXUM["axum HTTP :8000"]
+    end
+
+    subgraph threads["raw std::threads — blocking ibapi"]
+        PROD["producer thread (1/contract)"]
+        RING[("SpmcRingBuffer<br/>Bar, 128, 10")]
+        DBC["DB consumer — persists bars"]
+        STRAT["strategy thread<br/>hot spin → on_bar_update"]
+        ORDUP["order_update_stream<br/>→ mpsc → async receiver"]
+        EPHEM["ephemeral: sync_timeout,<br/>place_order, cancel_orders"]
+
+        PROD -->|"try_push (50×, else drop)"| RING
+        RING --> DBC
+        RING --> STRAT
+    end
+
+    STRAT -.->|"Handle.block_on"| SQLX
+    DBC -.->|"Handle.spawn"| SQLX
+    ORDUP -.->|"blocking_send → mpsc"| OR
+    EPHEM -.->|"Handle.spawn"| SQLX
+
+    style tokio fill:#e8f4f8,stroke:#3776ab,stroke-width:2px
+    style threads fill:#fff4e8,stroke:#dea584,stroke-width:2px
 ```
 
 Roughly seven thread categories coexist. Each is named (`qqq_stock_prod`, `noise_strat`, `order_update_stream`, …) so `top -H` / `perf` output maps directly to logical roles. The sync architecture keeps the strategy layer pure — adding a strategy is one line:
