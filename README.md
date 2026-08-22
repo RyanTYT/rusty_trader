@@ -17,9 +17,7 @@ A personal live-trading system written in Rust and Python against Interactive Br
 
 ```mermaid
 flowchart LR
-    SCR["scraper<br/>Rust"] -->|"scraped articles"| LLM["llm_service<br/>Python :8001"]
-    LLM -->|"Pydantic proposals"| BE["backend<br/>Rust :3000"]
-    BE -->|"REST API"| TB["trading-bot<br/>Rust :8000"]
+    HC["hotpathconsole"] -.-> TB
 ```
 
 
