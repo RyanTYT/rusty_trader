@@ -20,21 +20,6 @@ flowchart LR
     SCR["scraper<br/>Rust"] -->|"scraped articles"| LLM["llm_service<br/>Python :8001"]
     LLM -->|"Pydantic proposals"| BE["backend<br/>Rust :3000"]
     BE -->|"REST API"| TB["trading-bot<br/>Rust :8000"]
-    TB -->|"sync ibapi"| TWS["tws<br/>IB Gateway :4002"]
-
-    DB[("TimescaleDB :5432")]
-    BE -.-> DB
-    TB -.-> DB
-
-    HC["hotpath-console"] -.-> TB
-
-    style SCR fill:#dea584,stroke:#333,color:#333
-    style BE fill:#dea584,stroke:#333,color:#333
-    style TB fill:#dea584,stroke:#333,color:#333
-    style LLM fill:#3776ab,stroke:#333,color:#fff
-    style TWS fill:#f0f0f0,stroke:#666,color:#333
-    style DB fill:#f0f0f0,stroke:#666,color:#333
-    style HC fill:#f0f0f0,stroke:#666,color:#333
 ```
 
 
