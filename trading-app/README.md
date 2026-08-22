@@ -6,6 +6,60 @@ The Rust trading bot at the core of [rusty_trader](../README.md). It connects to
 
 ---
 
+## Overview
+
+The trading-bot's threads and their interactions with the database:
+
+```mermaid
+flowchart TB
+    subgraph threads["trading-bot threads"]
+        IBKR["IBKR API<br/>(sync ibapi)"]
+        PROD("⚙ producer thread<br/>(1/contract)")
+        RING[("SPMC ring<br/>Bar, 128, 10")]
+        DBC("⚙ DB consumer")
+        STRAT_NOISE("⚙ Noise strategy<br/>on_bar_update")
+        STRAT_MANUAL("⚙ Manual strategy<br/>on_bar_update")
+        OE["order engine"]
+        ORDUP("⚙ order_update_stream")
+        REDB[("redb<br/>OrderStore")]
+
+        IBKR -->|"5s bars"| PROD
+        PROD -->|"try_push"| RING
+        RING --> DBC
+        RING --> STRAT_NOISE
+        RING --> STRAT_MANUAL
+        STRAT_NOISE -->|"BarUpdateOutcome"| OE
+        STRAT_MANUAL -->|"BarUpdateOutcome"| OE
+        OE -->|"submit_order"| IBKR
+        ORDUP -->|"4 handlers"| OE
+        OE -.-> REDB
+    end
+
+    subgraph db["TimescaleDB :5432"]
+        HD["market_data.historical_data"]
+        TP["trading.target_positions"]
+        CP["trading.current_positions"]
+        OO["trading.open_orders"]
+        TX["trading.transactions"]
+        ST["trading.strategy"]
+    end
+
+    DBC -->|"writes bars"| HD
+    STRAT_NOISE -->|"writes targets"| TP
+    STRAT_MANUAL -->|"writes targets"| TP
+    OE -->|"writes perm_id=-1<br/>then replaces"| OO
+    OE -->|"writes fills"| TX
+    OE -->|"updates positions"| CP
+
+    style threads stroke:#dea584,stroke-width:2px
+    style db stroke:#666,stroke-width:2px
+    style REDB stroke:#666,stroke-width:2px
+```
+
+All DB access happens via `Handle.block_on` / `Handle.spawn` — the threads are raw `std::thread`s, but the DB queries are dispatched onto the tokio runtime. The strategy threads and order engine also **read** from `target_positions`, `current_positions`, and `open_orders` during reconciliation (reads omitted from the diagram for clarity). See [Threading model](#threading-model--sync-ibapi) for the bridge details.
+
+---
+
 ## Threading model & sync ibapi
 
 The defining design decision: **`ibapi` is compiled with its `sync` feature** — every IBKR call blocks. This forces a split-world architecture: blocking IBKR I/O runs on raw `std::thread`s, async DB/HTTP work runs on a tokio multi-threaded runtime, and the two are bridged by captured `tokio::runtime::Handle`s.
@@ -55,7 +109,36 @@ let (avg_move_since_open_joined, most_recent_open_joined,
 - **`Handle::block_on` panics** if the calling thread is already inside a tokio context. This single rule is why the strategy must run on a non-runtime OS thread, which is why `hook_strategy` spawns a `std::thread`, which is why `warm_up_data` (the one async strategy method) must be wrapped in `spawn_blocking`. The whole topology is downstream of this one precondition.
 - **Doesn't scale to high fanout.** Thread-per-operation would explode with thousands of concurrent streams. Fine here; not fine for a high-fanout service.
 
-> **Diagram TODO:** A two-panel diagram — top panel shows the tokio runtime (sqlx, yfinance, axum, select! loop), bottom panel shows the std::threads (producer, ring buffer, DB consumer, strategy thread, order-update stream). The `Handle.block_on` / `Handle.spawn` bridge connects the two panels with a dashed line.
+```mermaid
+flowchart TB
+    subgraph tokio["tokio multi-threaded runtime"]
+        SQLX["sqlx DB queries"]
+        YFIN["yfinance fallback"]
+        SELECT["run_program select! loop"]
+        OR["order-update async receiver"]
+        AXUM["axum HTTP :8000"]
+    end
+
+    subgraph threads["raw std::threads — blocking ibapi"]
+        PROD["⚙ producer thread (1/contract)"]
+        RING[("SPMC ring<br/>Bar, 128, 10")]
+        DBC["⚙ DB consumer"]
+        STRAT["⚙ strategy thread<br/>hot spin → on_bar_update"]
+        ORDUP["⚙ order_update_stream<br/>→ mpsc → async receiver"]
+        EPHEM["ephemeral: sync_timeout,<br/>place_order, cancel_orders"]
+        PROD -->|"try_push"| RING
+        RING --> DBC
+        RING --> STRAT
+    end
+
+    STRAT -.->|"Handle.block_on"| SQLX
+    DBC -.->|"Handle.spawn"| SQLX
+    ORDUP -.->|"blocking_send → mpsc"| OR
+    EPHEM -.->|"Handle.spawn"| SQLX
+
+    style tokio stroke:#3776ab,stroke-width:2px
+    style threads stroke:#dea584,stroke-width:2px
+```
 
 ---
 
@@ -96,7 +179,24 @@ Bulk insert uses a separate high-throughput tier: temp table → binary `COPY IN
 
 For the full table schema (columns, types, triggers), see [`migrations/README.md`](migrations/README.md).
 
-> **Diagram TODO:** A three-layer diagram — top: model struct with derives → middle: `CRUD<FK,PK,UK>` blanket impl → bottom: interface enum dispatch by `AssetType`. Show how the 4 derives generate 3 key-set structs that flow into the generic CRUD.
+```mermaid
+flowchart TB
+    MODEL["Model struct<br/>OpenStockOrders + 4 derives"]
+    MODEL --> FK["FullKeys (insert shape)"]
+    MODEL --> PK["PrimaryKeys (WHERE clause)"]
+    MODEL --> UK["UpdateKeys (nullable SET)"]
+    MODEL --> INS["DeriveInsertable<br/>bind_* + opt_column_names()"]
+    FK --> CRUD["CRUD&lt;FK, PK, UK&gt; — 7 operations"]
+    PK --> CRUD
+    UK --> CRUD
+    INS -.-> CRUD
+    CRUD --> WRAPPER["per-table CRUD leaf<br/>+ implement_all_crud_methods!"]
+    WRAPPER --> ENUM["Interface enum<br/>from(asset_type, pool)<br/>7 variants → 2 schemas"]
+
+    style MODEL stroke:#dea584,stroke-width:2px
+    style CRUD stroke:#dea584,stroke-width:2px
+    style ENUM stroke:#dea584,stroke-width:2px
+```
 
 ---
 
@@ -140,7 +240,21 @@ Other execution subsystems:
 - **Order-update stream.** A three-thread fan-out — sync subscriber thread (`next_timeout(5s)`) → per-event OS thread → 1024-cap tokio mpsc → async receiver dispatching to four handlers (`open_order`, `order_status`, `execution`, `commission_report`). A `static AtomicUsize` + `compare_exchange` enforces singleton.
 - **Startup reconciliation.** `SyncerEngine` runs three syncs: executions (reuses the live handler over a 10s-bounded subscription), open orders, and positions (per-currency FX via `account_updates` `CashBalance`).
 
-> **Diagram TODO:** A flow diagram showing the order lifecycle: `place_order` → optimistic DB row (`perm_id=-1`) → thread spawn → IBKR submit → `OpenOrder::submitted` event → delete `-1` row + insert real `perm_id`. Show the redb `OrderStore` as a parallel store for FX-blocked orders.
+```mermaid
+flowchart LR
+    PLACE["place_order<br/>(static fn)"] --> SPAWN["std::thread::spawn"]
+    SPAWN --> SENTINEL["DB row<br/>perm_id = -1"]
+    SPAWN --> SUBMIT["IBKR submit_order"]
+    SUBMIT --> EVENT["OpenOrder::submitted<br/>(order-update stream)"]
+    EVENT --> DELETE["delete -1 row"]
+    DELETE --> INSERT["insert real perm_id"]
+
+    REDB["redb OrderStore<br/>(FX-blocked orders)"]
+    REDB -.->|"FX settles"| INSERT
+
+    style PLACE stroke:#dea584,stroke-width:2px
+    style REDB stroke:#666,stroke-width:2px
+```
 
 ---
 
@@ -191,7 +305,18 @@ Other strategy infrastructure:
 - **Rolling statistics.** Nine pure rolling-stat structs (`RollingMax/Min/Sum/Std/ZScore/RankPct/EwmMean/Roc/Mean`), `Decimal`-internal for lossless finance math with an f64 façade. `EwmMean` implements pandas' `adjust=False` EWMA with O(1) `replace_last`. `RollingRankPct` uses a `BTreeMap<OrderedFloat, usize>` multiset for sub-linear percentile queries.
 - **`proportional_integer_reduce`** solves the indivisible-shares problem: real-valued proportional scaling always under-spends (sum of floors ≤ floor of the sum); this function greedily reduces the number of shares to just below the limit.
 
-> **Diagram TODO:** A flow diagram showing `BarUpdateOutcome` dispatch: `on_bar_update` → `BarUpdateOutcome` → {`EmitOrders` → submit immediately | `PendingDbQuery` → load target/current/open → compute delta → cancel-all/cancel-replace/place-delta | `NoAction` → return}. Show the FX attachment computation branching off the `PendingDbQuery` path.
+```mermaid
+flowchart TB
+    BAR["on_bar_update<br/>(sync)"] --> OUTCOME{{"BarUpdateOutcome"}}
+    OUTCOME -->|"EmitOrders"| SUBMIT["submit immediately<br/>(no DB read)"]
+    OUTCOME -->|"PendingDbQuery"| LOAD["load target vs current vs open<br/>(Postgres + redb)"]
+    OUTCOME -->|"NoAction"| SKIP["return"]
+    LOAD --> FX["compute FX attachments<br/>(pure, no I/O)"]
+    FX --> RECONCILE["cancel-all / cancel-replace / place-delta"]
+
+    style BAR stroke:#dea584,stroke-width:2px
+    style OUTCOME stroke:#dea584,stroke-width:2px
+```
 
 ---
 
@@ -322,7 +447,23 @@ pub mod test_internals {
 
 A self-dev-dependency (`trading-app = { path = ".", features = ["test-utils"] }`) makes `tests/` binaries auto-build with the feature. Zero prod-code impact.
 
-> **Diagram TODO:** A state machine diagram showing `AppReturnState` variants as nodes, with the non-terminal variants all looping back to the top (`with_gateway_retry` → `init_app`), and only `Sigint`/`Sigterm` leading to a terminal exit. Show the `select!` branches feeding into the state variants.
+```mermaid
+stateDiagram-v2
+    [*] --> Running
+    Running --> BrokerDown: maintenance window
+    Running --> InitAppErr: init failure
+    Running --> UnstableConnMktHours: connection alert
+    Running --> UnstableConnOutsideHours: connection alert
+    Running --> UnstableConnBrokenPipe: broken pipe
+    Running --> UnstableConnAPAC: APAC reset
+    BrokerDown --> Running: fresh with_gateway_retry
+    InitAppErr --> Running: fresh with_gateway_retry
+    UnstableConnMktHours --> Running: fresh with_gateway_retry
+    UnstableConnOutsideHours --> Running: fresh with_gateway_retry
+    UnstableConnBrokenPipe --> Running: fresh with_gateway_retry
+    UnstableConnAPAC --> Running: fresh with_gateway_retry
+    Running --> [*]: SIGINT / SIGTERM
+```
 
 ---
 
@@ -369,7 +510,7 @@ Add `#[cfg(any(test, feature = "test-utils"))]` to keep source items `pub(crate)
 
 ## Thoughts
 
-If you've been following since the beginning, you might remember a trading-app-old service that was the legacy Python Build. Firstly, that was really badly built as I didn't fully understand async runtimes back then, nor did I understand locks, and many other things I learnt along the way. Python is nice for quick and easy, but gets really bad and annoying to follow after significant code buildup (i.e. it offers ease in trade for significant technical debt). I initially pursued the Rust version only because I wanted the static typing, and wanted to learn Rust, but it's taught me more than a few things along the way, and this current architecture would certainly be significantly more laborious to implement in Python now - using a multi-threaded async runtime alongside kernel threads (which would have flown right over my head back then). 
+If you've been following since the beginning, you might remember a trading-app-old service that was the legacy Python Build. Firstly, that was really badly built as I didn't fully understand async runtimes back then, nor did I understand locks, and many other things I learnt along the way. Python is nice for quick and easy, but gets really bad and annoying to follow after significant code buildup (i.e. it offers ease in trade for significant technical debt). I initially pursued the Rust version only because I wanted the static typing, and wanted to learn Rust, but it's taught me more than a few things along the way, and this current architecture would certainly be significantly more laborious to implement in Python now - using a multi-threaded async runtime alongside kernel threads (which would have flown right over my head back then).
 
 Anyway, locks are lame and annoying but is something you reach for when you start learning Rust from scratch. After a while though, you realise most of the time locks like Mutexes just introduce unnecessary complexity as well as overhead - most of the time, locks aren't fully necessary; use a lock-free data structure or create one yourself instead (though arguably atomic operations use hardware locks so you never really do stray too far away from locks).
 
