@@ -37,7 +37,7 @@ The defining design decision in `trading-app` is that **`ibapi` is compiled with
                         ▲  Handle.spawn / Handle.block_on
                         │  (the bridge: OS threads dispatch async
                         │   work onto runtime workers, then park)
-   ┌────────────────────┴───────────────────────────────────────┐
+   ┌────────────────────┴────────────────────────────────────────┐
    │  Raw std::threads — blocking ibapi lives here               │
    │                                                             │
    │   producer thread (1/contract) ── try_push ──┐              │
@@ -81,7 +81,7 @@ For the full reasoning (why sync, the `Handle::block_on` bridge, costs), see [`t
  └─────────────────┘                   ▼
                        ┌──────────────────────────────┐
                        │  SpmcRingBuffer<Bar, 128, 10>│
-                       │  lock-free, cache-aligned     │
+                       │  lock-free, cache-aligned    │
                        └──────────────────────────────┘
                           │  independent consumer heads
               ┌───────────┴────────────┐
