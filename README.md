@@ -52,7 +52,7 @@ flowchart TB
         AXUM["axum HTTP :8000"]
     end
 
-    subgraph threads["raw std::threads — blocking ibapi"]
+    subgraph threads["raw std::threads - blocking ibapi"]
         PROD["producer thread (1/contract)"]
         RING[("SpmcRingBuffer<br/>Bar, 128, 10")]
         DBC["DB consumer — persists bars"]
@@ -153,7 +153,7 @@ docker-compose up test-trading-bot # Runs all tests from unit -> integration -> 
 ## Known rough edges & debt
 
 - **Orphaned/dead files** — `threshold_rebalancing.rs`, `frac_mom_weekly_pos.rs`, `available_funds.rs`, `strategy_scheduler.rs` (non-compiling or commented out).
-- **Forex `read_last_vwap` SQL** references non-existent columns — copy-paste from stock branch.
+- **Fo,ex `read_last_vwap` SQL** references non-existent columns — copy-paste from stock branch.
 - **`IbkrState::async_drop`** consolidator spin-loop is a busy-wait with no sleep — hangs teardown if a clone leaks.
 - **`sync_timeout` leaks threads on timeout** — Rust threads can't be cancelled.
 - **Hardcoded deployment specifics** — paper account id, IBC install path, SGD base currency in source, not env.
