@@ -23,38 +23,35 @@ A direct chat prompt for investment research fails in four concrete ways:
  
 ## System Overview
  
-```
-┌────────────────────────────────────────────────────────────┐
-│                   Knowledge Base Layer                     │
-│                                                            │
-│  update_macro.py ─────────────────────────────────────┐    │
-│  update_industries.py                                 │    │
-│    │                                                  │    │
-│    ├── web_search.py  (Anthropic/Gemini/OpenRouter)   │    │
-│    └── kb_manager.py  (STALE / COMPRESS / KEEP)       │    │
-│                                                       ▼    │
-│                                          Persistent KB     │
-│                                          (macro + sectors) │
-└──────────────────────────────┬─────────────────────────────┘
-                               │ KB read
-                               ▼
-┌────────────────────────────────────────────────────────────┐
-│               Portfolio Proposal Pipeline                  │
-│                                                            │
-│  1. idea_generator.py    — macro themes → investment ideas │
-│  2. ticker_selector.py   — ideas → specific tickers        │
-│  3. deep_dive.py         — async recursive research        │
-│                             PromptBudget(500)              │
-│                             TickerRelationMap              │
-│  4. positions_proposer.py — portfolio assembly             │
-│       stages.py · enrichment.py · friction.py              │
-│       currency.py · backend.py · formatters.py             │
-│  5. positions_counter_proposer.py — adversarial review     │
-└──────────────────────────────┬─────────────────────────────┘
-                               │ CounterProposalSession
-                               ▼
-                      rusty_trader OrderEngine
-                      (IBKR execution via TWS)
+```mermaid
+flowchart TB
+    subgraph kb_layer["Knowledge Base Layer"]
+        UM["update_macro.py"]
+        UI["update_industries.py"]
+        WS["web_search.py<br/>(Anthropic/Gemini/OpenRouter)"]
+        KBM["kb_manager.py<br/>(STALE / COMPRESS / KEEP)"]
+        KB[("Persistent KB<br/>(macro + sectors)")]
+        UM --> WS
+        UI --> WS
+        WS --> KBM
+        KBM --> KB
+    end
+
+    subgraph pipeline["Portfolio Proposal Pipeline"]
+        S1["1. idea_generator.py<br/>macro themes → ideas"]
+        S2["2. ticker_selector.py<br/>ideas → tickers"]
+        S3["3. deep_dive.py<br/>async recursive research<br/>PromptBudget(500)"]
+        S4["4. positions_proposer.py<br/>portfolio assembly<br/>stages · enrichment · friction<br/>currency · backend · formatters"]
+        S5["5. counter_proposer.py<br/>adversarial review"]
+        S1 --> S2 --> S3 --> S4 --> S5
+    end
+
+    KB -.->|"KB read"| S1
+    S5 -->|"CounterProposalSession"| OE["rusty_trader OrderEngine<br/>(IBKR execution via TWS)"]
+
+    style kb_layer stroke:#3776ab,stroke-width:2px
+    style pipeline stroke:#3776ab,stroke-width:2px
+    style OE stroke:#dea584,stroke-width:2px
 ```
  
 ---
