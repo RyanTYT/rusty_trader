@@ -2,7 +2,7 @@
 
 A personal live-trading system written in Rust and Python against Interactive Brokers' (IBKR) API. It scrapes financial news, runs an LLM research pipeline that produces portfolio proposals, feeds them to a Rust trading bot that ingests real-time market data, executes strategies over consolidated bars, reconciles state against the broker, and self-heals through IBKR's nightly restarts and connection drops.
 
-> **Scope honesty.** This runs against a paper-trading account at personal scale. It is not production financial infrastructure and makes no claims about fitness for live capital. Treat it as a serious engineering artifact and a case study, not a trading product.
+> **Scope:** This has so far been run against a paper-trading account at personal scale. It is not production financial infrastructure and makes no claims about fitness for live capital.
 
 ## Services
 
