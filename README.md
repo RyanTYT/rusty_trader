@@ -47,7 +47,7 @@ flowchart TB
     subgraph tokio["tokio multi-threaded runtime (main.rs)"]
         SQLX["sqlx DB queries"]
         YFIN["yfinance fallback"]
-        SELECT["run_program select! loop"]
+        SELECT["run_program select loop"]
         OR["order-update async receiver"]
         AXUM["axum HTTP :8000"]
     end
@@ -55,19 +55,19 @@ flowchart TB
     subgraph threads["raw std::threads - blocking ibapi"]
         PROD["producer thread (1/contract)"]
         RING[("SpmcRingBuffer<br/>Bar, 128, 10")]
-        DBC["DB consumer — persists bars"]
-        STRAT["strategy thread<br/>hot spin → on_bar_update"]
-        ORDUP["order_update_stream<br/>→ mpsc → async receiver"]
+        DBC["DB consumer - persists bars"]
+        STRAT["strategy thread<br/>hot spin -&gt; on_bar_update"]
+        ORDUP["order_update_stream<br/>-&gt; mpsc -&gt; async receiver"]
         EPHEM["ephemeral: sync_timeout,<br/>place_order, cancel_orders"]
 
-        PROD -->|"try_push (50×, else drop)"| RING
+        PROD -->|"try_push (50x, else drop)"| RING
         RING --> DBC
         RING --> STRAT
     end
 
     STRAT -.->|"Handle.block_on"| SQLX
     DBC -.->|"Handle.spawn"| SQLX
-    ORDUP -.->|"blocking_send → mpsc"| OR
+    ORDUP -.->|"blocking_send -&gt; mpsc"| OR
     EPHEM -.->|"Handle.spawn"| SQLX
 
     style tokio fill:#e8f4f8,stroke:#3776ab,stroke-width:2px
