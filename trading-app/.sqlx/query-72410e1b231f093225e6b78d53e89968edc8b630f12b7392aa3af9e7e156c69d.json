@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT COUNT(*) > $1\n                    FROM market_data.daily_ohlcv\n                    WHERE stock = $2\n                        AND primary_exchange = $3\n                        AND currency = $4\n                        AND day > $5;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "72410e1b231f093225e6b78d53e89968edc8b630f12b7392aa3af9e7e156c69d"
+}
