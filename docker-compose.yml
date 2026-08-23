@@ -185,6 +185,45 @@ services:
       test-db:
         condition: service_healthy
 
+  # ── Backtester ───────────────────────────────────────────────────────────
+  # One-shot service: builds the `backtest` binary (--features backtest),
+  # runs migrations + data loader (IBKR via with_gateway_retry, Alpaca
+  # fallback) + replayer (real on_bar_update + handle_bar_update_outcome) +
+  # results. Writes backtest_results.json to ./backtest-results/ on the host.
+  backtester:
+    restart: "no"
+    build:
+      context: ./trading-app
+      dockerfile: Dockerfile.backtest
+    platform: linux/amd64
+    volumes:
+      - ./backtest-results:/data
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - DATABASE_HOST=test-db
+      - DB_USER=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
+      - DISPLAY=:99
+      - BACKTEST_START=${BACKTEST_START}
+      - BACKTEST_END=${BACKTEST_END}
+      - BACKTEST_STOCK=${BACKTEST_STOCK:-QQQ}
+      - BACKTEST_PRIMARY_EXCHANGE=${BACKTEST_PRIMARY_EXCHANGE:-NASDAQ}
+      - BACKTEST_CURRENCY=${BACKTEST_CURRENCY:-USD}
+      - BACKTEST_CAPITAL=${BACKTEST_CAPITAL:-100000}
+      - BACKTEST_SLIPPAGE_BPS=${BACKTEST_SLIPPAGE_BPS:-0}
+      - BACKTEST_COMM_PER_SHARE=${BACKTEST_COMM_PER_SHARE:-0.005}
+      - BACKTEST_COMM_MIN=${BACKTEST_COMM_MIN:-1.0}
+      - BACKTEST_OUTPUT=/data/backtest_results.json
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+    depends_on:
+      test-db:
+        condition: service_healthy
+
   # ── Rust Playwright scraper ───────────────────────────────────────────────
   scraper:
     build:
@@ -255,9 +294,9 @@ volumes:
     driver: local
 
   # For storing backed up orders for FX
-  orders-data: 
+  orders-data:
     driver: local
-  test-orders-data: 
+  test-orders-data:
     driver: local
   knowledge_base:
     driver: local
