@@ -36,9 +36,9 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use trading_app::arc_drop_async;
 use trading_app::ibc::with_gateway_retry;
 use trading_app::init_app::{ApplicationState, init_app};
-use trading_app::arc_drop_async;
 use trading_app::server::server::init_server;
 
 use crate::common::init_tracing;
@@ -54,7 +54,7 @@ async fn test_server_init_boots() {
     assert!(
         with_gateway_retry("ibc_server_boot.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -70,7 +70,9 @@ async fn test_server_init_boots() {
             .expect("init_app failed");
 
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             // Verify the server is listening on the ephemeral port
@@ -118,7 +120,7 @@ async fn test_server_check_health() {
     assert!(
         with_gateway_retry("ibc_server_health.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -131,7 +133,9 @@ async fn test_server_check_health() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -183,7 +187,7 @@ async fn test_server_get_current_price() {
     assert!(
         with_gateway_retry("ibc_server_price.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -196,7 +200,9 @@ async fn test_server_get_current_price() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -247,7 +253,7 @@ async fn test_server_get_exchange_rate() {
     assert!(
         with_gateway_retry("ibc_server_fx.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -260,7 +266,9 @@ async fn test_server_get_exchange_rate() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -308,7 +316,7 @@ async fn test_server_get_strategy_value() {
     assert!(
         with_gateway_retry("ibc_server_sgd.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -321,7 +329,9 @@ async fn test_server_get_strategy_value() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -369,7 +379,7 @@ async fn test_server_get_possible_stock_contracts() {
     assert!(
         with_gateway_retry("ibc_server_contracts.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -382,7 +392,9 @@ async fn test_server_get_possible_stock_contracts() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -432,7 +444,7 @@ async fn test_server_invalid_query_params() {
     assert!(
         with_gateway_retry("ibc_server_invalid.log", 2, |_| async {
             let (app_state_sender, app_state_rcx) =
-                tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+                tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
             let server = init_server("0.0.0.0:0", app_state_rcx).expect("failed to bind server");
             let base_url = format!("http://{}", server.local_addr());
 
@@ -445,7 +457,9 @@ async fn test_server_invalid_query_params() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Arc::downgrade(&app_state)).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
