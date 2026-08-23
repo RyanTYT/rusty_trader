@@ -166,6 +166,15 @@ impl Consolidator {
         pool: &PgPool,
         strategy: &str,
     ) -> Result<f64, String> {
+        // In-memory mode: read positions from the thread-local InMemoryState
+        // (set by InMemoryReplay) instead of the DB. Avoids the DB round-trip.
+        if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+            return Self::_get_strategy_sgd_value_from_positions(
+                price_supplier,
+                state.current_positions_snapshot(),
+            );
+        }
+
         let current_stock_positions_crud =
             CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
 
@@ -245,6 +254,88 @@ impl Consolidator {
             }
         }
 
+        Ok(sgd_value)
+    }
+
+    /// In-memory helper: value a list of in-memory positions (from
+    /// `InMemoryState`) into SGD. Mirrors the DB path's valuation (CASH:SGD =
+    /// rate 1.0; non-SGD positions are FX-converted via the price supplier).
+    /// Only handles Stock + CASH:* (the Noise strategy's scope).
+    #[cfg(feature = "backtest")]
+    pub(crate) fn _get_strategy_sgd_value_from_positions(
+        price_supplier: &std::sync::Arc<
+            dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync,
+        >,
+        positions: Vec<(
+            crate::backtester::methods::in_memory::state::PositionKey,
+            crate::backtester::methods::in_memory::state::InMemoryPosition,
+        )>,
+    ) -> Result<f64, String> {
+        use crate::backtester::methods::in_memory::state::PositionKey;
+        use crate::helpers::contract::HashContract;
+        use ibapi::contracts::Contract;
+        use ibapi::prelude::SecurityType;
+        use std::collections::HashMap;
+
+        let call_price = |contract: Contract| -> Result<f64, String> {
+            price_supplier.get_current_price(contract, false, &[])
+        };
+        let mut sgd_value = 0.0;
+        let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
+
+        for (key, pos) in positions {
+            if pos.quantity.abs() < 1e-9 {
+                continue;
+            }
+            if key.stock == "CASH:SGD" {
+                sgd_value += pos.quantity * 1.0;
+                continue;
+            }
+            if key.stock.starts_with("CASH:") {
+                // Non-SGD cash: value via the FX pair (base=stock, quote=SGD).
+                let fx_contract = Contract {
+                    symbol: key.stock.trim_start_matches("CASH:").to_string().into(),
+                    security_type: SecurityType::ForexPair,
+                    exchange: "IDEALPRO".into(),
+                    currency: "SGD".into(),
+                    ..Default::default()
+                };
+                let rate = call_price(fx_contract.clone())?;
+                sgd_value += pos.quantity * rate;
+                continue;
+            }
+            // Stock position.
+            let contract = Contract {
+                symbol: key.stock.clone().into(),
+                security_type: SecurityType::Stock,
+                exchange: key.primary_exchange.clone().into(),
+                currency: key.currency.clone().into(),
+                ..Default::default()
+            };
+            let mkt_value = call_price(contract.clone())? * pos.quantity;
+            if key.currency == "SGD" {
+                sgd_value += mkt_value;
+            } else {
+                let fx_contract = Contract {
+                    symbol: key.currency.clone().into(),
+                    security_type: SecurityType::ForexPair,
+                    exchange: "IDEALPRO".into(),
+                    currency: "SGD".into(),
+                    ..Default::default()
+                };
+                let hash_contract = HashContract {
+                    contract: fx_contract.clone(),
+                };
+                let rate = if let Some(&r) = exchange_rates.get(&hash_contract) {
+                    r
+                } else {
+                    let r = call_price(fx_contract)?;
+                    exchange_rates.insert(hash_contract, r);
+                    r
+                };
+                sgd_value += rate * mkt_value;
+            }
+        }
         Ok(sgd_value)
     }
 }

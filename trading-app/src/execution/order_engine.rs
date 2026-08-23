@@ -161,7 +161,7 @@ impl OrderEngine {
     pub fn place_order(
         handle: tokio::runtime::Handle,
         pool: PgPool,
-        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        submitter: &dyn crate::backtester::execution::order_submitter::OrderSubmitter,
         order_ibkr: OrderIBKR,
     ) -> i32 {
         let order_id = submitter.next_order_id();
@@ -176,7 +176,7 @@ impl OrderEngine {
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
         #[cfg(feature = "backtest")]
-        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        submitter: &dyn crate::backtester::execution::order_submitter::OrderSubmitter,
 
         orders: impl IntoIterator<Item = OrderIBKR>,
     ) {
@@ -203,7 +203,7 @@ impl OrderEngine {
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
         #[cfg(feature = "backtest")]
-        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        submitter: &dyn crate::backtester::execution::order_submitter::OrderSubmitter,
         #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
         #[cfg(feature = "backtest")]
         price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
@@ -538,7 +538,7 @@ impl OrderEngine {
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
         #[cfg(feature = "backtest")]
-        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        submitter: &dyn crate::backtester::execution::order_submitter::OrderSubmitter,
 
         local_open_orders: Vec<LocalOpenOrder>,
         order_store: &OrderStore,
@@ -656,7 +656,7 @@ impl OrderEngine {
 
         #[cfg(not(feature = "backtest"))] weak_client: Weak<Client>,
         #[cfg(feature = "backtest")]
-        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        submitter: &dyn crate::backtester::execution::order_submitter::OrderSubmitter,
 
         mut orders: VecDeque<OrderIBKR>,
         order_store: &OrderStore,

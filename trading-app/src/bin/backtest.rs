@@ -39,5 +39,8 @@ async fn main() -> Result<(), String> {
         return Err(format!("migration error: {e}"));
     }
 
-    backtester::run_backtest(pool).await
+    // Build the backtest config from env vars (the interface layer accepts
+    // the key params: bar intervals, lookback period, capital, fees, model, mode).
+    let config = trading_app::backtester::BacktestConfig::from_env()?;
+    trading_app::backtester::run_backtest(pool, config).await
 }
