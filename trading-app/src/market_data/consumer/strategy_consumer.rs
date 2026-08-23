@@ -177,6 +177,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
         Self::sort_consumers(&mut consumers);
         let contract_scheduler = self.contract_scheduler.clone();
+        #[cfg(not(feature = "backtest"))]
         let thread_handle = std::thread::Builder::new()
             .name(format!("{}_strat", strategy.get_name()))
             .spawn(move || {
@@ -384,6 +385,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
             })
             .expect("Expected Strategy Thread to be able to be spawned");
 
+        #[cfg(not(feature = "backtest"))]
         self.thread_handles.push(thread_handle);
     }
 

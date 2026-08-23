@@ -26,6 +26,7 @@ pub mod database;
 pub mod execution;
 pub mod helpers;
 pub mod ibc;
+#[cfg(not(feature = "backtest"))]
 pub mod init_app;
 pub mod logger;
 pub mod market_data;

@@ -63,6 +63,7 @@ pub trait PriceSupplier {
         vwap: bool,
         generic_ticks: &[&str],
     ) -> Result<f64, String>;
+    #[cfg(not(feature = "backtest"))]
     async fn populate_historical_data(
         &self,
         contract: &Contract,
@@ -78,31 +79,39 @@ impl PriceSupplier for Consolidator {
         vwap: bool,
         generic_ticks: &[&str],
     ) -> Result<f64, String> {
-        if !vwap {
-            if let Some(price) = self.market_data_handler.try_get_price(contract.contract_id) {
-                return Ok(price);
+        #[cfg(not(feature = "backtest"))]
+        {
+            if !vwap {
+                if let Some(price) = self.market_data_handler.try_get_price(contract.contract_id) {
+                    return Ok(price);
+                }
             }
+
+            let entry = self
+                .memoisers
+                .get(&MemoisedConsolidatorFns::GetPrice)
+                .expect("all MemoisedConsolidatorFns variants must be registered");
+
+            let client = self.client.clone();
+            let ticks_owned: Vec<String> = generic_ticks.iter().map(|s| s.to_string()).collect();
+
+            // `contract` is already owned by this fn — no need to clone it,
+            // just move it straight into the tuple.
+            let result = entry.call_any(Box::new((client, contract, vwap, ticks_owned, false)))?;
+
+            result
+                .downcast::<f64>()
+                .map(|v| *v)
+                .map_err(|e| format!("AnyMemoized: return type mismatch for GetPrice: {e:?}"))
         }
 
-        let entry = self
-            .memoisers
-            .get(&MemoisedConsolidatorFns::GetPrice)
-            .expect("all MemoisedConsolidatorFns variants must be registered");
-
-        let client = self.client.clone();
-        let ticks_owned: Vec<String> = generic_ticks.iter().map(|s| s.to_string()).collect();
-
-        // `contract` is already owned by this fn — no need to clone it,
-        // just move it straight into the tuple.
-        let result = entry.call_any(Box::new((client, contract, vwap, ticks_owned, false)))?;
-
-        result
-            .downcast::<f64>()
-            .map(|v| *v)
-            .map_err(|e| format!("AnyMemoized: return type mismatch for GetPrice"))
+        #[cfg(feature = "backtest")]
+        self.price_supplier
+            .get_current_price(contract, vwap, generic_ticks)
     }
 
     // If is_forex is true, what_to_show is ignored - takes both bid and ask
+    #[cfg(not(feature = "backtest"))]
     async fn populate_historical_data(
         &self,
         contract: &Contract,
@@ -234,7 +243,7 @@ impl PriceSupplier for Consolidator {
 }
 
 /// Outcome of attempting to extract a price from a single tick.
-enum PriceExtraction {
+pub enum PriceExtraction {
     /// A usable price. Live and delayed ticks both arrive as `TickTypes::Price`
     /// — IBKR distinguishes them only via `tick_price.tick_type`
     /// (Bid/Ask/Last vs DelayedBid/DelayedAsk/DelayedLast); the wrapper and

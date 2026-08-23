@@ -91,7 +91,7 @@ macro_rules! strategy_enum {
                 }
             }
 
-           async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
+            async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String>
             {
                 match self {
                     $(StrategyEnum::$variant(s) => s.warm_up_data(consolidator).await),*
