@@ -114,7 +114,8 @@ async fn tokio_main() {
     // ================== INITIALISATION ======================
 
     // ================== SERVER ======================
-    let (app_state_sender, app_state_rcx) = tokio::sync::mpsc::channel::<Weak<ApplicationState>>(2);
+    let (app_state_sender, app_state_rcx) =
+        tokio::sync::mpsc::channel::<Option<Weak<ApplicationState>>>(2);
     let server_url = std::env::var("SERVER_URL").unwrap_or("0.0.0.0:8000".to_string());
     let _server_handle = init_server(&server_url, app_state_rcx);
     // ================== SERVER ======================

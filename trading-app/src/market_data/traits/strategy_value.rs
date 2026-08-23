@@ -23,18 +23,29 @@ pub trait GetStrategyValue {
 
 impl GetStrategyValue for Consolidator {
     fn get_strategy_sgd_value(&self, strategy: &str) -> Result<f64, String> {
-        let entry = self
-            .memoisers
-            .get(&MemoisedConsolidatorFns::GetStrategyValue)
-            .expect("all MemoisedConsolidatorFns variants must be registered");
+        #[cfg(not(feature = "backtest"))]
+        {
+            let entry = self
+                .memoisers
+                .get(&MemoisedConsolidatorFns::GetStrategyValue)
+                .expect("all MemoisedConsolidatorFns variants must be registered");
 
-        // `contract` is already owned by this fn — no need to clone it,
-        // just move it straight into the tuple.
-        let result = entry.call_any(Box::new(strategy.to_string()))?;
+            let result = entry.call_any(Box::new(strategy.to_string()))?;
 
-        Ok(*result
-            .downcast::<f64>()
-            .unwrap_or_else(|_| panic!("AnyMemoized: return type mismatch for GetPrice")))
+            Ok(*result
+                .downcast::<f64>()
+                .unwrap_or_else(|_| panic!("AnyMemoized: return type mismatch for GetPrice")))
+        }
+        #[cfg(feature = "backtest")]
+        {
+            // Backtest: bypass the (empty) memoiser + call the supplier directly.
+            Self::_get_strategy_sgd_value_backtest(
+                &self.price_supplier,
+                &self.handle,
+                &self.pool,
+                strategy,
+            )
+        }
     }
 }
 
@@ -142,6 +153,100 @@ impl Consolidator {
             }
 
             tracing::info!("Got one additional sgd position");
+        }
+
+        Ok(sgd_value)
+    }
+
+    /// Backtest-only variant of `_get_strategy_sgd_value` — mirrors the prod
+    /// position-valuation logic but calls `price_supplier.get_current_price`
+    /// instead of the IBKR `GetPrice` memoiser. Under backtest the prod
+    /// `_get_strategy_sgd_value` (which takes `&Arc<Client>` + the memoiser) is
+    /// cfg-gated out.
+    #[cfg(feature = "backtest")]
+    pub(crate) fn _get_strategy_sgd_value_backtest(
+        price_supplier: &std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier>,
+        handle: &tokio::runtime::Handle,
+        pool: &PgPool,
+        strategy: &str,
+    ) -> Result<f64, String> {
+        let current_stock_positions_crud =
+            CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+
+        let strategy = strategy.to_string();
+        let join_handle = handle.spawn(async move {
+            current_stock_positions_crud
+                .get_pos_by_strat(&strategy)
+                .await
+        });
+        let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
+
+        let mut sgd_value = 0.0;
+        let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
+
+        // The price supplier's get_current_price takes (Contract, bool, &[&str]).
+        let call_price = |contract: Contract,
+                          _vwap: bool,
+                          _generic_ticks: Vec<String>,
+                          _is_second_try: bool|
+         -> Result<f64, String> {
+            price_supplier.get_current_price(contract, false, &[])
+        };
+
+        for position in positions {
+            let (stock, currency, quantity) = match &position {
+                CurrentPositionsFullKeys::Stock(v) => {
+                    (v.stock.clone(), v.currency.clone(), v.quantity)
+                }
+                CurrentPositionsFullKeys::Options(v) => {
+                    (v.stock.clone(), v.currency.clone(), v.quantity)
+                }
+            };
+
+            if quantity == 0.0 {
+                continue;
+            }
+
+            let contract = get_contract_from(&LocalContractTypes::CurrentPosFk(position));
+
+            if contract.security_type == SecurityType::ForexPair {
+                let hash_contract = HashContract {
+                    contract: contract.clone(),
+                };
+                if !exchange_rates.contains_key(&hash_contract) {
+                    let rate = if stock == "CASH:SGD" {
+                        1.0
+                    } else {
+                        call_price(contract.clone(), false, vec![], false)?
+                    };
+                    exchange_rates.insert(hash_contract.clone(), rate);
+                }
+                sgd_value += exchange_rates.get(&hash_contract).unwrap() * quantity;
+                continue;
+            }
+
+            if currency != "SGD" {
+                let fx_contract = Contract {
+                    symbol: currency.into(),
+                    security_type: ibapi::prelude::SecurityType::ForexPair,
+                    exchange: "IDEALPRO".into(),
+                    currency: "SGD".into(),
+                    ..Default::default()
+                };
+                let hash_contract = HashContract {
+                    contract: fx_contract.clone(),
+                };
+                if !exchange_rates.contains_key(&hash_contract) {
+                    let rate = call_price(fx_contract, false, vec![], false)?;
+                    exchange_rates.insert(hash_contract.clone(), rate);
+                }
+
+                let mkt_value = call_price(contract, false, vec![], false)? * quantity;
+                sgd_value += exchange_rates.get(&hash_contract).unwrap() * mkt_value;
+            } else {
+                let mkt_value = call_price(contract, false, vec![], false)? * quantity;
+                sgd_value += mkt_value;
+            }
         }
 
         Ok(sgd_value)
