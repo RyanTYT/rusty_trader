@@ -1,9 +1,13 @@
-//! Backtest results & metrics, computed from the real `TransactionsCRUD` +
-//! the in-memory equity curve, serialized to JSON.
+//! Backtest results & metrics, computed from the transactions + the in-memory
+//! equity curve, serialized to JSON.
 //!
 //! v1 metrics: total PnL / return, max drawdown, per-bar Sharpe & Sortino
 //! (not annualized — annualization depends on bar frequency, which varies),
 //! trade count, and per-trade realized P&L / win rate via avg-cost tracking.
+//!
+//! [`BacktestResults::compute`] reads transactions from the DB (the realistic
+//! mode). [`BacktestResults::compute_in_memory`] reads them from the
+//! [`InMemoryState`] (the fast in-memory mode — no DB I/O, used by the sweep).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -18,6 +22,7 @@ use crate::database::models_crud::transactions::transactions::{
 };
 
 use crate::backtester::equity::{EquityCurve, EquitySnapshot};
+use crate::backtester::methods::in_memory::state::InMemoryState;
 
 #[derive(Debug, Serialize)]
 pub struct BacktestResults {
@@ -44,20 +49,73 @@ pub struct EquityPoint {
 }
 
 impl BacktestResults {
+    /// Compute from the DB (the realistic mode — reads all stock transactions
+    /// the backtest wrote to the test-db).
     pub async fn compute(
         pool: &sqlx::PgPool,
         equity: &EquityCurve,
         starting_capital: f64,
     ) -> Result<Self, String> {
-        // Read all stock transactions the backtest wrote (test-db is fresh per run).
         let tx_crud = TransactionsCRUD::from(&AssetType::Stock, pool.clone());
         let transactions = tx_crud
             .read_all()
             .await
             .map_err(|e| format!("read_all transactions: {e:?}"))?;
+        let tuples: Vec<(&str, &str, &str, f64, f64, f64)> = transactions
+            .iter()
+            .filter_map(|t| match t {
+                TransactionsFullKeys::Stock(s) => Some((
+                    s.stock.as_str(),
+                    s.primary_exchange.as_str(),
+                    s.currency.as_str(),
+                    s.quantity,
+                    s.price,
+                    s.fees.to_f64().unwrap_or(0.0),
+                )),
+                _ => None,
+            })
+            .collect();
+        let num_trades = tuples.len();
+        let per_trade_pnl = realized_per_trade_pnl(&tuples);
+        Ok(Self::build(equity, starting_capital, num_trades, per_trade_pnl))
+    }
 
-        let num_trades = transactions.len();
-        let per_trade_pnl = realized_per_trade_pnl(&transactions);
+    /// Compute from the in-memory state (the fast mode — no DB I/O; reads
+    /// transactions from the [`InMemoryState`]). Used by the sweep runner.
+    pub fn compute_in_memory(
+        equity: &EquityCurve,
+        state: &InMemoryState,
+        starting_capital: f64,
+    ) -> Self {
+        let txns = state
+            .transactions
+            .read()
+            .expect("InMemoryState transactions poisoned");
+        let tuples: Vec<(&str, &str, &str, f64, f64, f64)> = txns
+            .iter()
+            .map(|t| {
+                (
+                    t.stock.as_str(),
+                    t.primary_exchange.as_str(),
+                    t.currency.as_str(),
+                    t.quantity,
+                    t.price,
+                    t.fees,
+                )
+            })
+            .collect();
+        let num_trades = tuples.len();
+        let per_trade_pnl = realized_per_trade_pnl(&tuples);
+        Self::build(equity, starting_capital, num_trades, per_trade_pnl)
+    }
+
+    /// Common metrics builder — shared by `compute` (DB) + `compute_in_memory`.
+    fn build(
+        equity: &EquityCurve,
+        starting_capital: f64,
+        num_trades: usize,
+        per_trade_pnl: Vec<f64>,
+    ) -> Self {
         let num_closed = per_trade_pnl.len();
         let num_winning = per_trade_pnl.iter().filter(|p| **p > 0.0).count();
         let win_rate_pct = if num_closed > 0 {
@@ -86,7 +144,7 @@ impl BacktestResults {
             })
             .collect();
 
-        Ok(Self {
+        Self {
             starting_capital,
             final_equity,
             total_pnl,
@@ -99,7 +157,7 @@ impl BacktestResults {
             sharpe_per_bar: sharpe,
             sortino_per_bar: sortino,
             equity_curve: curve,
-        })
+        }
     }
 
     pub fn write_json(&self, path: &str) -> Result<(), String> {
@@ -160,31 +218,29 @@ fn sharpe_sortino(snapshots: &[EquitySnapshot]) -> (f64, f64) {
 }
 
 /// Per-trade realized P&L via running avg-cost (FIFO-ish: avg cost blends
-/// buys; a sell realizes `(sell_price - avg_cost) * sell_qty`).
-fn realized_per_trade_pnl(transactions: &[TransactionsFullKeys]) -> Vec<f64> {
-    // stock -> (qty, avg_cost)
+/// buys; a sell realizes `(sell_price - avg_cost) * sell_qty - fees`).
+///
+/// Takes a tuple slice `(stock, primary_exchange, currency, quantity, price,
+/// fees)` so both the DB (`TransactionsFullKeys`) + the in-memory
+/// (`InMemoryTransaction`) paths can adapt to it.
+fn realized_per_trade_pnl(transactions: &[(&str, &str, &str, f64, f64, f64)]) -> Vec<f64> {
     let mut state: HashMap<String, (f64, f64)> = HashMap::new();
     let mut pnls = Vec::new();
-    for tx in transactions {
-        let s = match tx {
-            TransactionsFullKeys::Stock(s) => s,
-            _ => continue,
-        };
-        let key = format!("{}:{}:{}", s.stock, s.primary_exchange, s.currency);
+    for (stock, pe, currency, quantity, price, fees) in transactions {
+        let key = format!("{}:{}:{}", stock, pe, currency);
         let (qty, cost) = state.entry(key).or_insert((0.0, 0.0));
-        if s.quantity >= 0.0 {
+        if *quantity >= 0.0 {
             // buy — blend avg cost
-            let new_qty = *qty + s.quantity;
+            let new_qty = *qty + *quantity;
             if new_qty.abs() > 1e-9 {
-                *cost = (*qty * *cost + s.quantity * s.price) / new_qty;
+                *cost = (*qty * *cost + *quantity * *price) / new_qty;
             }
             *qty = new_qty;
         } else {
             // sell — realize
-            let sell_qty = s.quantity.abs();
+            let sell_qty = quantity.abs();
             let realized_qty = sell_qty.min(qty.abs());
-            let realized = (s.price - *cost) * realized_qty
-                - s.fees.to_f64().unwrap_or(0.0);
+            let realized = (*price - *cost) * realized_qty - *fees;
             pnls.push(realized);
             *qty -= sell_qty;
             if qty.abs() < 1e-9 {

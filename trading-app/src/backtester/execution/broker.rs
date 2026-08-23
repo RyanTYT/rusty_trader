@@ -13,8 +13,10 @@
 //! legal — same precondition as prod's `on_bar_update`.
 
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
+use std::sync::Arc;
 
+use arc_swap::ArcSwapOption;
+use atomic_float::AtomicF64;
 use ibapi::contracts::Contract;
 use ibapi::orders::Order;
 use rust_decimal::Decimal;
@@ -23,7 +25,8 @@ use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::{
-    AssetType, StockTransactionsFullKeys, OptionType,
+    AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
+    StockTransactionsFullKeys, OptionType,
 };
 use crate::database::models_crud::current_positions::current_positions::{
     CurrentPositionsCRUD, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
@@ -36,7 +39,7 @@ use crate::database::models_crud::transactions::transactions::{
 use crate::helpers::contract::get_local_symbol;
 
 use crate::backtester::config::BacktestConfig;
-use crate::backtester::fill_model::{commission, decide_fill};
+use crate::backtester::execution::fill_model::{commission, decide_fill};
 
 pub struct BacktestBroker {
     pool: PgPool,
@@ -44,22 +47,34 @@ pub struct BacktestBroker {
     config: BacktestConfig,
     next_id: AtomicI32,
     /// The bar `submit_order` should fill against. Set by the replayer before
-    /// each tick via [`set_current_bar`].
-    current_bar: Mutex<Option<HistoricalDataFullKeys>>,
-    /// Running cash balance (base currency), updated on each fill.
-    cash: Mutex<f64>,
+    /// each tick via [`set_current_bar`]. Lock-free (`ArcSwapOption`).
+    current_bar: ArcSwapOption<HistoricalDataFullKeys>,
+    /// Running cash balance (SGD), updated on each fill. Lock-free
+    /// (`AtomicF64`) — the broker is single-threaded (only the replayer's
+    /// `spawn_blocking` thread), but it's shared via `Arc` + moved into
+    /// `spawn_blocking`, so it must be `Send + Sync`.
+    cash: AtomicF64,
+    /// Point-in-time price oracle — used to look up the FX rate
+    /// (contract.currency → SGD) when settling non-SGD fills into CASH:SGD.
+    prices: std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
 }
 
 impl BacktestBroker {
-    pub fn new(pool: PgPool, handle: tokio::runtime::Handle, config: BacktestConfig) -> Self {
+    pub fn new(
+        pool: PgPool,
+        handle: tokio::runtime::Handle,
+        config: BacktestConfig,
+        prices: std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
+    ) -> Self {
         let starting_cash = config.starting_capital_sgd;
         Self {
             pool,
             handle,
             config,
             next_id: AtomicI32::new(1),
-            current_bar: Mutex::new(None),
-            cash: Mutex::new(starting_cash),
+            current_bar: ArcSwapOption::new(None),
+            cash: AtomicF64::new(starting_cash),
+            prices,
         }
     }
 
@@ -71,35 +86,32 @@ impl BacktestBroker {
         &self.handle
     }
 
-    /// Current cash balance (base currency) after settled fills.
+    /// Current cash balance (SGD) after settled fills. Lock-free atomic load.
     pub fn cash(&self) -> f64 {
-        *self.cash.lock().expect("BacktestBroker cash poisoned")
+        self.cash.load(Ordering::Relaxed)
     }
 
     /// Publish the bar `submit_order` should fill against for this tick.
+    /// Lock-free atomic store (`ArcSwapOption`).
     pub fn set_current_bar(&self, bar: HistoricalDataFullKeys) {
-        *self.current_bar.lock().expect("BacktestBroker current_bar poisoned") = Some(bar);
-    }
-
-    fn current_bar_clone(&self) -> Option<HistoricalDataFullKeys> {
-        self.current_bar
-            .lock()
-            .expect("BacktestBroker current_bar poisoned")
-            .clone()
+        self.current_bar.store(Some(Arc::new(bar)));
     }
 }
 
 /// `BacktestBroker` implements `OrderSubmitter` so it can be passed as
 /// `&dyn OrderSubmitter` to the cfg-gated `handle_bar_update_outcome`.
-impl crate::execution::order_submitter::OrderSubmitter for BacktestBroker {
+impl crate::backtester::execution::order_submitter::OrderSubmitter for BacktestBroker {
     fn next_order_id(&self) -> i32 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     fn submit_order(&self, order_id: i32, contract: &Contract, order: &Order) {
         let asset_type = AssetType::from_str(&contract.security_type);
-        let bar = match self.current_bar_clone() {
-            Some(b) => b,
+        // Lock-free load of the current bar (ArcSwapOption guard kept alive
+        // for the whole fill — `bar` borrows from it).
+        let bar_guard = self.current_bar.load();
+        let bar: &HistoricalDataFullKeys = match &*bar_guard {
+            Some(arc) => arc,
             None => {
                 tracing::warn!(
                     "BacktestBroker submit_order({order_id}): no current bar; skipping fill"
@@ -108,7 +120,7 @@ impl crate::execution::order_submitter::OrderSubmitter for BacktestBroker {
             }
         };
 
-        let outcome = decide_fill(order, &bar, self.config.slippage_bps);
+        let outcome = decide_fill(order, bar, self.config.slippage_bps);
         if !outcome.filled {
             tracing::debug!(
                 "BacktestBroker submit_order({order_id}): no fill (limit not crossed or unsupported asset)"
@@ -122,17 +134,44 @@ impl crate::execution::order_submitter::OrderSubmitter for BacktestBroker {
         let fees_f64 = commission(
             fill_qty,
             fill_price,
-            self.config.commission_per_share,
-            self.config.commission_min_per_order,
+            self.config.commission_model,
         );
         let fees_decimal = Decimal::from_f64(fees_f64).unwrap_or(Decimal::ZERO);
-        // Settle cash synchronously: buy (fill_qty>0) reduces cash by qty*price;
-        // sell (fill_qty<0) increases it; fees always reduce. Uniformly:
-        //   cash -= fill_qty * fill_price + fees_f64
-        {
-            let mut c = self.cash.lock().expect("BacktestBroker cash poisoned");
-            *c -= fill_qty * fill_price + fees_f64;
-        }
+        // FX rate: contract.currency → SGD. The fill value + commission are in
+        // the contract's currency (e.g., USD for QQQ); convert to SGD to
+        // settle CASH:SGD. For SGD contracts, the rate is 1.0. For others,
+        // look up the FX pair (base=contract.currency, quote=SGD) via the
+        // price supplier (which falls back to the fixed FX map).
+        let cash_sgd_delta = {
+            let fx_rate = if contract.currency.to_string() == "SGD" {
+                1.0
+            } else {
+                let fx_contract = ibapi::contracts::Contract {
+                    symbol: contract.currency.to_string().into(),
+                    security_type: ibapi::prelude::SecurityType::ForexPair,
+                    exchange: "IDEALPRO".into(),
+                    currency: "SGD".into(),
+                    ..Default::default()
+                };
+                self.prices
+                    .get_current_price(fx_contract, false, &[])
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            "BacktestBroker: FX rate for {} unavailable ({}); defaulting to 1.0",
+                            contract.currency,
+                            e
+                        );
+                        1.0
+                    })
+            };
+            // -(fill_value + fees) * fx_rate: negative for buys (cash
+            // decreases), positive for sells (cash increases, minus fees).
+            -(fill_qty * fill_price + fees_f64) * fx_rate
+        };
+        // Settle the SGD cash balance (lock-free atomic update).
+        let _ = self.cash.fetch_update(Ordering::Release, Ordering::Acquire, |c| {
+            Some(c + cash_sgd_delta)
+        });
         let time = bar.get_time();
         let execution_id = format!("bt-{order_id}");
 
@@ -201,6 +240,26 @@ impl crate::execution::order_submitter::OrderSubmitter for BacktestBroker {
                 CurrentPositionsUpdateKeys::from(&asset_type, Some(fill_qty), Some(fill_price));
             if let Err(e) = cp_crud.update_positions_additive(cp_pk, cp_uk).await {
                 tracing::error!("BacktestBroker: update_positions_additive failed: {e:?}");
+            }
+
+            // 3. Update CASH:SGD: decrease on buy (fill_qty>0), increase on sell
+            //    (fill_qty<0), minus fees. Keeps the strategy's
+            //    `get_strategy_sgd_value` correct (the cash position reflects
+            //    actual cash after fills, not the stale seed).
+            let cash_cp_crud = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+            let cash_pk = CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
+                strategy: strat.clone(),
+                stock: "CASH:SGD".to_string(),
+                primary_exchange: "".to_string(),
+                currency: "SGD".to_string(),
+            });
+            let cash_uk = CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
+                quantity: Some(cash_sgd_delta),
+                avg_price: Some(1.0),
+                last_updated: None,
+            });
+            if let Err(e) = cash_cp_crud.update_positions_additive(cash_pk, cash_uk).await {
+                tracing::error!("BacktestBroker: CASH:SGD update failed: {e:?}");
             }
         });
     }
