@@ -487,8 +487,7 @@ pub trait HistoricalDataOps {
         pk: HistoricalDataPrimaryKeysWoTime,
         timezone: Option<String>,
         vwap_bar_value: VwapBarValue,
-        #[cfg(feature = "backtest")]
-        now: DateTime<Utc>,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String>;
     async fn has_at_least_n_rows_since(
         &self,
@@ -515,8 +514,7 @@ pub trait NoiseOps {
     async fn get_most_recent_daily_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
-        #[cfg(feature = "backtest")]
-        now: DateTime<Utc>,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<f64, String>;
 
     #[cfg(not(feature = "backtest"))]
@@ -880,7 +878,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
                 );
-                let q = sqlx::query_as(sql_str.as_str())
+                let q = sqlx::query_as(&sql_str)
                     .bind(stock)
                     .bind(primary_exchange)
                     .bind(currency);
@@ -896,8 +894,13 @@ impl HistoricalDataOps for HistoricalDataCRUD {
 
             HistoricalDataPrimaryKeysWoTime::Forex(HistoricalForexDataPrimaryKeysWoTime {
                 pair,
-            }) => sqlx::query_as(
-                format!(
+            }) => {
+                let now_sql = if cfg!(feature = "backtest") {
+                    "$2"
+                } else {
+                    "now()"
+                };
+                let sql_query_str = format!(
                     r#"
                         SELECT
                             SUM({} * volume) / NULLIF(SUM(volume), 0) AS vwap
@@ -905,23 +908,25 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         WHERE pair = $1
                           -- Convert now() to Eastern, truncate to the day,
                           -- then cast back to timestamptz
-                          AND time >= (now() AT TIME ZONE '{}')::date
+                          AND time >= ({now_sql} AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
-                )
-                .as_str(),
-            )
-            .bind(pair)
-            .fetch_optional(self.get_pg_pool())
-            .await
-            .map_err(|e| {
-                format!(
-                    "Error when fetching most recent bar from HistoricalData \
+                );
+                let query = sqlx::query_as(&sql_query_str).bind(pair);
+                #[cfg(feature = "backtest")]
+                let query = query.bind(now);
+                query
+                    .fetch_optional(self.get_pg_pool())
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "Error when fetching most recent bar from HistoricalData \
                             for in read_vwap: {e:?}",
-                )
-            })?,
+                        )
+                    })?
+            }
 
             HistoricalDataPrimaryKeysWoTime::Options(HistoricalOptionsDataPrimaryKeysWoTime {
                 stock,
@@ -931,8 +936,13 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 strike,
                 multiplier,
                 option_type,
-            }) => sqlx::query_as(
-                format!(
+            }) => {
+                let now_sql = if cfg!(feature = "backtest") {
+                    "$8"
+                } else {
+                    "now()"
+                };
+                let sql_query_str = format!(
                     r#"
                         SELECT
                             SUM({} * volume) / NULLIF(SUM(volume), 0) AS vwap
@@ -946,29 +956,33 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                             AND option_type = $7
                           -- Convert now() to Eastern, truncate to the day,
                           -- then cast back to timestamptz
-                          AND time >= (now() AT TIME ZONE '{}')::date
+                          AND time >= ({now_sql} AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
                     timezone.unwrap_or("US/Eastern".to_string())
-                )
-                .as_str(),
-            )
-            .bind(stock)
-            .bind(primary_exchange)
-            .bind(currency)
-            .bind(expiry)
-            .bind(strike)
-            .bind(multiplier)
-            .bind(option_type)
-            .fetch_optional(self.get_pg_pool())
-            .await
-            .map_err(|e| {
-                format!(
-                    "Error when fetching most recent bar from HistoricalData\
+                );
+                let query = sqlx::query_as(&sql_query_str)
+                    .bind(stock)
+                    .bind(primary_exchange)
+                    .bind(currency)
+                    .bind(expiry)
+                    .bind(strike)
+                    .bind(multiplier)
+                    .bind(option_type);
+                #[cfg(feature = "backtest")]
+                let query = query.bind(now);
+
+                query
+                    .fetch_optional(self.get_pg_pool())
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "Error when fetching most recent bar from HistoricalData\
                             for in read_vwap: {e:?}",
-                )
-            })?,
+                        )
+                    })?
+            }
 
             HistoricalDataPrimaryKeysWoTime::DailyStock(_) => {
                 return Err("Tried to get vwap price using daily stock data: currently only works for daily".to_string());
@@ -1261,8 +1275,7 @@ impl NoiseOps for HistoricalDataCRUD {
     async fn get_most_recent_daily_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
-        #[cfg(feature = "backtest")]
-        now: DateTime<Utc>,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<f64, String> {
         // Under prod, `now` = Utc::now() (real wall clock); under backtest,
         // `now` = bar time (the fn param) — prevents look-ahead bias.
