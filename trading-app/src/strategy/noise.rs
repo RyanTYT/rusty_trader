@@ -95,34 +95,43 @@ impl StrategyExecutor for Noise {
     }
 
     fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract> {
-        vec![
-            Consolidator::_validate_contract(
-                client,
+        let contract = Contract::stock("QQQ")
+            .on_exchange("SMART")
+            .primary("NASDAQ")
+            .in_currency("USD")
+            .build();
+        #[cfg(not(feature = "backtest"))]
+        let res = vec![
+            Consolidator::_validate_contract(client, contract, Duration::from_secs(10))
+                .expect("Expected to be able to get_contracts when init_app"),
+        ];
+        #[cfg(feature = "backtest")]
+        let res = vec![contract];
+
+        res
+    }
+
+    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
+        #[cfg(not(feature = "backtest"))]
+        {
+            let consolidator = consolidator.clone();
+            let contract_opt = consolidator.validate_contract(
                 Contract::stock("QQQ")
                     .on_exchange("SMART")
                     .primary("NASDAQ")
                     .in_currency("USD")
                     .build(),
                 Duration::from_secs(10),
-            )
-            .expect("Expected to be able to get_contracts when init_app"),
-        ]
-    }
-
-    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
-        let consolidator = consolidator.clone();
-        let contract_opt = consolidator.validate_contract(
-            Contract::stock("QQQ")
-                .on_exchange("SMART")
-                .primary("NASDAQ")
-                .in_currency("USD")
-                .build(),
-            Duration::from_secs(10),
-        );
-        consolidator
-            .update_at_least_n_days_data(&contract_opt.expect("Expected QQQ contract"), 20, true)
-            .await
-            .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))?;
+            );
+            consolidator
+                .update_at_least_n_days_data(
+                    &contract_opt.expect("Expected QQQ contract"),
+                    20,
+                    true,
+                )
+                .await
+                .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))?;
+        }
 
         Ok(())
     }
@@ -140,6 +149,8 @@ impl Noise {
             HistoricalDataFullKeys::Stock(v) => v,
             _ => panic!("Should not be receiving any other type of bar other than Stock"),
         };
+        let bar_time = bar.time;
+
         // tracing::info!("bar")
         let historical_data_crud_orig =
             HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
@@ -147,11 +158,15 @@ impl Noise {
         let avg_move_since_open_thread = self.tokio_handle.spawn(hotpath::future!(
             async move {
                 historical_data_crud
-                    .get_avg_move_since_open(HistoricalStockDataPrimaryKeysWoTime {
-                        stock: "QQQ".to_string(),
-                        primary_exchange: "NASDAQ".to_string(),
-                        currency: "USD".to_string(),
-                    })
+                    .get_avg_move_since_open(
+                        HistoricalStockDataPrimaryKeysWoTime {
+                            stock: "QQQ".to_string(),
+                            primary_exchange: "NASDAQ".to_string(),
+                            currency: "USD".to_string(),
+                        },
+                        #[cfg(feature = "backtest")]
+                        bar_time,
+                    )
                     // .get_avg_move_since_open("QQQ", "NASDAQ", "USD")
                     .await
                     .map_err(|e| format!("{}", e))
@@ -162,11 +177,15 @@ impl Noise {
         let most_recent_open_thread = self.tokio_handle.spawn(hotpath::future!(
             async move {
                 historical_data_crud
-                    .get_most_recent_daily_open(HistoricalStockDataPrimaryKeysWoTime {
-                        stock: "QQQ".to_string(),
-                        primary_exchange: "NASDAQ".to_string(),
-                        currency: "USD".to_string(),
-                    })
+                    .get_most_recent_daily_open(
+                        HistoricalStockDataPrimaryKeysWoTime {
+                            stock: "QQQ".to_string(),
+                            primary_exchange: "NASDAQ".to_string(),
+                            currency: "USD".to_string(),
+                        },
+                        #[cfg(feature = "backtest")]
+                        bar_time,
+                    )
                     .await
                     .map_err(|e| format!("{}", e))
             },
@@ -176,11 +195,15 @@ impl Noise {
         let most_recent_daily_vol_thread = self.tokio_handle.spawn(hotpath::future!(
             async move {
                 historical_data_crud
-                    .get_daily_vol(HistoricalStockDataPrimaryKeysWoTime {
-                        stock: "QQQ".to_string(),
-                        primary_exchange: "NASDAQ".to_string(),
-                        currency: "USD".to_string(),
-                    })
+                    .get_daily_vol(
+                        HistoricalStockDataPrimaryKeysWoTime {
+                            stock: "QQQ".to_string(),
+                            primary_exchange: "NASDAQ".to_string(),
+                            currency: "USD".to_string(),
+                        },
+                        #[cfg(feature = "backtest")]
+                        bar_time,
+                    )
                     .await
                     .map_err(|e| format!("{}", e))
             },
@@ -200,6 +223,8 @@ impl Noise {
                         ),
                         Some("US/Eastern".to_string()),
                         VwapBarValue::Close,
+                        #[cfg(feature = "backtest")]
+                        bar_time,
                     )
                     .await
                     .map_err(|e| format!("{}", e))

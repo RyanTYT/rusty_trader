@@ -43,6 +43,12 @@ hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 test-utils = []
+backtest = []
+
+[[bin]]
+name = "backtest"
+path = "src/bin/backtest.rs"
+required-features = ["backtest"]
 
 [dev-dependencies]
 proptest = "1.7"

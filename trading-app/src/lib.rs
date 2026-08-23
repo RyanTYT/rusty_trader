@@ -4,19 +4,22 @@ pub mod database;
 pub mod execution;
 pub mod helpers;
 pub mod ibc;
+#[cfg(not(feature = "backtest"))]
 pub mod init_app;
 pub mod logger;
 pub mod market_data;
 pub mod schedule;
 pub mod server;
 pub mod strategy;
+#[cfg(feature = "backtest")]
+pub mod backtester;
 
 /// Test-only re-exports of internal items that are otherwise `pub(crate)` or private.
 /// This module is gated on `test-utils` feature (or `test` cfg for unit tests).
 /// Production builds (without `test-utils`) are untouched.
 /// External test files (under `tests/`) import via `trading_app::test_internals::...`
 /// and the test binaries are built with `--features test-utils`.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(any(test, feature = "test-utils"), not(feature = "backtest")))]
 pub mod test_internals {
     // ─── Types (already pub in source — safe to pub use) ───────────────────
     pub use crate::helpers::contract::{HashContract, LocalContractTypes};

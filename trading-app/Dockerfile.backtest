@@ -1,0 +1,100 @@
+ARG RUST_VERSION=1.85.1
+ARG APP_NAME=backtest
+
+################################################################################
+# Create a stage for building the backtest binary.
+
+FROM debian:bullseye-slim AS build
+ARG APP_NAME
+WORKDIR /app
+
+# Install dependencies for building Rust (clang/lld for ibapi sync client)
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    protobuf-compiler \
+    clang \
+    lld \
+    musl-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install rustup and Cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable
+
+# Add Cargo to PATH
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+ENV SQLX_OFFLINE=true
+
+# Copy manifests first (for better caching of dependencies)
+COPY Cargo.toml Cargo.lock ./
+
+# Copy local dependencies and migrations + sqlx offline cache (needed at compile time)
+COPY crud_insertable ./crud_insertable
+COPY crud_insertable_macro ./crud_insertable_macro
+COPY crud_models ./crud_models
+COPY spmc-ring ./spmc-ring
+COPY .sqlx ./.sqlx
+COPY migrations ./migrations
+
+# Create a dummy src/ + bin/ to build dependencies only (cache layer)
+RUN mkdir -p src bin && \
+    echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs && \
+    echo "fn main() {}" > src/bin/backtest.rs && \
+    cargo build --release --features backtest && \
+    rm -rf src bin
+
+# Now copy the actual source code
+COPY src ./src
+
+# Build the backtest binary (--features backtest gates the backtester module)
+# Touch src/bin/backtest.rs to force rebuild of the application code
+RUN touch src/bin/backtest.rs && \
+    cargo build --release --features backtest && \
+    cp target/release/$APP_NAME /bin/backtest
+
+################################################################################
+# Runtime stage
+FROM debian:bullseye-slim AS final
+
+# Install runtime deps: Xvfb + IBC libs (needed for the IBKR data-load step
+# via with_gateway_retry) + postgresql-client (pg_isready) + curl.
+RUN apt-get update && apt-get install -y \
+    libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
+    libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
+    libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
+    xdotool openbox \
+    unzip xvfb \
+    curl bash ca-certificates \
+    postgresql-client \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install IBC (IB Gateway controller) — needed for the data-load step.
+# with_gateway_retry (inside the backtest binary) boots IBC to seed
+# market_data.historical_data; if IBC is absent, the loader falls back to Alpaca.
+COPY IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/; \
+    chown -R root /IBCLinux-3.21.2/; \
+    chmod -u+x -R /IBCLinux-3.21.2/
+COPY IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
+RUN chmod -u+x -R /IBCLinux-3.21.2/
+
+# Copy the backtest binary + migrations (the binary runs migrations itself).
+COPY --from=build /bin/backtest /bin/backtest
+COPY migrations /migrations
+
+# Copy the entrypoint script
+COPY entrypoint-backtest.sh /entrypoint-backtest.sh
+RUN chmod +x /entrypoint-backtest.sh
+
+ENV RUST_BACKTRACE=1
+ENV RUST_LOG=info
+
+CMD ["sh", "/entrypoint-backtest.sh"]

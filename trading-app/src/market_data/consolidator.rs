@@ -51,19 +51,27 @@ pub struct Consolidator {
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
+    #[cfg(not(feature = "backtest"))]
     contract_scheduler: Arc<IbkrContractScheduler>,
 
+    #[cfg(not(feature = "backtest"))]
     pub(crate) client: Arc<Client>,
+    #[cfg(feature = "backtest")]
+    pub(crate) price_supplier: Arc<dyn PriceSupplier + Send + Sync>,
 }
 
 impl Consolidator {
     pub async fn async_drop(&mut self) {
-        self.market_data_handler.async_drop().await;
-        tracing::info!("Client disconnected");
-        self.client.disconnect();
+        #[cfg(not(feature = "backtest"))]
+        {
+            self.market_data_handler.async_drop().await;
+            tracing::info!("Client disconnected");
+            self.client.disconnect();
+        }
     }
 }
 
+#[cfg(not(feature = "backtest"))]
 impl Drop for Consolidator {
     fn drop(&mut self) {
         if self.client.is_connected() {
@@ -74,6 +82,7 @@ impl Drop for Consolidator {
 }
 
 impl Consolidator {
+    #[cfg(not(feature = "backtest"))]
     pub fn new(
         handle: tokio::runtime::Handle,
         pool: PgPool,
@@ -149,6 +158,21 @@ impl Consolidator {
         }
     }
 
+    #[cfg(feature = "backtest")]
+    pub fn new_for_backtest(
+        pool: PgPool,
+        price_supplier: Arc<dyn PriceSupplier + Send + Sync>,
+        market_data_handler: MarketDataHandler,
+    ) -> Self {
+        Self {
+            pool,
+            market_data_handler,
+            memoisers: Arc::new(HashMap::new()),
+            price_supplier,
+        }
+    }
+
+    #[cfg(not(feature = "backtest"))]
     pub fn validate_contract(
         &self,
         contract: Contract,
@@ -183,6 +207,7 @@ impl Consolidator {
         }
     }
 
+    #[cfg(not(feature = "backtest"))]
     async fn refresh_if_stale(&self, contract: &Contract, config: &HistoricalDataConfig) {
         let asset_type = AssetType::from_str(&contract.security_type);
         if self
@@ -251,6 +276,7 @@ impl Consolidator {
     /// for me
     ///
     /// NOTE: Requests always for 5 minute data
+    #[cfg(not(feature = "backtest"))]
     pub async fn update_at_least_n_days_data(
         &self,
         contract: &Contract,

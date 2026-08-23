@@ -109,6 +109,7 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
+    #[cfg(not(feature = "backtest"))]
     pub fn place_order(
         handle: tokio::runtime::Handle,
         pool: PgPool,
@@ -156,11 +157,27 @@ impl OrderEngine {
         order_id
     }
 
+    #[cfg(feature = "backtest")]
+    pub fn place_order(
+        handle: tokio::runtime::Handle,
+        pool: PgPool,
+        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        order_ibkr: OrderIBKR,
+    ) -> i32 {
+        let order_id = submitter.next_order_id();
+        submitter.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order);
+        order_id
+    }
+
     /// Note: it is on onus of client to pass with the correct .transmit field
     pub fn place_orders(
         handle: tokio::runtime::Handle,
         pool: PgPool,
-        weak_client: &Weak<Client>,
+
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
+        #[cfg(feature = "backtest")]
+        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+
         orders: impl IntoIterator<Item = OrderIBKR>,
     ) {
         let orders_iter = orders.into_iter();
@@ -171,27 +188,47 @@ impl OrderEngine {
             if order_ibkr.references_parent_order >= 0 {
                 order_ibkr.order.parent_id = order_ids[order_ibkr.references_parent_order as usize];
             }
+
+            #[cfg(not(feature = "backtest"))]
             let order_id =
                 Self::place_order(handle.clone(), pool.clone(), &weak_client, order_ibkr);
+            #[cfg(feature = "backtest")]
+            let order_id = Self::place_order(handle.clone(), pool.clone(), submitter, order_ibkr);
             order_ids[idx] = order_id;
         }
     }
 
     pub fn handle_bar_update_outcome(
         &self,
-        weak_client: &Weak<Client>,
-        consolidator: &Weak<Consolidator>,
+
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
+        #[cfg(feature = "backtest")]
+        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+        #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
+        #[cfg(feature = "backtest")]
+        price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
+
         bar_update_outcome: BarUpdateOutcome,
         strategy: &StrategyEnum,
         order_store: &OrderStore,
     ) {
         match bar_update_outcome {
-            BarUpdateOutcome::EmitOrders(orders_ibkr) => Self::place_orders(
-                self.tokio_handle.clone(),
-                self.pool.clone(),
-                weak_client,
-                orders_ibkr,
-            ),
+            BarUpdateOutcome::EmitOrders(orders_ibkr) => {
+                #[cfg(not(feature = "backtest"))]
+                Self::place_orders(
+                    self.tokio_handle.clone(),
+                    self.pool.clone(),
+                    weak_client,
+                    orders_ibkr,
+                );
+                #[cfg(feature = "backtest")]
+                Self::place_orders(
+                    self.tokio_handle.clone(),
+                    self.pool.clone(),
+                    submitter,
+                    orders_ibkr,
+                );
+            }
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
                     let target_positions_crud =
@@ -316,6 +353,7 @@ impl OrderEngine {
 
                             tracing::info!("Constructed hashmaps for FX strat");
                             {
+                                #[cfg(not(feature = "backtest"))]
                                 let strong_consolidator = {
                                     let upgraded_consolidator_opt = consolidator.upgrade();
                                     if upgraded_consolidator_opt.is_none() {
@@ -345,7 +383,17 @@ impl OrderEngine {
 
                                     let symbol = contract.symbol.clone();
                                     tracing::info!("Fetching price for {}", symbol);
+                                    #[cfg(not(feature = "backtest"))]
                                     let price = strong_consolidator.get_current_price(
+                                            contract,
+                                            false,
+                                            &[],
+                                        ).unwrap_or_else(|_| {
+                                            tracing::warn!("Could not get current price of contract in order_engine!");
+                                            0.0
+                                        });
+                                    #[cfg(feature = "backtest")]
+                                    let price = price_supplier.get_current_price(
                                             contract,
                                             false,
                                             &[],
@@ -410,6 +458,7 @@ impl OrderEngine {
                         };
 
                         let pool = self.pool.clone();
+                        #[cfg(not(feature = "backtest"))]
                         let weak_client_cloned = weak_client.clone();
                         let strat = strategy.get_name();
 
@@ -458,7 +507,12 @@ impl OrderEngine {
                             orders.extend(fx_orders);
                         }
 
-                        if let Err(e) = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders, order_store) {
+                        #[cfg(not(feature = "backtest"))]
+                        let res = self.on_new_qty_diff_for_strat(pool, weak_client_cloned, orders, order_store) ;
+                        #[cfg(feature = "backtest")]
+                        let res = self.on_new_qty_diff_for_strat(pool, submitter, orders, order_store) ;
+
+                        if let Err(e) = res {
                             tracing::error!("Failed to run on_new_qty_diff_for_strat in handle_bar_update_outcome: {e:?}");
                         };
                     });
@@ -481,7 +535,11 @@ impl OrderEngine {
     fn cancel_orders(
         &self,
         asset_type: &AssetType,
-        weak_client: &Weak<Client>,
+
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
+        #[cfg(feature = "backtest")]
+        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+
         local_open_orders: Vec<LocalOpenOrder>,
         order_store: &OrderStore,
     ) {
@@ -511,22 +569,29 @@ impl OrderEngine {
                 strategy_name = strategy;
 
                 if *order_perm_id != -1 {
-                    // Cancel on IBKR side
-                    let cloned_weak_client = weak_client.clone();
-                    let owned_order_id = *order_id;
-                    std::thread::spawn(move || {
-                        hotpath::measure_block!("cancel_order_on_ibkr", {
-                            let client_opt = cloned_weak_client.upgrade();
-                            if client_opt.is_none() {
-                                tracing::warn!("client died while cancelling order!");
-                                return;
-                            }
-                            let client = client_opt.unwrap();
-                            if let Err(e) = client.cancel_order(owned_order_id, "") {
-                                tracing::warn!("Could not cancel order: {e:?}");
-                            };
+                    #[cfg(not(feature = "backtest"))]
+                    {
+                        // Cancel on IBKR side
+                        let cloned_weak_client = weak_client.clone();
+                        let owned_order_id = *order_id;
+                        std::thread::spawn(move || {
+                            hotpath::measure_block!("cancel_order_on_ibkr", {
+                                let client_opt = cloned_weak_client.upgrade();
+                                if client_opt.is_none() {
+                                    tracing::warn!("client died while cancelling order!");
+                                    return;
+                                }
+                                let client = client_opt.unwrap();
+                                if let Err(e) = client.cancel_order(owned_order_id, "") {
+                                    tracing::warn!("Could not cancel order: {e:?}");
+                                };
+                            });
                         });
-                    });
+                    }
+                    #[cfg(feature = "backtest")]
+                    if let Err(e) = submitter.cancel_order(*order_id) {
+                        tracing::error!("Failed to cancel order: {:?}", *order_id)
+                    }
                 }
 
                 if open_order.is_from_db {
@@ -588,7 +653,11 @@ impl OrderEngine {
     fn on_new_qty_diff_for_strat(
         &self,
         pool: PgPool,
-        weak_client: Weak<Client>,
+
+        #[cfg(not(feature = "backtest"))] weak_client: Weak<Client>,
+        #[cfg(feature = "backtest")]
+        submitter: &dyn crate::execution::order_submitter::OrderSubmitter,
+
         mut orders: VecDeque<OrderIBKR>,
         order_store: &OrderStore,
     ) -> Result<(), String> {
@@ -691,7 +760,10 @@ impl OrderEngine {
         // i.e. cancel all open orders (since positions are alr correct)
         if qty_diff == 0.0 {
             // Cancel Open Orders
+            #[cfg(not(feature = "backtest"))]
             self.cancel_orders(&asset_type, &weak_client, open_orders, order_store);
+            #[cfg(feature = "backtest")]
+            self.cancel_orders(&asset_type, submitter, open_orders, order_store);
             return Ok(());
         }
 
@@ -701,15 +773,23 @@ impl OrderEngine {
                 && current_qty_diff.abs() > qty_diff.abs())
         {
             // Cancel all open orders first
+            #[cfg(not(feature = "backtest"))]
             self.cancel_orders(&asset_type, &weak_client, open_orders, order_store);
+            #[cfg(feature = "backtest")]
+            self.cancel_orders(&asset_type, submitter, open_orders, order_store);
 
-            let weak_client_cloned = weak_client;
             orders.push_front(OrderIBKR::new(contract, order, -1));
             let handle = self.tokio_handle.clone();
             let pool = self.pool.clone();
-            std::thread::spawn(move || {
-                Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
-            });
+            #[cfg(not(feature = "backtest"))]
+            {
+                let weak_client_cloned = weak_client;
+                std::thread::spawn(move || {
+                    Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
+                });
+            }
+            #[cfg(feature = "backtest")]
+            Self::place_orders(handle, pool, submitter, orders.into_iter());
 
             return Ok(());
         }
@@ -719,12 +799,17 @@ impl OrderEngine {
         if current_qty_diff.abs() < qty_diff.abs() {
             let handle = self.tokio_handle.clone();
             let pool = self.pool.clone();
-            let weak_client_cloned = weak_client.clone();
             order.total_quantity = (qty_diff - current_qty_diff).abs();
             orders.push_front(OrderIBKR::new(contract, order, -1));
-            std::thread::spawn(move || {
-                Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
-            });
+            #[cfg(not(feature = "backtest"))]
+            {
+                let weak_client_cloned = weak_client;
+                std::thread::spawn(move || {
+                    Self::place_orders(handle, pool, &weak_client_cloned, orders.into_iter())
+                });
+            }
+            #[cfg(feature = "backtest")]
+            Self::place_orders(handle, pool, submitter, orders.into_iter());
         }
 
         Ok(())
