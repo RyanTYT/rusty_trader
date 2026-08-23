@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex, Weak};
 
+#[cfg(not(feature = "backtest"))]
 use crate::{
     init_app::{ApplicationState, init_app},
     logger::{ChannelLayer, ConnectionState, IbConnectionLayer, init_db_logger},
@@ -54,11 +55,15 @@ impl FormatTime for NewYorkTime {
 
 #[hotpath::main]
 fn main() {
-    let rt = tokio::runtime::Runtime::new().expect("Expected to be able to make main tokio thread");
-    rt.block_on(async { tokio_main().await });
+    #[cfg(not(feature = "backtest"))]
+    {
+        let rt =
+            tokio::runtime::Runtime::new().expect("Expected to be able to make main tokio thread");
+        rt.block_on(async { tokio_main().await });
+    }
 }
 
-// #[tokio::main]
+#[cfg(not(feature = "backtest"))]
 async fn tokio_main() {
     // ================== INITIALISATION ======================
     let database_url = std::env::var("DATABASE_URL")
