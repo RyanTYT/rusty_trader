@@ -8,10 +8,10 @@ use chrono_tz::Tz;
 use tokio::time::sleep;
 
 use crate::{
+    arc_drop_async,
     ibc::with_gateway_retry,
     init_app::ApplicationState,
     logger::ConnectionAlert,
-    arc_drop_async,
     schedule::broker_scheduler::{
         BrokerScheduler, BrokerState, BrokerStateChecker, IbkrRegion, IbkrStateService,
     },
@@ -103,7 +103,7 @@ impl AppReturnState {
 pub async fn run_program<F, Fut>(
     init_application: F,
     interrupt_rcx: &mut tokio::sync::mpsc::Receiver<ConnectionAlert>,
-    sender: tokio::sync::mpsc::Sender<Weak<ApplicationState>>,
+    sender: tokio::sync::mpsc::Sender<Option<Weak<ApplicationState>>>,
 ) where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<ApplicationState, String>>,
@@ -127,23 +127,31 @@ pub async fn run_program<F, Fut>(
                 let interrupt_rcx = &mut *interrupt_rcx;
                 let sigterm = &mut sigterm;
                 let sigint = &mut sigint;
+                macro_rules! update_server {
+                    ($opt_app_state:expr) => {
+                        if let Err(e) = sender.send($opt_app_state).await {
+                            tracing::warn!(
+                                "Failed to send general optional app state to server for use: {e:?}"
+                            );
+                        }
+                    };
+                };
 
                 let app_return_state_res = with_gateway_retry("...", 3, |_| async {
-                    let mut app_state: Arc<ApplicationState> = match init_application().await {
+                    let app_state: Arc<ApplicationState> = match init_application().await {
                         Ok(app_state_res) => Arc::new(app_state_res),
                         Err(e) => {
                             return AppReturnState::InitAppErr(e.to_string());
                         }
                     };
 
-                    if let Err(e) = sender.send(Arc::downgrade(&app_state)).await {
-                        tracing::warn!("Failed to send app_state to server for use: {e:?}");
-                    }
+                    update_server!(Some(Arc::downgrade(&app_state)));
 
                     loop {
                         let next_unavailable = match cloned_scheduler.get_next_broker_unavailable() {
                             Ok(next_dt) => next_dt,
                             Err(e) => {
+                                update_server!(None);
                                 arc_drop_async!(app_state);
                                 return AppReturnState::NoBrokerSchedule(e.to_string());
                             }
@@ -153,6 +161,7 @@ pub async fn run_program<F, Fut>(
                         tokio::select! {
                             // Window expires
                             _ = sleep_until(&next_unavailable_utc) => {
+                                update_server!(None);
                                 arc_drop_async!(app_state);
                                 return AppReturnState::BrokerDown;
                             }
@@ -166,7 +175,8 @@ pub async fn run_program<F, Fut>(
                                         first_event_time: _
                                     } => {
                                         if timeout_occurred {
-                                arc_drop_async!(app_state);
+                                            update_server!(None);
+                                            arc_drop_async!(app_state);
                                             return AppReturnState::UnstableConnMktHours;
                                         } else {
                                             tracing::warn!("🚨 Unstable connection during market hours but no timeout occurred so cautiously proceeding!");
@@ -174,15 +184,18 @@ pub async fn run_program<F, Fut>(
                                         }
                                     }
                                     ConnectionAlert::UnstableConnectionOutsideMarketHours { first_event_time } => {
-                                arc_drop_async!(app_state);
+                                        update_server!(None);
+                                        arc_drop_async!(app_state);
                                         return AppReturnState::UnstableConnOutsideHours(first_event_time);
                                     }
                                     ConnectionAlert::BrokenPipe { first_event_time: _ } => {
-                                arc_drop_async!(app_state);
+                                        update_server!(None);
+                                        arc_drop_async!(app_state);
                                         return AppReturnState::UnstableConnBrokenPipe;
                                     }
                                     ConnectionAlert::APACRESET { first_event_time: _ } => {
-                                arc_drop_async!(app_state);
+                                        update_server!(None);
+                                        arc_drop_async!(app_state);
                                         return AppReturnState::UnstableConnAPAC;
                                     }
                                     ConnectionAlert::AutoRestarting => {
@@ -196,11 +209,13 @@ pub async fn run_program<F, Fut>(
                             // Graceful shutdown
                             _ = sigterm.recv() => {
                                 tracing::info!("SIGTERM received, producing final metrics report before exit");
+                                update_server!(None);
                                 arc_drop_async!(app_state);
                                 return AppReturnState::SigtermTerminalSignal;
                             }
                             _ = sigint.recv() => {
                                 tracing::info!("SIGINT received, producing final metrics report before exit");
+                                update_server!(None);
                                 arc_drop_async!(app_state);
                                 return AppReturnState::SigintTerminalSignal;
                             }

@@ -371,11 +371,28 @@ async fn get_strategy_value(
 async fn check_health(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let trading_app_state = extract_application_state(state).await?;
-    let is_ibkr_up = !IbkrRegion::Apac.is_in_maintenance(Utc::now());
+    let trading_app_state = state.trading_app_state.lock().await;
+    if trading_app_state.is_none() {
+        return Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({ "status": "ok" })),
+        ));
+    }
+
+    let application_state_ref = trading_app_state.as_ref().unwrap();
+    let application_state_opt = application_state_ref.upgrade();
+    if application_state_opt.is_none() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Trading app is currently not running BUT app_state still has Strong Reference to it"
+                .to_string(),
+        ));
+    }
+
+    let trading_app_state = application_state_opt.unwrap();
     match trading_app_state.as_ref() {
         ApplicationState::IbkrState(application_state) => {
-            if (is_ibkr_up && application_state.consolidator.client.is_connected()) || !is_ibkr_up {
+            if application_state.consolidator.client.is_connected() {
                 Ok((
                     StatusCode::OK,
                     axum::Json(serde_json::json!({ "status": "ok" })),
@@ -406,7 +423,7 @@ async fn check_health(
 /// guaranteeing the port is released before the handle is destroyed.
 pub fn init_server(
     addr: &str,
-    mut app_state_rcx: Receiver<Weak<ApplicationState>>,
+    mut app_state_rcx: Receiver<Option<Weak<ApplicationState>>>,
 ) -> Result<ServerHandle, std::io::Error> {
     // Bind synchronously on the caller's thread so bind errors surface here.
     let std_listener = std::net::TcpListener::bind(addr)?;
@@ -438,9 +455,12 @@ pub fn init_server(
                 };
                 let cloned_app_state = app_state.clone();
                 tokio::spawn(async move {
-                    while let Some(application_state) = app_state_rcx.recv().await {
+                    while let Some(application_state_opt) = app_state_rcx.recv().await {
                         let mut trading_app_state = cloned_app_state.trading_app_state.lock().await;
-                        trading_app_state.replace(application_state);
+                        match application_state_opt {
+                            Some(application_state) => trading_app_state.replace(application_state),
+                            None => trading_app_state.take(),
+                        };
                     }
                 });
 
