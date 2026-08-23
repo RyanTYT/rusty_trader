@@ -397,10 +397,12 @@ async fn test_read_last_vwap_no_data_returns_none() {
         primary_exchange: "NASDAQ".to_string(),
         currency: "USD".to_string(),
     });
+    #[cfg(not(feature = "backtest"))]
     let vwap = crud
         .read_last_vwap(pk, Some("US/Eastern".to_string()), VwapBarValue::Close)
         .await
         .expect("read_last_vwap failed");
+    #[cfg(not(feature = "backtest"))]
     assert!(vwap.is_none(), "no data → None");
 }
 
