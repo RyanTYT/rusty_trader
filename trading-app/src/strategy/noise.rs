@@ -35,6 +35,12 @@ pub struct Noise {
     name: String,
     pool: PgPool,
     tokio_handle: tokio::runtime::Handle,
+    /// Generic backtest params (key → value), read by cfg-gated branches in
+    /// `on_bar_update`. Populated from `BacktestConfig.strategy_params["noise"]`
+    /// via [`with_backtest_params`]. `None` under the default build + when no
+    /// `NOISE_*` env vars are set (falls back to hardcoded values).
+    #[cfg(feature = "backtest")]
+    backtest_params: Option<std::collections::HashMap<String, f64>>,
 }
 
 impl PartialEq for Noise {
@@ -67,7 +73,32 @@ impl Noise {
             name: "noise".to_string(),
             pool,
             tokio_handle,
+            #[cfg(feature = "backtest")]
+            backtest_params: None,
         }
+    }
+
+    /// Set the generic backtest params (key → value). The strategy's
+    /// cfg-gated `on_bar_update` branches read from this map via [`param`],
+    /// falling back to hardcoded values when a key is absent.
+    #[cfg(feature = "backtest")]
+    pub fn with_backtest_params(
+        mut self,
+        params: std::collections::HashMap<String, f64>,
+    ) -> Self {
+        self.backtest_params = Some(params);
+        self
+    }
+
+    /// Read a backtest param by key, falling back to `default` if unset (or
+    /// under the default build where `backtest_params` is absent).
+    #[cfg(feature = "backtest")]
+    fn param(&self, name: &str, default: f64) -> f64 {
+        self.backtest_params
+            .as_ref()
+            .and_then(|m| m.get(name))
+            .copied()
+            .unwrap_or(default)
     }
 }
 
@@ -261,8 +292,8 @@ impl Noise {
             most_recent_open_joined,
             most_recent_daily_vol_joined,
             vwap_joined,
-            // current_price_joined,
-            // current_pos_joined,
+            // current_price_thread,
+            // current_pos_thread,
         ) = hotpath::measure_block!("noise_join_db_queries", {
             self.tokio_handle.block_on(async {
                 tokio::join!(
@@ -281,8 +312,8 @@ impl Noise {
             most_recent_open_res,
             most_recent_daily_vol_res,
             vwap_res,
-            // current_price_res,
-            // current_pos_res,
+            // current_price_thread,
+            // current_pos_thread,
         ) = (
             avg_move_since_open_joined.map_err(|e| {
                 tracing::error!("avg_move_since_open_joined failed to resolve: {e:?}");
@@ -300,14 +331,8 @@ impl Noise {
                 tracing::error!("vwap_joined joined failed to resolve: {e:?}");
                 BarUpdateOutcome::NoAction
             })?,
-            // current_price_joined.map_err(|e| {
-            //     tracing::error!("current_price_joined joined failed to resolve: {e:?}");
-            //     BarUpdateOutcome::NoAction
-            // })?,
-            // current_pos_joined.map_err(|e| {
-            //     tracing::error!("current_pos_joined joined failed to resolve: {e:?}");
-            //     BarUpdateOutcome::NoAction
-            // })?,
+            // current_price_thread,
+            // current_pos_thread,
         );
 
         let (
@@ -383,10 +408,21 @@ impl Noise {
                 BarUpdateOutcome::NoAction
             })?;
 
-        let ideal_qty = if most_recent_daily_vol >= 0.04 {
-            70 as i64
+        let ideal_qty = if most_recent_daily_vol >= {
+            #[cfg(feature = "backtest")]
+            { self.param("daily_vol_threshold", 0.04) }
+            #[cfg(not(feature = "backtest"))]
+            { 0.04 }
+        } {
+            #[cfg(feature = "backtest")]
+            { self.param("ideal_qty_high_vol", 70.0) as i64 }
+            #[cfg(not(feature = "backtest"))]
+            { 70 as i64 }
         } else {
-            100 as i64
+            #[cfg(feature = "backtest")]
+            { self.param("ideal_qty_low_vol", 100.0) as i64 }
+            #[cfg(not(feature = "backtest"))]
+            { 100 as i64 }
         };
         let allowable_positions_tuple =
             proportional_integer_reduce(&vec![ideal_qty], &vec![bar.high], curr_available_funds);
@@ -441,6 +477,19 @@ impl Noise {
                 let target_stock_positions_crud =
                     TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
                 let name = self.get_name();
+                #[cfg(feature = "backtest")]
+                {
+                    use crate::backtester::methods::in_memory::state::PositionKey;
+                    if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+                        state.delete_target(&PositionKey {
+                            strategy: name.clone(),
+                            stock: "QQQ".to_string(),
+                            primary_exchange: "NASDAQ".to_string(),
+                            currency: "USD".to_string(),
+                        });
+                        return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
+                    }
+                }
                 hotpath::measure_block!("noise_delete_target_position", {
                     self.tokio_handle.block_on(async move {
                         target_stock_positions_crud
@@ -468,6 +517,23 @@ impl Noise {
             let target_stock_positions_crud =
                 TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
             let name = self.get_name();
+            #[cfg(feature = "backtest")]
+            {
+                use crate::backtester::methods::in_memory::state::PositionKey;
+                if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+                    state.set_target(
+                        PositionKey {
+                            strategy: name.clone(),
+                            stock: "QQQ".to_string(),
+                            primary_exchange: "NASDAQ".to_string(),
+                            currency: "USD".to_string(),
+                        },
+                        qty,
+                        0.0,
+                    );
+                    return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
+                }
+            }
             hotpath::measure_block!("noise_create_or_update_target_position", {
                 self.tokio_handle.block_on(async move {
                     target_stock_positions_crud
