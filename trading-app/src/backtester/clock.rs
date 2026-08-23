@@ -8,34 +8,46 @@
 //! be wrong. The replayer advances this clock to each bar's time before
 //! invoking `on_bar_update`; the as-of query methods (Phase 1) and the price
 //! oracle read it here.
+//!
+//! Lock-free: the time is stored as an `AtomicI64` (timestamp nanos). The
+//! backtester is single-threaded (the replayer's `spawn_blocking` thread is
+//! the only writer/reader), but the clock is shared via `Arc` (replayer +
+//! price supplier) + moved into `spawn_blocking`, so it must be `Send + Sync`
+//! — `AtomicI64` satisfies that without a `Mutex`.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Default)]
 pub struct BacktestClock {
-    now: Mutex<Option<DateTime<Utc>>>,
+    /// Timestamp nanos; `0` = not yet set (so `now()` falls back to wall-clock).
+    now: AtomicI64,
 }
 
 impl BacktestClock {
     pub fn new() -> Self {
         Self {
-            now: Mutex::new(None),
+            now: AtomicI64::new(0),
         }
     }
 
     /// Advance the clock to `t`. Called by the replayer before each tick.
+    /// Lock-free atomic store.
     pub fn set(&self, t: DateTime<Utc>) {
-        *self.now.lock().expect("BacktestClock poisoned") = Some(t);
+        let nanos = t.timestamp_nanos_opt().unwrap_or(0);
+        self.now.store(nanos, Ordering::Release);
     }
 
     /// The current backtest time, or wall-clock `Utc::now()` if never set
     /// (so a stray call before the first tick doesn't panic).
+    /// Lock-free atomic load.
     pub fn now(&self) -> DateTime<Utc> {
-        self.now
-            .lock()
-            .expect("BacktestClock poisoned")
-            .unwrap_or_else(Utc::now)
+        let nanos = self.now.load(Ordering::Acquire);
+        if nanos == 0 {
+            Utc::now()
+        } else {
+            DateTime::<Utc>::from_timestamp_nanos(nanos)
+        }
     }
 }
