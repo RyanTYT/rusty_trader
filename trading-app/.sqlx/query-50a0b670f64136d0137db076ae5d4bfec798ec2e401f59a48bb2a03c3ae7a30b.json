@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT COUNT(*) > $1\n                    FROM market_data.historical_forex_data\n                    WHERE pair = $2\n                        AND bid_open IS NOT NULL\n                        AND ask_open IS NOT NULL\n                        AND time > $3;\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "50a0b670f64136d0137db076ae5d4bfec798ec2e401f59a48bb2a03c3ae7a30b"
+}
