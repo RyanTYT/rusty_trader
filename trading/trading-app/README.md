@@ -1,8 +1,8 @@
 # trading-app
 
-The Rust trading bot at the core of [rusty_trader](../README.md). It connects to IB Gateway via a sync `ibapi` fork, ingests real-time 5-second bars, runs strategies over consolidated bars, reconciles state against the broker, and self-heals through IBKR's nightly restarts and connection drops.
+The Rust trading bot at the core of [rusty_trader](../../README.md). It connects to IB Gateway via a sync `ibapi` fork, ingests real-time 5-second bars, runs strategies over consolidated bars, reconciles state against the broker, and self-heals through IBKR's nightly restarts and connection drops.
 
-> **Navigating the monorepo:** For the backend REST API, see [`backend/README.md`](../backend/README.md). For the LLM research pipeline, see [`llm_service/README.md`](../llm_service/README.md). For the database schema, see [`migrations/README.md`](migrations/README.md).
+> **Navigating the monorepo:** For the backend REST API, see [`api/backend/README.md`](../api/backend/README.md). For the LLM research pipeline, see [`ai/llm_service/README.md`](../ai/llm_service/README.md). For the database schema, see [`migrations/README.md`](migrations/README.md).
 
 ---
 
