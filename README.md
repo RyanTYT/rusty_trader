@@ -8,12 +8,12 @@ A personal live-trading system written in Rust and Python against Interactive Br
 
 | Service                                 | Lang   | Port | Description                                                                                       |
 | --------------------------------------- | ------ | ---- | ------------------------------------------------------------------------------------------------- |
-| [`trading-app/`](trading-app/README.md) | Rust   | 8000 | The trading bot: sync `ibapi`, real-time bars, strategy execution, order management, self-healing |
-| [`backend/`](backend/README.md)         | Rust   | 3000 | REST API: CRUD for positions/orders/transactions, portfolio, strategy control, notifications      |
-| [`llm_service/`](llm_service/README.md) | Python | 8001 | LLM research pipeline: KB triage (STALE/COMPRESS/KEEP) → 5-stage proposal → counter-proposer      |
-| [`scraper/`](scraper/)                  | Rust   | —    | Playwright article scraper → feeds `llm_service`                                                  |
-| [`hotpath-console/`](hotpath-console/)  | —      | —    | Debug console sharing network with `trading-bot`                                                  |
-| `IB/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
+| [`trading/trading-app/`](trading/trading-app/README.md) | Rust   | 8000 | The trading bot: sync `ibapi`, real-time bars, strategy execution, order management, self-healing |
+| [`backend/`](api/backend/README.md)         | Rust   | 3000 | REST API: CRUD for positions/orders/transactions, portfolio, strategy control, notifications      |
+| [`llm_service/`](ai/llm_service/README.md) | Python | 8001 | LLM research pipeline: KB triage (STALE/COMPRESS/KEEP) → 5-stage proposal → counter-proposer      |
+| [`ai/scraper/`](ai/scraper/)                  | Rust   | —    | Playwright article scraper → feeds `llm_service`                                                  |
+| [`api/hotpath-console/`](api/hotpath-console/)  | —      | —    | Debug console sharing network with `trading-bot`                                                  |
+| `infra/ib-gateway/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
 
 The full system — services, shared volumes, and key DB tables:
 
@@ -96,7 +96,7 @@ flowchart LR
 The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature** — every IBKR call blocks, forcing a split-world architecture (blocking I/O on `std::thread`s, async DB on tokio, bridged by `Handle`). The sync architecture keeps the strategy layer pure — adding a strategy is one line:
 
 ```rust
-// trading-app/src/strategy/strategy.rs:110
+// trading/trading-app/src/strategy/strategy.rs:110
 strategy_enum! {
     Noise(Noise),
     Manual(Manual),
@@ -104,7 +104,7 @@ strategy_enum! {
 }
 ```
 
-For the full reasoning (why sync, the `Handle::block_on` bridge, costs), see [`trading-app/README.md`](trading-app/README.md#threading-model--sync-ibapi).
+For the full reasoning (why sync, the `Handle::block_on` bridge, costs), see [`trading/trading-app/README.md`](trading/trading-app/README.md#threading-model--sync-ibapi).
 
 ## The data plane
 
@@ -124,14 +124,14 @@ flowchart TB
 
 ## Subsystem tour
 
-Each subsystem is documented in [`trading-app/README.md`](trading-app/README.md) with verified code snippets:
+Each subsystem is documented in [`trading/trading-app/README.md`](trading/trading-app/README.md) with verified code snippets:
 
-- **[Database & CRUD](trading-app/README.md#database--crud-methods)** — proc-macro derives, generic `CRUD<FK,PK,UK>`, interface enum dispatch, bulk insert. Full schema: [`migrations/README.md`](trading-app/migrations/README.md).
-- **[Execution](trading-app/README.md#execution)** — optimistic order rows (`perm_id=-1`), FX attachments, redb `OrderStore`, order-update stream, startup reconciliation.
-- **[Strategy](trading-app/README.md#strategy)** — `strategy_enum!` macro, `BarUpdateOutcome`, rolling stats, `proportional_integer_reduce`.
-- **[Scheduling](trading-app/README.md#scheduling--pure-helpers)** — three-tier purity model, `HashContract` hash/eq split, `sync_timeout`.
-- **[Lifecycle](trading-app/README.md#lifecycle--self-healing)** — `AppReturnState` restart loop, log-stream-as-control-plane, `IBGateway` non-constructibility, `test_internals` seam.
-- **[Testing](trading-app/README.md#testing)** — 3-tier suite (275 unit / 18 integration / 16 live-IBKR smoke).
+- **[Database & CRUD](trading/trading-app/README.md#database--crud-methods)** — proc-macro derives, generic `CRUD<FK,PK,UK>`, interface enum dispatch, bulk insert. Full schema: [`migrations/README.md`](trading/trading-app/migrations/README.md).
+- **[Execution](trading/trading-app/README.md#execution)** — optimistic order rows (`perm_id=-1`), FX attachments, redb `OrderStore`, order-update stream, startup reconciliation.
+- **[Strategy](trading/trading-app/README.md#strategy)** — `strategy_enum!` macro, `BarUpdateOutcome`, rolling stats, `proportional_integer_reduce`.
+- **[Scheduling](trading/trading-app/README.md#scheduling--pure-helpers)** — three-tier purity model, `HashContract` hash/eq split, `sync_timeout`.
+- **[Lifecycle](trading/trading-app/README.md#lifecycle--self-healing)** — `AppReturnState` restart loop, log-stream-as-control-plane, `IBGateway` non-constructibility, `test_internals` seam.
+- **[Testing](trading/trading-app/README.md#testing)** — 3-tier suite (275 unit / 18 integration / 16 live-IBKR smoke).
 
 ## Environment
 
@@ -155,7 +155,7 @@ docker-compose up                    # full stack (IB Gateway + db + all service
 cd trading-app && cargo check --lib  # type-check the library
 ```
 
-Three test binaries in `trading-app/`:
+Three test binaries in `trading/trading-app/`:
 
 | Binary              | Tests                                                 | Needs                   |
 | ------------------- | ----------------------------------------------------- | ----------------------- |
@@ -179,7 +179,7 @@ cargo test --test smoke_tests -- --ignored              # needs live IB Gateway
 - **Magic numbers** — `$1000` FX tolerance, `MAX_SUB_TRY_TIMES=50`, `HOT_WINDOW=200ms`. Tuned-in-practice, not parameterized.
 - **`order_ref` overloaded as `"{strategy}:{price}"`** — stringly-typed contract with `.expect()` on parse.
 - **FX calendar** uses a minimal 3-holiday set — `nyse-holiday-cal` might be better.
-- **Permission stalls** — `get_current_price` can hang 30-45s per contract; multiply by N option contracts and `PendingDbQuery` can exceed the 1-min FX bar threshold. Check `hotpath-console` first.
+- **Permission stalls** — `get_current_price` can hang 30-45s per contract; multiply by N option contracts and `PendingDbQuery` can exceed the 1-min FX bar threshold. Check `api/hotpath-console` first.
 
 ## My journey
 
