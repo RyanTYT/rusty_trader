@@ -69,8 +69,8 @@ pub async fn load_market_data(
         try_alpaca(contracts, start, end, pool).await?;
     }
 
-    // 3. Refresh continuous aggregate
-    refresh_continuous_aggregate(pool).await;
+    // 3. Refresh continuous aggregate for the backtest period.
+    refresh_continuous_aggregate(pool, start, end).await;
 
     // 4. Verify data exists
     for contract in contracts {
@@ -363,16 +363,26 @@ async fn try_alpaca(
 
 // ─── Continuous aggregate refresh ─────────────────────────────────────────
 
-async fn refresh_continuous_aggregate(pool: &PgPool) {
-    tracing::info!("Refreshing daily_ohlcv continuous aggregate...");
+/// Refresh the `daily_ohlcv` continuous aggregate for `[start, end]`. This
+/// also updates the `daily_volatility` VIEW (it reads from `daily_ohlcv`).
+/// `pub` so the optimizer can call it directly (when the data is already
+/// loaded but the aggregate needs refreshing).
+pub async fn refresh_continuous_aggregate(
+    pool: &PgPool,
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+) {
+    tracing::info!("Refreshing daily_ohlcv continuous aggregate for [{start}, {end}]...");
     // Runtime query (not sqlx::query! macro) to avoid needing .sqlx/ cache.
     if let Err(e) = sqlx::query(
         r#"CALL refresh_continuous_aggregate(
             'market_data.daily_ohlcv',
-            NOW() - INTERVAL '365 days',
-            NOW()
+            $1,
+            $2
         );"#,
     )
+    .bind(start)
+    .bind(end)
     .execute(pool)
     .await
     {

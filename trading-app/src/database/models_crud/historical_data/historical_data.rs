@@ -848,6 +848,16 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String> {
+        // In-memory cache (backtest only): look up the pre-computed value.
+        #[cfg(feature = "backtest")]
+        {
+            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+                if let Some(vals) = cache.get(&now) {
+                    return Ok(Some(vals.vwap));
+                }
+            }
+        }
+
         #[derive(FromRow)]
         struct Vwap {
             vwap: f64,
@@ -1200,6 +1210,13 @@ impl NoiseOps for HistoricalDataCRUD {
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
     ) -> Result<f64, String> {
+        // In-memory cache: look up the pre-computed value (set by the sweep
+        // runner via the thread-local). Falls through to the SQL if not set.
+        if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+            if let Some(vals) = cache.get(&now) {
+                return Ok(vals.avg_move_since_open);
+            }
+        }
         match sqlx::query_scalar!(
             r#"
             WITH latest AS (
@@ -1281,6 +1298,16 @@ impl NoiseOps for HistoricalDataCRUD {
         // `now` = bar time (the fn param) — prevents look-ahead bias.
         #[cfg(not(feature = "backtest"))]
         let now = Utc::now();
+
+        // In-memory cache (backtest only): look up the pre-computed value.
+        #[cfg(feature = "backtest")]
+        {
+            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+                if let Some(vals) = cache.get(&now) {
+                    return Ok(vals.most_recent_daily_open);
+                }
+            }
+        }
 
         #[derive(FromRow)]
         struct DailyOpenClose {
@@ -1394,6 +1421,13 @@ impl NoiseOps for HistoricalDataCRUD {
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
     ) -> Result<f64, String> {
+        // In-memory cache: look up the pre-computed value. Falls through to
+        // the SQL if not set.
+        if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+            if let Some(vals) = cache.get(&now) {
+                return Ok(vals.daily_vol);
+            }
+        }
         let daily_vol = sqlx::query_scalar!(
             r#"
             SELECT rolling_volatility

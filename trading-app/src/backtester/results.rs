@@ -24,7 +24,7 @@ use crate::database::models_crud::transactions::transactions::{
 use crate::backtester::equity::{EquityCurve, EquitySnapshot};
 use crate::backtester::methods::in_memory::state::InMemoryState;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BacktestResults {
     pub starting_capital: f64,
     pub final_equity: f64,
@@ -40,7 +40,7 @@ pub struct BacktestResults {
     pub equity_curve: Vec<EquityPoint>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EquityPoint {
     pub time: String,
     pub cash: f64,

@@ -7,6 +7,7 @@
 //!   reconcile (reads mocked targets + adjusts positions/transactions/cash).
 //! - [`replay::InMemoryReplay`] — the `BacktestMethod` impl.
 
+pub mod historical_cache;
 pub mod reconcile;
 pub mod replay;
 pub mod state;
