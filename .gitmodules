@@ -1,3 +1,6 @@
+[submodule "trading-app/spmc-ring"]
+	path = trading-app/spmc-ring
+	url = https://github.com/RyanTYT/spmc_ring_rs.git
 [submodule "trading/trading-app/spmc-ring"]
 	path = trading/trading-app/spmc-ring
 	url = https://github.com/RyanTYT/spmc_ring_rs.git
