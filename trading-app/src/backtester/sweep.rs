@@ -24,6 +24,9 @@ use crate::strategy::strategy::StrategyEnum;
 use crate::backtester::clock::BacktestClock;
 use crate::backtester::config::BacktestConfig;
 use crate::backtester::methods::in_memory::replay::{InMemoryReplay, InMemoryRunContext};
+use crate::backtester::methods::in_memory::historical_cache::{
+    self, InMemoryHistoricalCache,
+};
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::results::BacktestResults;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
@@ -56,6 +59,7 @@ pub fn run_backtest_sweep(
     config: &BacktestConfig,
     param_grid: &[HashMap<String, f64>],
     bars: &[HistoricalDataFullKeys],
+    historical_cache: &Arc<InMemoryHistoricalCache>,
     handle: &tokio::runtime::Handle,
 ) -> Result<(), String> {
     let (tx, rx) = std::sync::mpsc::channel::<SweepResult>();
@@ -83,8 +87,9 @@ pub fn run_backtest_sweep(
             let task_pool = pool.clone();
             let task_handle = handle.clone();
             let task_params = params.clone();
+            let task_cache = historical_cache.clone();
             s.spawn(move |_| {
-                match run_one_backtest(&task_pool, config, &task_params, bars, &task_handle) {
+                match run_one_backtest(&task_pool, config, &task_params, bars, &task_cache, &task_handle) {
                     Ok(result) => {
                         let _ = task_tx.send(result);
                     }
@@ -109,11 +114,16 @@ pub fn run_backtest_sweep(
 /// runs `InMemoryReplay::run_with_bars`, + computes the results in-memory.
 /// No `BacktestContext` (avoids `OrderStore::open()` file contention across
 /// parallel backtests — the order_store is unused in-memory).
-fn run_one_backtest(
+///
+/// `pub` so the `optimizer` crate (the research/optimization layer) can call
+/// it directly — the optimizer builds a param grid, runs each via this, +
+/// scores the results.
+pub fn run_one_backtest(
     pool: &sqlx::PgPool,
     config: &BacktestConfig,
     params: &HashMap<String, f64>,
     bars: &[HistoricalDataFullKeys],
+    historical_cache: &Arc<InMemoryHistoricalCache>,
     handle: &tokio::runtime::Handle,
 ) -> Result<SweepResult, String> {
     let noise = Noise::new(pool.clone(), handle.clone()).with_backtest_params(params.clone());
@@ -137,6 +147,7 @@ fn run_one_backtest(
         clock: &clock,
         prices: &prices,
         consolidator: &consolidator,
+        historical_cache: Some(historical_cache.clone()),
     };
     let (equity, state) = InMemoryReplay.run_with_bars(&in_mem_ctx, bars)?;
     let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd);

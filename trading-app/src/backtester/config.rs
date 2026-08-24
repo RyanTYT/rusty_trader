@@ -147,6 +147,25 @@ impl BacktestConfig {
         self
     }
 
+    /// Set the stock contract (symbol, primary exchange, currency). A
+    /// convenience over `.contracts(vec![...])` — builds the contract via
+    /// `build_contract_from_stock` (pub(crate), so not directly accessible
+    /// from the optimizer crate).
+    pub fn stock(
+        mut self,
+        stock: impl Into<String>,
+        primary_exchange: impl Into<String>,
+        currency: impl Into<String>,
+    ) -> Self {
+        let contract = crate::helpers::contract::build_contract_from_stock(
+            &stock.into(),
+            &primary_exchange.into(),
+            &currency.into(),
+        );
+        self.subscribed_contracts = vec![contract];
+        self
+    }
+
     /// Where to write the JSON results.
     pub fn output_path(mut self, path: impl Into<String>) -> Self {
         self.output_path = path.into();

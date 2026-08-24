@@ -31,6 +31,7 @@ use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::methods::in_memory::reconcile::handle_bar_update_outcome_in_memory;
 use crate::backtester::methods::in_memory::state::InMemoryState;
 use crate::backtester::methods::in_memory::thread_local;
+use crate::backtester::methods::in_memory::historical_cache;
 
 /// Lighter context for the in-memory run — only the pieces `InMemoryReplay`
 /// needs (no broker/order_engine/order_store, which are unused in-memory +
@@ -43,6 +44,11 @@ pub struct InMemoryRunContext<'a> {
     pub clock: &'a BacktestClock,
     pub prices: &'a BacktestPriceSupplier,
     pub consolidator: &'a Arc<Consolidator>,
+    /// Pre-computed historical-query cache (the 4 `NoiseOps` + `read_last_vwap`
+    /// values per bar). `Some` in the sweep route (pre-computed once, shared);
+    /// `None` in the single-backtest route (the CRUD methods fall through to
+    /// the SQL per bar).
+    pub historical_cache: Option<Arc<crate::backtester::methods::in_memory::historical_cache::InMemoryHistoricalCache>>,
 }
 
 /// In-memory backtest method. Unit struct — no state; the `InMemoryState` is
@@ -69,6 +75,12 @@ impl InMemoryReplay {
         // 2. Set the thread-local so the strategy's cfg-gated CRUD branches +
         //    the Consolidator's read branch use the InMemoryState.
         thread_local::set(state.clone());
+        // Set the historical cache (if provided) so the 4 NoiseOps +
+        // read_last_vwap cfg-gated branches look up the pre-computed values
+        // instead of hitting the DB per bar.
+        if let Some(cache) = &ctx.historical_cache {
+            historical_cache::set(cache.clone());
+        }
 
         // 3. Replay.
         let contract: Contract = ctx
@@ -123,6 +135,7 @@ impl InMemoryReplay {
         // 5. Clear the thread-local (the Arc<InMemoryState> is returned, so the
         //    sweep can still compute results from it).
         thread_local::clear();
+        historical_cache::clear();
         Ok((equity, state))
     }
 }
@@ -143,6 +156,7 @@ impl BacktestMethod for InMemoryReplay {
             clock: &ctx.clock,
             prices: &ctx.prices,
             consolidator: &ctx.consolidator,
+            historical_cache: None,
         };
         let (equity, _state) = self.run_with_bars(&in_mem_ctx, &bars)?;
         Ok(equity)

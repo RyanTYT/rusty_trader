@@ -62,6 +62,11 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
         tracing::info!("Sweep: {} backtests from noise.json", param_grid.len());
         // Load the bars once (shared across all sweep backtests — no per-backtest DB query).
         let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+        // Pre-compute the 4 historical-query values per bar ONCE (the strategy's
+        // `NoiseOps` + `read_last_vwap` queries), shared across all sweep
+        // backtests via a thread-local. Eliminates the per-bar DB queries.
+        let bars_contract = config.subscribed_contracts.first().cloned().expect("subscribed_contracts non-empty");
+        let historical_cache = crate::backtester::methods::in_memory::historical_cache::precompute_historical_cache(&pool, &bars, &bars_contract).await;
         // Run the sweep (sync, CPU-bound) on a blocking thread.
         let pool_clone = pool.clone();
         let handle_clone = handle.clone();
@@ -71,6 +76,7 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
                 &config,
                 &param_grid,
                 &bars,
+                &historical_cache,
                 &handle_clone,
             )
         })
