@@ -4,12 +4,12 @@ services:
     platform: linux/amd64
     restart: always
     build:
-      context: ./IB
+      context: ./infra/ib-gateway
     stdin_open: true
     tty: true
     privileged: true
     security_opt:
-      - seccomp:./IB/config/chrome.json
+      - seccomp:./infra/ib-gateway/config/chrome.json
     devices:
       - /dev/snd/:/dev/snd/
     ipc: host
@@ -25,7 +25,7 @@ services:
   trading-bot:
     restart: always
     build:
-      context: ./trading-app # assumes Dockerfile is in the root directory
+      context: ./trading/trading-app # assumes Dockerfile is in the root directory
       dockerfile: Dockerfile
     platform: linux/amd64
     volumes:
@@ -70,7 +70,7 @@ services:
 
   hotpath-console:
     build:
-      context: ./hotpath-console
+      context: ./api/hotpath-console
     network_mode: "service:trading-bot"
     stdin_open: true
     tty: true
@@ -80,7 +80,7 @@ services:
 
   backend:
     build:
-      context: ./backend # assumes Dockerfile is in the root directory
+      context: ./api/backend # assumes Dockerfile is in the root directory
     restart: always
     platform: linux/amd64
     dns:
@@ -122,7 +122,7 @@ services:
     image: timescale/timescaledb:latest-pg17
     restart: always
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data # Mount a volume for persistent PostgreSQL data
+      - ./data/postgres-data:/var/lib/postgresql/data # Mount a volume for persistent PostgreSQL data
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PW}
@@ -154,7 +154,7 @@ services:
   test-trading-bot:
     restart: "no"
     build:
-      context: ./trading-app
+      context: ./trading/trading-app
       dockerfile: Dockerfile.test
     platform: linux/amd64
     volumes:
@@ -193,11 +193,11 @@ services:
   backtester:
     restart: "no"
     build:
-      context: ./trading-app
+      context: ./trading/trading-app
       dockerfile: Dockerfile.backtest
     platform: linux/amd64
     volumes:
-      - ./backtest-results:/data
+      - ./data/backtest-results:/data
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
       - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
@@ -227,7 +227,7 @@ services:
   # ── Rust Playwright scraper ───────────────────────────────────────────────
   scraper:
     build:
-      context: ./scraper
+      context: ./ai/scraper
     shm_size: "2gb"
     environment:
       - ARTICLES_PATH=/data/scraped_articles
@@ -248,7 +248,7 @@ services:
   # ── Python LLM orchestration service ─────────────────────────────────────
   llm_service:
     build:
-      context: ./llm_service
+      context: ./ai/llm_service
     ports:
       - 8001:8001 # internal only — not exposed to external network
     environment:
