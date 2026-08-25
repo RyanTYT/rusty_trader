@@ -46,7 +46,7 @@ COPY migrations ./migrations
 RUN mkdir -p src bin && \
     echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs && \
     echo "fn main() {}" > src/bin/backtest.rs && \
-    cargo build --release --features backtest && \
+    cargo build --release --bin $APP_NAME --features backtest && \
     rm -rf src bin
 
 # Now copy the actual source code
@@ -55,7 +55,7 @@ COPY src ./src
 # Build the backtest binary (--features backtest gates the backtester module)
 # Touch src/bin/backtest.rs to force rebuild of the application code
 RUN touch src/bin/backtest.rs && \
-    cargo build --release --features backtest && \
+    cargo build --release --bin $APP_NAME --features backtest && \
     cp target/release/$APP_NAME /bin/backtest
 
 ################################################################################
