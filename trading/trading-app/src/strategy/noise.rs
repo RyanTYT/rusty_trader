@@ -13,7 +13,6 @@ use yfinance_rs::NewsTab;
 #[cfg(feature = "backtest")]
 use crate::backtester::methods::in_memory::historical_cache::CacheQuery;
 use crate::strategy::helpers::rolling_fn::{RollingDayVwap, RollingMean, RollingStd};
-use crate::strategy::helpers::rolling_window::RollingWindow;
 use crate::strategy::strategy::StrategyDetails;
 use crate::{
     database::{
