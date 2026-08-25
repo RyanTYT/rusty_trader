@@ -162,7 +162,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     pub fn hook_strategy(
         &mut self,
         mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
-        strategy: StrategyEnum,
+        mut strategy: StrategyEnum,
 
         order_engine: OrderEngine,
         consolidator: Weak<Consolidator>,
@@ -181,7 +181,9 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
         let thread_handle = std::thread::Builder::new()
             .name(format!("{}_strat", strategy.get_name()))
             .spawn(move || {
-                let strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
+                let strategy_detail = strategy.get_strategy_details();
+                let strategy_name = strategy.get_name();
+                let mut strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
                     strategy.on_bar_update(
                         contract,
                         &bar,
@@ -204,7 +206,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                         &client,
                         &consolidator,
                         bar_update_outcome,
-                        &strategy,
+                        &strategy_detail,
                         &order_store_arc
                     );
                 };
@@ -215,7 +217,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let mut agg_bars: Vec<Option<HistoricalDataFullKeys>> = vec![None; consumers.len()];
                 // let gauge_name = format!("{}_strat_bar_rcv_spin_loop", strategy.get_name());
                 let gauge_name: &'static str = Box::leak(
-                    format!("{}_strat_bar_rcv_spin_loop", strategy.get_name()).into_boxed_str()
+                    format!("{}_strat_bar_rcv_spin_loop", strategy_name).into_boxed_str()
                 );
 
                 while is_alive.load(Ordering::Acquire) {
@@ -233,7 +235,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     let mut received = vec![false; active.len()];
 
                     hotpath::measure_block!("sleep_until_deadline", {
-                        sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy.get_name());
+                        sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy_name);
                     });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
@@ -252,12 +254,12 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                         match consumers[idx].get_bar_type() {
                                             IbkrBarType::Normal => {
                                                 if let Err(e) = Self::dispatch_bar(
-                                                    &strategy.get_name(),
+                                                    &strategy_name,
                                                     &consumers[idx].contract,
                                                     &consumers[idx].what_to_show,
                                                     &mut small_bars[idx],
                                                     None,
-                                                    strategy_on_bar_update,
+                                                    &mut strategy_on_bar_update,
                                                     handle_bar_update_outcome,
                                                 ) {
                                                     tracing::error!(
@@ -269,12 +271,12 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                 if received[slot + 1] {
                                                     // build bar
                                                     if let Err(e) = Self::dispatch_bar(
-                                                        &strategy.get_name(),
+                                                        &strategy_name,
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
                                                         agg_bars.get_mut(idx + 1).unwrap().take(),
-                                                        strategy_on_bar_update,
+                                                        &mut strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
                                                         tracing::error!(
@@ -303,12 +305,12 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                 if received[slot - 1] {
                                                     // build bar
                                                     if let Err(e) = Self::dispatch_bar(
-                                                        &strategy.get_name(),
+                                                        &strategy_name,
                                                         &consumers[idx].contract,
                                                         &consumers[idx].what_to_show,
                                                         &mut small_bars[idx],
                                                         agg_bars.get_mut(idx - 1).unwrap().take(),
-                                                        strategy_on_bar_update,
+                                                        &mut strategy_on_bar_update,
                                                         handle_bar_update_outcome,
                                                     ) {
                                                         tracing::error!(
@@ -395,11 +397,11 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
         what_to_show: &WhatToShow,
         small_bars: &mut VecDeque<Bar>,
         other_fx_bar: Option<HistoricalDataFullKeys>,
-        strategy_on_bar_update: OnBarUpdate,
+        mut strategy_on_bar_update: OnBarUpdate,
         handle_bar_update_outcome: HandleBarUpdate,
     ) -> Result<(), String>
     where
-        OnBarUpdate: Fn(&Contract, HistoricalDataFullKeys) -> Result<BarUpdateOutcome, String>,
+        OnBarUpdate: FnMut(&Contract, HistoricalDataFullKeys) -> Result<BarUpdateOutcome, String>,
         HandleBarUpdate: Fn(BarUpdateOutcome),
     {
         match AssetType::from_str(&contract.security_type) {

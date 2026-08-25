@@ -88,7 +88,6 @@ impl ApplicationState {
     }
 }
 
-#[derive(Clone)]
 pub struct StrategyParameters {
     // pub visibility FROM pub(crate) visibility ONLY for testing purposes
     pub strategy: StrategyEnum,
@@ -123,7 +122,7 @@ pub async fn init_strategies(
         .expect("Expected QQQ contract")
         .clone();
     let noise_strat_params = StrategyParameters {
-        strategy: noise.clone(),
+        strategy: noise,
         subscribed_contracts: vec![DataSubscription::new(
             noise_contract.clone(),
             RealtimeWhatToShow::Trades,
@@ -136,7 +135,7 @@ pub async fn init_strategies(
         .expect("Expected Manual contract")
         .clone();
     let manual_params = StrategyParameters {
-        strategy: manual.clone(),
+        strategy: manual,
         subscribed_contracts: vec![
             DataSubscription::new(manual_contract.clone(), RealtimeWhatToShow::Bid),
             DataSubscription::new(manual_contract.clone(), RealtimeWhatToShow::Ask),
@@ -149,7 +148,7 @@ pub async fn init_strategies(
         .expect("Expected Unknown contract")
         .clone();
     let unknown_params = StrategyParameters {
-        strategy: unknown.clone(),
+        strategy: unknown,
         subscribed_contracts: vec![
             DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Bid),
             DataSubscription::new(unknown_contract.clone(), RealtimeWhatToShow::Ask),
@@ -327,13 +326,11 @@ pub async fn init_app(
         tokio::runtime::Handle::current(),
     )
     .await;
-    let strategy_map = {
+    let strategy_details = {
         let mut raw_strategy_map = HashMap::new();
         for strat_param in strat_params.iter() {
-            raw_strategy_map.insert(
-                strat_param.strategy.get_name(),
-                strat_param.strategy.clone(),
-            );
+            let strategy_detail = strat_param.strategy.get_strategy_details();
+            raw_strategy_map.insert(strategy_detail.name.clone(), strategy_detail);
         }
         Arc::new(raw_strategy_map)
     };
@@ -403,32 +400,34 @@ pub async fn init_app(
     let order_update_stream_controller = OrderUpdateStreamController::new(
         pool.clone(),
         Arc::downgrade(&master_client),
-        strategy_map,
+        strategy_details,
         Some(default_strategy.clone()),
         tokio::runtime::Handle::current(),
         backed_up_orders.clone(),
     )
     .expect("Expected OrderUpdateStreamController initialisation to be ok");
 
-    let handle = tokio::runtime::Handle::current();
+    // let handle = tokio::runtime::Handle::current();
     let strategy_threads = strat_params.into_iter().map(|strat_param| {
         let mut strategy_data_bundler = StrategyDataBundler::new(contract_scheduler.clone());
         let cloned_consolidator = consolidator.clone();
         let cloned_order_engine = order_engine.clone();
         let cloned_client_1 = client_1.clone();
         let cloned_backed_up_orders = backed_up_orders.clone();
-        let handle = handle.clone();
+        // let handle = handle.clone();
         async move {
-            let strategy = strat_param.strategy.clone();
-            let strat_name = strategy.get_name();
-            let consolidator = cloned_consolidator.clone();
-            if let Err(e) = tokio::task::spawn_blocking(move || {
-                handle.block_on(strategy.warm_up_data(&consolidator))
-            })
-            .await
-            {
-                tracing::error!("Failed to initialise strategy ({}): {e:?}", strat_name)
-            };
+            let mut strategy = strat_param.strategy;
+            // let strat_name = strategy.get_name();
+            // let consolidator = cloned_consolidator.clone();
+            strategy.warm_up_data(&cloned_consolidator);
+
+            // if let Err(e) = tokio::task::spawn_blocking(move || {
+            //     handle.block_on(strategy.warm_up_data(&consolidator))
+            // })
+            // .await
+            // {
+            //     tracing::error!("Failed to initialise strategy ({}): {e:?}", strat_name)
+            // };
             let consumers = strat_param
                 .subscribed_contracts
                 .iter()
@@ -447,7 +446,7 @@ pub async fn init_app(
                 .collect();
             strategy_data_bundler.hook_strategy(
                 consumers,
-                strat_param.strategy,
+                strategy,
                 cloned_order_engine.clone(),
                 Arc::downgrade(&cloned_consolidator),
                 Arc::downgrade(&cloned_client_1),

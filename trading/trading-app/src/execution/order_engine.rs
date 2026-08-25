@@ -50,7 +50,7 @@ use crate::{
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxAttachments},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
-    strategy::strategy::{BarUpdateOutcome, StrategyEnum, StrategyExecutor},
+    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyEnum, StrategyExecutor},
 };
 
 // pub struct StaleOrderEngine {
@@ -209,9 +209,10 @@ impl OrderEngine {
         price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
 
         bar_update_outcome: BarUpdateOutcome,
-        strategy: &StrategyEnum,
+        strategy_detail: &StrategyDetails,
         order_store: &OrderStore,
     ) {
+        let strategy_name_orig = strategy_detail.name.clone();
         match bar_update_outcome {
             BarUpdateOutcome::EmitOrders(orders_ibkr) => {
                 #[cfg(not(feature = "backtest"))]
@@ -234,11 +235,12 @@ impl OrderEngine {
                     let target_positions_crud =
                         TargetPositionsCRUD::from(&asset_type, self.pool.clone());
                     let target_positions_crud_clone = target_positions_crud.clone();
+                    let strategy_name = strategy_name_orig.clone();
                     let target_pos_diffs =
                         match hotpath::measure_block!("get_target_pos_diff_by_strat", {
                             self.tokio_handle.block_on(async move {
                                 target_positions_crud_clone
-                                    .get_target_pos_diff_by_strat(&strategy.get_name())
+                                    .get_target_pos_diff_by_strat(&strategy_name)
                                     .await
                             })
                         }) {
@@ -250,10 +252,9 @@ impl OrderEngine {
                         };
                     // Check if all orders alr open
                     let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+                    let strategy_name = strategy_name_orig.clone();
                     let mut open_orders = match self.tokio_handle.block_on(async move {
-                        open_orders_crud
-                            .get_orders_for_strat(&strategy.get_name())
-                            .await
+                        open_orders_crud.get_orders_for_strat(&strategy_name).await
                     }) {
                         Ok(v) => v,
                         Err(e) => {
@@ -267,7 +268,7 @@ impl OrderEngine {
                         is_from_db: true,
                     })
                     .collect::<Vec<LocalOpenOrder>>();
-                    match order_store.load_orders(&strategy.get_name()) {
+                    match order_store.load_orders(&strategy_name_orig) {
                         Ok(v) => v.unwrap_or(vec![]),
                         Err(e) => {
                             tracing::error!("Failed to load_orders - panicked!: {e:?}");
@@ -304,7 +305,7 @@ impl OrderEngine {
                     //     )
                     // );
                     let mut fx_attachments = hotpath::measure_block!("compute_fx_attachments", {
-                        if !strategy.is_fx_strategy() {
+                        if !strategy_detail.is_fx_strategy {
                             tracing::info!("Strat is not FX Strat");
                             let mut funds = HashMap::new();
                             let mut funds_from_selling = HashMap::<HashContract, Vec<f64>>::new();
@@ -428,7 +429,7 @@ impl OrderEngine {
                                 funds,
                                 funds_from_selling,
                                 insufficient_funds,
-                                strategy.get_name(),
+                                &strategy_name_orig,
                             )
                         } else {
                             FxAttachments {
@@ -460,7 +461,6 @@ impl OrderEngine {
                         let pool = self.pool.clone();
                         #[cfg(not(feature = "backtest"))]
                         let weak_client_cloned = weak_client.clone();
-                        let strat = strategy.get_name();
 
                         // Determine attachments for this contract:
                         //   - If it's a sell with an FX chain:    attach the FX contract(s)
@@ -487,7 +487,7 @@ impl OrderEngine {
                                 avg_price,
                             )
                         };
-                        order.order_ref = strat;
+                        order.order_ref = strategy_name_orig.clone();
                         order.transmit = true;
                         let order_ibkr = OrderIBKR::new(contract, order, -1);
                         orders.push_back(order_ibkr);
@@ -519,7 +519,7 @@ impl OrderEngine {
 
                     if !fx_attachments.backed_up_orders.is_empty() {
                         if let Err(e) = order_store
-                            .store_orders(&strategy.get_name(), &fx_attachments.backed_up_orders)
+                            .store_orders(&strategy_name_orig, &fx_attachments.backed_up_orders)
                         {
                             tracing::error!(
                                 "Failed to run store_orders for order_store in handle_bar_update_outcome: {e:?}"

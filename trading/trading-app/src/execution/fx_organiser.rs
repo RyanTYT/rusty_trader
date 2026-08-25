@@ -26,7 +26,7 @@ impl OrderEngine {
         funds: HashMap<String, f64>,
         funds_from_selling: HashMap<HashContract, Vec<f64>>,
         insufficient_funds: HashMap<HashContract, ((f64, f64), f64)>,
-        strategy: String,
+        strategy: &str,
     ) -> FxAttachments {
         let mut remaining_proceeds: HashMap<HashContract, f64> = funds_from_selling
             .into_iter()
@@ -71,7 +71,7 @@ impl OrderEngine {
 
                 // FX order: buy `consumed` units of buy_currency (e.g. buy USD)
                 let mut fx_order = market_order(ibapi::orders::Action::Buy, consumed);
-                fx_order.order_ref = strategy.clone();
+                fx_order.order_ref = strategy.to_string();
 
                 sell_to_fx
                     .entry(sell_contract.clone())
