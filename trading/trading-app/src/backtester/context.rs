@@ -13,11 +13,11 @@ use crate::execution::order_engine::OrderEngine;
 use crate::market_data::consolidator::Consolidator;
 use crate::market_data::handler::MarketDataHandler;
 use crate::market_data::traits::current_price::PriceSupplier;
-use crate::strategy::strategy::StrategyEnum;
+use crate::strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor};
 
-use crate::backtester::execution::broker::BacktestBroker;
 use crate::backtester::clock::BacktestClock;
 use crate::backtester::config::BacktestConfig;
+use crate::backtester::execution::broker::BacktestBroker;
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 
 pub struct BacktestContext {
@@ -31,6 +31,7 @@ pub struct BacktestContext {
     pub order_engine: OrderEngine,
     pub order_store: Arc<OrderStore>,
     pub strategy: StrategyEnum,
+    pub strategy_details: StrategyDetails,
 }
 
 impl BacktestContext {
@@ -62,9 +63,9 @@ impl BacktestContext {
             market_data_handler,
         ));
         let order_engine = OrderEngine::new(pool.clone(), handle.clone());
-        let order_store = Arc::new(
-            OrderStore::open().expect("Expected to open OrderStore for backtest"),
-        );
+        let order_store =
+            Arc::new(OrderStore::open().expect("Expected to open OrderStore for backtest"));
+        let strategy_details = strategy.get_strategy_details();
         Self {
             pool,
             handle,
@@ -76,6 +77,7 @@ impl BacktestContext {
             order_engine,
             order_store,
             strategy,
+            strategy_details,
         }
     }
 }

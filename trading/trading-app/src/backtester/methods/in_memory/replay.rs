@@ -28,10 +28,10 @@ use crate::backtester::methods::BacktestMethod;
 use crate::backtester::methods::load_bars;
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 
+use crate::backtester::methods::in_memory::historical_cache;
 use crate::backtester::methods::in_memory::reconcile::handle_bar_update_outcome_in_memory;
 use crate::backtester::methods::in_memory::state::InMemoryState;
 use crate::backtester::methods::in_memory::thread_local;
-use crate::backtester::methods::in_memory::historical_cache;
 
 /// Lighter context for the in-memory run — only the pieces `InMemoryReplay`
 /// needs (no broker/order_engine/order_store, which are unused in-memory +
@@ -39,7 +39,7 @@ use crate::backtester::methods::in_memory::historical_cache;
 /// sweep backtests). Built per-backtest by the sweep runner.
 pub struct InMemoryRunContext<'a> {
     pub config: &'a BacktestConfig,
-    pub strategy: &'a StrategyEnum,
+    pub strategy: StrategyEnum,
     pub handle: &'a tokio::runtime::Handle,
     pub clock: &'a BacktestClock,
     pub prices: &'a BacktestPriceSupplier,
@@ -48,7 +48,9 @@ pub struct InMemoryRunContext<'a> {
     /// values per bar). `Some` in the sweep route (pre-computed once, shared);
     /// `None` in the single-backtest route (the CRUD methods fall through to
     /// the SQL per bar).
-    pub historical_cache: Option<Arc<crate::backtester::methods::in_memory::historical_cache::InMemoryHistoricalCache>>,
+    pub historical_cache: Option<
+        Arc<crate::backtester::methods::in_memory::historical_cache::InMemoryHistoricalCache>,
+    >,
 }
 
 /// In-memory backtest method. Unit struct — no state; the `InMemoryState` is
@@ -62,11 +64,12 @@ impl InMemoryReplay {
     /// `BacktestResults::compute_in_memory`).
     pub fn run_with_bars(
         &self,
-        ctx: &InMemoryRunContext,
+        ctx: InMemoryRunContext,
         bars: &[HistoricalDataFullKeys],
     ) -> Result<(EquityCurve, Arc<InMemoryState>), String> {
         // 1. Create + seed the in-memory state (CASH:SGD = starting capital).
         let strat_name = ctx.strategy.get_name();
+        let mut strategy = ctx.strategy;
         let state = Arc::new(InMemoryState::new(
             strat_name.clone(),
             ctx.config.starting_capital_sgd,
@@ -99,8 +102,7 @@ impl InMemoryReplay {
 
             // --- REAL prod on_bar_update (cfg-gated branches write to
             //     InMemoryState instead of the DB) ---
-            let outcome = ctx
-                .strategy
+            let outcome = strategy
                 .on_bar_update(&contract, bar, ctx.consolidator)
                 .unwrap_or_else(|e| {
                     tracing::error!("on_bar_update error: {e:?}");
@@ -141,7 +143,7 @@ impl InMemoryReplay {
 }
 
 impl BacktestMethod for InMemoryReplay {
-    fn run(&self, ctx: &BacktestContext) -> Result<EquityCurve, String> {
+    fn run(&self, ctx: BacktestContext) -> Result<EquityCurve, String> {
         // Load the bar stream (the only DB query — one-time, not per-bar).
         let bars = ctx.handle.block_on(load_bars(&ctx.config, &ctx.pool))?;
         tracing::info!(
@@ -151,14 +153,14 @@ impl BacktestMethod for InMemoryReplay {
         );
         let in_mem_ctx = InMemoryRunContext {
             config: &ctx.config,
-            strategy: &ctx.strategy,
+            strategy: ctx.strategy,
             handle: &ctx.handle,
             clock: &ctx.clock,
             prices: &ctx.prices,
             consolidator: &ctx.consolidator,
             historical_cache: None,
         };
-        let (equity, _state) = self.run_with_bars(&in_mem_ctx, &bars)?;
+        let (equity, _state) = self.run_with_bars(in_mem_ctx, &bars)?;
         Ok(equity)
     }
 }

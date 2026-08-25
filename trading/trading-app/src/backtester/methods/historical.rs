@@ -20,15 +20,17 @@ use crate::backtester::methods::load_bars;
 pub struct HistoricalReplay;
 
 impl BacktestMethod for HistoricalReplay {
-    fn run(&self, ctx: &BacktestContext) -> Result<EquityCurve, String> {
+    fn run(&self, ctx: BacktestContext) -> Result<EquityCurve, String> {
         // 1. Ensure the strategy row exists (FK target for transactions/positions).
         let pool = ctx.pool.clone();
         let strat_name = ctx.strategy.get_name();
+        let strat_name_clone = strat_name.clone();
+        let mut strategy = ctx.strategy;
         ctx.handle.block_on(async move {
             let crud = StrategyCRUD::new(pool);
             if let Err(e) = crud
                 .create_or_ignore(&StrategyFullKeys {
-                    strategy: strat_name,
+                    strategy: strat_name_clone,
                     status: Status::Active,
                 })
                 .await
@@ -61,8 +63,7 @@ impl BacktestMethod for HistoricalReplay {
             ctx.broker.set_current_bar(bar.clone());
 
             // --- REAL prod on_bar_update (the strategy signal logic) ---
-            let outcome = ctx
-                .strategy
+            let outcome = strategy
                 .on_bar_update(&contract, &bar, &ctx.consolidator)
                 .unwrap_or_else(|e| {
                     tracing::error!("on_bar_update error: {e:?}");
@@ -74,19 +75,21 @@ impl BacktestMethod for HistoricalReplay {
                 &*ctx.broker,
                 &*ctx.prices,
                 outcome,
-                &ctx.strategy,
+                &ctx.strategy_details,
                 &ctx.order_store,
             );
 
             // 4. Equity snapshot.
-            let snap = ctx.handle.block_on(crate::backtester::equity::compute_snapshot(
-                &ctx.pool,
-                &*ctx.prices,
-                &ctx.strategy.get_name(),
-                time,
-                &contract,
-                close,
-            ));
+            let snap = ctx
+                .handle
+                .block_on(crate::backtester::equity::compute_snapshot(
+                    &ctx.pool,
+                    &*ctx.prices,
+                    &strat_name,
+                    time,
+                    &contract,
+                    close,
+                ));
             equity.push(snap);
         }
         Ok(equity)
