@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Timelike, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use ordered_float::OrderedFloat;
@@ -583,6 +583,20 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         limit: u32,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<AggregatedBars, String> {
+        #[cfg(feature = "backtest")]
+        {
+            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current()
+            {
+                if let Some(bars) = cache.get_bars_before(&pk, now, limit as usize) {
+                    return Ok(AggregatedBars {
+                        full: bars,
+                        incomplete: vec![],
+                    });
+                }
+            }
+        }
+
+        #[cfg(not(feature = "backtest"))]
         let now = Utc::now();
         let mut full = Vec::new();
         let mut incomplete = Vec::new();
@@ -808,7 +822,6 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 },
             ) => {
                 #[cfg(feature = "backtest")]
-                #[cfg(feature = "backtest")]
                 let max_complete_day: chrono::DateTime<chrono::Utc> = {
                     let now_eastern = now.with_timezone(&New_York);
                     let today_eastern = now_eastern.date_naive();
@@ -932,19 +945,6 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String> {
-        // In-memory cache (backtest only): look up the pre-computed value.
-        #[cfg(feature = "backtest")]
-        {
-            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current()
-            {
-                if let Some(vals) = cache.get(&now) {
-                    if let Some(&val) = vals.get("vwap") {
-                        return Ok(Some(val));
-                    }
-                }
-            }
-        }
-
         #[derive(FromRow)]
         struct Vwap {
             vwap: f64,
@@ -1300,15 +1300,6 @@ impl NoiseOps for HistoricalDataCRUD {
         now: DateTime<Utc>,
         avg_move_lookback: i64,
     ) -> Result<f64, String> {
-        // In-memory cache: look up the pre-computed value (set by the sweep
-        // runner via the thread-local). Falls through to the SQL if not set.
-        if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
-            if let Some(vals) = cache.get(&now) {
-                if let Some(&val) = vals.get("avg_move_since_open") {
-                    return Ok(val);
-                }
-            }
-        }
         match sqlx::query_scalar!(
             r#"
             WITH latest AS (
@@ -1391,19 +1382,6 @@ impl NoiseOps for HistoricalDataCRUD {
         // `now` = bar time (the fn param) — prevents look-ahead bias.
         #[cfg(not(feature = "backtest"))]
         let now = Utc::now();
-
-        // In-memory cache (backtest only): look up the pre-computed value.
-        #[cfg(feature = "backtest")]
-        {
-            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current()
-            {
-                if let Some(vals) = cache.get(&now) {
-                    if let Some(&val) = vals.get("most_recent_daily_open") {
-                        return Ok(val);
-                    }
-                }
-            }
-        }
 
         #[derive(FromRow)]
         struct DailyOpenClose {
@@ -1526,15 +1504,6 @@ impl NoiseOps for HistoricalDataCRUD {
         now: DateTime<Utc>,
         vol_lookback: i64,
     ) -> Result<f64, String> {
-        // In-memory cache: look up the pre-computed value. Falls through to
-        // the SQL if not set.
-        if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
-            if let Some(vals) = cache.get(&now) {
-                if let Some(&val) = vals.get("daily_vol") {
-                    return Ok(val);
-                }
-            }
-        }
         let daily_vol = sqlx::query_scalar!(
             r#"
             SELECT stddev_samp(close / open) AS rolling_volatility

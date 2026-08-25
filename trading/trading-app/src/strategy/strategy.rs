@@ -80,18 +80,6 @@ pub trait StrategyExecutor: Send + Sync {
         consolidator: &Arc<Consolidator>,
         #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
     ) -> Result<(), String>;
-
-    /// The SQL queries to pre-compute per bar (for the in-memory backtest
-    /// cache). Default: none. The strategy declares its queries (with the
-    /// lookback params read from `backtest_params`). The cache module does
-    /// NOT interpret the queries — it just calls `q.run()` per bar.
-    #[cfg(feature = "backtest")]
-    fn cache_queries(
-        &self,
-    ) -> Vec<std::sync::Arc<dyn crate::backtester::methods::in_memory::historical_cache::CacheQuery>>
-    {
-        Vec::new()
-    }
 }
 
 // Define the macro to generate the enum and impl
