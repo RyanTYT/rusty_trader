@@ -224,6 +224,29 @@ services:
       test-db:
         condition: service_healthy
 
+  optimizer:
+    restart: "no"
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./data/optimizer-runs:/data
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - DATABASE_HOST=test-db
+      - DB_USER=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
+      - DISPLAY=:99
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+    depends_on:
+      test-db:
+        condition: service_healthy
+
   # ── Rust Playwright scraper ───────────────────────────────────────────────
   scraper:
     build:
