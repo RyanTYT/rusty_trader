@@ -8,7 +8,7 @@ use ibapi::contracts::Contract;
 use ibapi::orders::Order;
 use ibapi::prelude::SecurityType;
 
-use crate::backtester::config::BacktestConfig;
+use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::execution::fill_model::{commission, decide_fill};
 use super::state::{InMemoryPosition, InMemoryState, InMemoryTransaction, PositionKey};
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;

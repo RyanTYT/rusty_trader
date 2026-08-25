@@ -21,7 +21,7 @@ use crate::database::models_crud::transactions::transactions::{
     TransactionsCRUD, TransactionsFullKeys,
 };
 
-use crate::backtester::equity::{EquityCurve, EquitySnapshot};
+use crate::backtester::output::equity::{EquityCurve, EquitySnapshot};
 use crate::backtester::methods::in_memory::state::InMemoryState;
 
 #[derive(Debug, Clone, Serialize)]

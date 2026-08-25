@@ -65,7 +65,7 @@ pub async fn compute_snapshot(
     // (InMemoryReplay mode), read positions from it instead of the DB.
     #[cfg(feature = "backtest")]
     {
-        if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+        if let Some(state) = crate::backtester::methods::in_memory::state::current() {
             return compute_snapshot_from_positions(
                 state.current_positions_snapshot(),
                 prices,
