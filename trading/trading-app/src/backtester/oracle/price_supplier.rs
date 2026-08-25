@@ -25,7 +25,7 @@ use crate::helpers::contract::HashContract;
 use crate::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 
 pub struct BacktestPriceSupplier {
-    clock: Arc<crate::backtester::clock::BacktestClock>,
+    clock: Arc<crate::backtester::setup::clock::BacktestClock>,
     /// Fixed-size lock-free cache: slot `i` holds the latest published close
     /// for the contract assigned to slot `i`, packed via `f64::to_bits`.
     /// `0` = not yet published. Indexed by `slot_map`; size is fixed at init
@@ -48,7 +48,7 @@ impl BacktestPriceSupplier {
     /// tracks a known, fixed set, so the cache size is fixed + the slot map is
     /// immutable after init.
     pub fn new(
-        clock: Arc<crate::backtester::clock::BacktestClock>,
+        clock: Arc<crate::backtester::setup::clock::BacktestClock>,
         pool: sqlx::PgPool,
         contracts: &[Contract],
     ) -> Self {

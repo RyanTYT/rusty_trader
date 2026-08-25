@@ -9,8 +9,8 @@ use crate::database::models::{Status, StrategyFullKeys};
 use crate::database::models_crud::strategy::StrategyCRUD;
 use crate::strategy::strategy::StrategyExecutor;
 
-use crate::backtester::context::BacktestContext;
-use crate::backtester::equity::EquityCurve;
+use crate::backtester::setup::context::BacktestContext;
+use crate::backtester::output::equity::EquityCurve;
 use crate::backtester::methods::BacktestMethod;
 use crate::backtester::methods::load_bars;
 
@@ -47,6 +47,16 @@ impl BacktestMethod for HistoricalReplay {
             ctx.config.period
         );
 
+        // 2.5. Warm up the strategy's data. The strategy is pure (uses `self.data`
+        //      via the rolling fns) — `warm_up_data` builds it. In Db mode there's
+        //      no bar cache, so `read_last_n` hits the DB (one-time, not per-bar).
+        if let Some(first_bar) = bars.first() {
+            let bar_time = first_bar.get_time();
+            ctx.handle
+                .block_on(strategy.warm_up_data(&ctx.consolidator, bar_time))
+                .map_err(|e| format!("warm_up_data: {e}"))?;
+        }
+
         // 3. Replay.
         let contract = ctx
             .config
@@ -82,7 +92,7 @@ impl BacktestMethod for HistoricalReplay {
             // 4. Equity snapshot.
             let snap = ctx
                 .handle
-                .block_on(crate::backtester::equity::compute_snapshot(
+                .block_on(crate::backtester::output::equity::compute_snapshot(
                     &ctx.pool,
                     &*ctx.prices,
                     &strat_name,

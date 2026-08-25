@@ -15,17 +15,9 @@ use std::sync::Arc;
 use rayon::scope;
 use serde::Serialize;
 
-use crate::market_data::consolidator::Consolidator;
-use crate::market_data::handler::MarketDataHandler;
-use crate::market_data::traits::current_price::PriceSupplier;
-use crate::strategy::strategy::StrategyExecutor;
-
-use crate::backtester::clock::BacktestClock;
-use crate::backtester::config::BacktestConfig;
-use crate::backtester::methods::in_memory::historical_cache;
-use crate::backtester::methods::in_memory::replay::{InMemoryReplay, InMemoryRunContext};
-use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
-use crate::backtester::results::BacktestResults;
+use crate::backtester::setup::config::BacktestConfig;
+use crate::backtester::methods::in_memory::replay::InMemoryReplay;
+use crate::backtester::output::results::BacktestResults;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 
 /// One sweep result: the params that produced it + the computed metrics.
@@ -130,60 +122,19 @@ pub fn run_one_backtest(
     bars: Arc<Vec<HistoricalDataFullKeys>>,
     handle: &tokio::runtime::Handle,
 ) -> Result<SweepResult, String> {
-    let mut strategy = crate::strategy::construct_strategy(
+    let strategy = crate::strategy::construct_strategy(
         name,
         pool.clone(),
         handle.clone(),
         Some(params.clone()),
     )
     .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
-    let clock = Arc::new(BacktestClock::new());
-    let prices = Arc::new(BacktestPriceSupplier::new(
-        clock.clone(),
-        pool.clone(),
-        &config.subscribed_contracts,
-    ));
-    let market_data_handler = MarketDataHandler::new(pool.clone());
-    let consolidator = Arc::new(Consolidator::new_for_backtest(
-        pool.clone(),
-        prices.clone() as Arc<dyn PriceSupplier + Send + Sync>,
-        market_data_handler,
-    ));
-
-    // Set the bar cache so warm_up_data's `read_last_n` reads from the cache
-    // (no DB) + tracks `max_end_time` for the post-warm-up trim.
-    let cache = Arc::new(historical_cache::InMemoryHistoricalCache::new(bars.clone()));
-    historical_cache::set(cache.clone());
-
-    // Warm up the strategy's data (pure — reads the lookback from the cache,
-    // builds the rolling fns). block_on on this rayon worker thread.
-    if let Some(first_bar) = bars.first() {
-        let bar_time = first_bar.get_time();
-        handle
-            .block_on(strategy.warm_up_data(&consolidator, bar_time))
-            .map_err(|e| format!("warm_up_data: {e}"))?;
-    }
-
-    // Trim the bars to post-warm-up. Linear-scan from the front (the
-    // warm-up prefix is short) for the split + take the suffix slice.
-    let trimmed: &[HistoricalDataFullKeys] = match cache.max_end_time() {
-        Some(t) => {
-            let split = bars.iter().position(|b| b.get_time() > t).unwrap_or(0);
-            &bars[split..]
-        }
-        None => &bars[..],
-    };
-
-    let in_mem_ctx = InMemoryRunContext {
-        config,
-        strategy,
-        handle,
-        clock: &clock,
-        prices: &prices,
-        consolidator: &consolidator,
-    };
-    let (equity, state) = InMemoryReplay.run_with_bars(in_mem_ctx, trimmed)?;
-    historical_cache::clear();
+    // Build the light execution surface (clock/prices/consolidator) — shared
+    // with BacktestContext::build, avoids the OrderStore::open() file contention.
+    let light = crate::backtester::setup::context::build_light_context(pool, config);
+    // Set the bar cache, warm up, trim to post-warm-up, run_with_bars, clear
+    // — all in one helper (shared with the single route).
+    let (equity, state) = InMemoryReplay.run_with_warm_up(strategy, bars, config, handle, &light)?;
     let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd);
     Ok(SweepResult {
         params: params.clone(),

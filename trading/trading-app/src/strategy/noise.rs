@@ -514,9 +514,7 @@ impl Noise {
                 #[cfg(feature = "backtest")]
                 {
                     use crate::backtester::methods::in_memory::state::PositionKey;
-                    if let Some(state) =
-                        crate::backtester::methods::in_memory::thread_local::current()
-                    {
+                    if let Some(state) = crate::backtester::methods::in_memory::state::current() {
                         state.delete_target(&PositionKey {
                             strategy: name.clone(),
                             stock: "QQQ".to_string(),
@@ -556,8 +554,7 @@ impl Noise {
             #[cfg(feature = "backtest")]
             {
                 use crate::backtester::methods::in_memory::state::PositionKey;
-                if let Some(state) = crate::backtester::methods::in_memory::thread_local::current()
-                {
+                if let Some(state) = crate::backtester::methods::in_memory::state::current() {
                     state.set_target(
                         PositionKey {
                             strategy: name.clone(),

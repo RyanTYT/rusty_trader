@@ -7,8 +7,9 @@
 //! accesses it), but `Send + Sync` is required for `Arc<InMemoryState>` to
 //! cross into `spawn_blocking` — hence `RwLock` (uncontended, like the broker).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
 
@@ -151,4 +152,33 @@ impl InMemoryState {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
+}
+
+// ── Thread-local holder ───────────────────────────────────────────────────
+// Set by `InMemoryReplay` before the bar loop (on the spawn_blocking/rayon
+// thread); read by the cfg-gated CRUD branches + the in-memory reconcile.
+// The thread-local is the seam that avoids modifying the strategy's
+// constructor (which takes a `PgPool`) — the replayer sets it, the strategy
+// reads it via `current()` on the same thread.
+
+thread_local! {
+    static IN_MEMORY_STATE: RefCell<Option<Arc<InMemoryState>>> =
+        const { RefCell::new(None) };
+}
+
+/// Set the thread-local in-memory state. Called by `InMemoryReplay` before
+/// the bar loop (on the `spawn_blocking` thread).
+pub fn set(state: Arc<InMemoryState>) {
+    IN_MEMORY_STATE.with(|s| *s.borrow_mut() = Some(state));
+}
+
+/// Get the thread-local in-memory state, if set. Called by the cfg-gated CRUD
+/// branches + the reconcile. Returns `None` in the default (DB-backed) mode.
+pub fn current() -> Option<Arc<InMemoryState>> {
+    IN_MEMORY_STATE.with(|s| s.borrow().clone())
+}
+
+/// Clear the thread-local state. Called by `InMemoryReplay` after the loop.
+pub fn clear() {
+    IN_MEMORY_STATE.with(|s| *s.borrow_mut() = None);
 }

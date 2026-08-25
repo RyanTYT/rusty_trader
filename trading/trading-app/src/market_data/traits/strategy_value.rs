@@ -168,7 +168,7 @@ impl Consolidator {
     ) -> Result<f64, String> {
         // In-memory mode: read positions from the thread-local InMemoryState
         // (set by InMemoryReplay) instead of the DB. Avoids the DB round-trip.
-        if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+        if let Some(state) = crate::backtester::methods::in_memory::state::current() {
             return Self::_get_strategy_sgd_value_from_positions(
                 price_supplier,
                 state.current_positions_snapshot(),

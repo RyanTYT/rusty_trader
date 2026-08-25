@@ -3,32 +3,44 @@
 //!
 //! - [`HistoricalReplay`] — DB-backed (realistic, ~5-10 DB ops/bar).
 //! - [`InMemoryReplay`] — fast in-memory (mocked CRUDs + in-memory reconcile,
-//!   ~0 DB ops/bar after the one-time `load_bars`).
+//!   ~0 DB ops/bar after the one-time [`load_bars`]).
 //!
 //! Shared helpers (e.g., [`load_bars`]) live here so both methods can reuse
 //! them without duplication.
 
 pub mod historical;
 pub mod in_memory;
-pub mod method;
 
 pub use historical::HistoricalReplay;
 pub use in_memory::replay::InMemoryReplay;
-pub use method::BacktestMethod;
 
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
-use crate::database::models::{HistoricalStockDataFullKeys};
+use crate::database::models::HistoricalStockDataFullKeys;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::helpers::contract::get_local_symbol;
 
-use crate::backtester::context::BacktestContext;
+use crate::backtester::setup::context::BacktestContext;
+use crate::backtester::output::equity::EquityCurve;
+
+/// Trait for backtest methods — each method implements a different replay
+/// strategy (historical bar replay, walk-forward, parameter sweep, etc.).
+/// The shared execution surface is in [`BacktestContext`]; each method's
+/// `run` produces an [`EquityCurve`].
+pub trait BacktestMethod {
+    /// Run the backtest method against the shared `ctx`. Returns the per-bar
+    /// equity curve.
+    fn run(&self, ctx: BacktestContext) -> Result<EquityCurve, String>;
+}
 
 /// Load the chronological bar stream for the configured contract + period.
 /// The ONLY DB query in the in-memory method (one-time, not per-bar). Shared
 /// by both `HistoricalReplay` + `InMemoryReplay`.
-pub async fn load_bars(config: &crate::backtester::config::BacktestConfig, pool: &sqlx::PgPool) -> Result<Vec<HistoricalDataFullKeys>, String> {
+pub async fn load_bars(
+    config: &crate::backtester::setup::config::BacktestConfig,
+    pool: &sqlx::PgPool,
+) -> Result<Vec<HistoricalDataFullKeys>, String> {
     let c = config
         .subscribed_contracts
         .first()
@@ -50,7 +62,7 @@ pub async fn load_bars(config: &crate::backtester::config::BacktestConfig, pool:
         volume: rust_decimal::Decimal,
     }
 
-    use crate::backtester::config::BacktestPeriod;
+    use crate::backtester::setup::config::BacktestPeriod;
     let rows: Vec<BarRow> = match &config.period {
         BacktestPeriod::TimeRange { start, end } => {
             sqlx::query_as(

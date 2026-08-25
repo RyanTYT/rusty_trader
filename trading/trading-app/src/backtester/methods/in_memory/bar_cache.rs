@@ -31,12 +31,12 @@ use crate::database::models_crud::historical_data::historical_data::{
 /// oldest-first. `max_end_time` is the latest bar fetched by `read_last_n`
 /// (per-backtest, via interior mutability) — the backtester reads it to trim
 /// the replay stream to post-warm-up.
-pub struct InMemoryHistoricalCache {
+pub struct BarCache {
     bars: Arc<Vec<HistoricalDataFullKeys>>,
     max_end_time: RefCell<Option<DateTime<Utc>>>,
 }
 
-impl InMemoryHistoricalCache {
+impl BarCache {
     /// Build from the full pre-populated bar set (shared via `Arc`). Each
     /// backtest clones the `Arc` (cheap) + gets a fresh `max_end_time`.
     pub fn new(bars: Arc<Vec<HistoricalDataFullKeys>>) -> Self {
@@ -118,20 +118,20 @@ fn bar_matches_pk(bar: &HistoricalDataFullKeys, pk: &HistoricalDataPrimaryKeysWo
 }
 
 thread_local! {
-    static HISTORICAL_CACHE: RefCell<Option<Arc<InMemoryHistoricalCache>>> =
+    static HISTORICAL_CACHE: RefCell<Option<Arc<BarCache>>> =
         const { RefCell::new(None) };
 }
 
 /// Set the thread-local bar cache. Called by `InMemoryReplay::run_with_bars`
 /// (per-backtest, on the rayon worker thread) so `read_last_n` can read the
 /// cached bars + the backtester can read `max_end_time` after warm-up.
-pub fn set(cache: Arc<InMemoryHistoricalCache>) {
+pub fn set(cache: Arc<BarCache>) {
     HISTORICAL_CACHE.with(|c| *c.borrow_mut() = Some(cache));
 }
 
 /// Get the thread-local bar cache, if set. Called by `read_last_n` (backtest)
 /// + the backtester (to read `max_end_time`).
-pub fn current() -> Option<Arc<InMemoryHistoricalCache>> {
+pub fn current() -> Option<Arc<BarCache>> {
     HISTORICAL_CACHE.with(|c| c.borrow().clone())
 }
 

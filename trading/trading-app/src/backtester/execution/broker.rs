@@ -38,7 +38,7 @@ use crate::database::models_crud::transactions::transactions::{
 };
 use crate::helpers::contract::get_local_symbol;
 
-use crate::backtester::config::BacktestConfig;
+use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::execution::fill_model::{commission, decide_fill};
 
 pub struct BacktestBroker {
@@ -100,7 +100,7 @@ impl BacktestBroker {
 
 /// `BacktestBroker` implements `OrderSubmitter` so it can be passed as
 /// `&dyn OrderSubmitter` to the cfg-gated `handle_bar_update_outcome`.
-impl crate::backtester::execution::order_submitter::OrderSubmitter for BacktestBroker {
+impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
     fn next_order_id(&self) -> i32 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
