@@ -1,9 +1,21 @@
+use chrono::NaiveDate;
+use chrono_tz::America::New_York;
 use ordered_float::OrderedFloat;
 use rust_decimal::{
     Decimal, MathematicalOps, dec,
     prelude::{FromPrimitive, ToPrimitive},
 };
 use std::collections::{BTreeMap, VecDeque};
+
+use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
+
+pub trait RollingFn {
+    fn new(window: usize) -> Self;
+    fn push(&mut self, value: f64) -> Option<f64>;
+    fn push_dec(&mut self, value: Decimal) -> Option<Decimal>;
+    fn replace_last(&mut self, value: f64) -> Option<f64>;
+    fn replace_last_dec(&mut self, value: Decimal) -> Option<Decimal>;
+}
 
 #[derive(Debug, Clone)]
 pub struct RollingMax {
@@ -990,5 +1002,88 @@ impl RollingRoc {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RollingDayVwap {
+    window: usize,
+    date: Option<NaiveDate>,
+    cum_price_vol: Decimal,
+    cum_vol: Decimal,
+}
+
+impl RollingDayVwap {
+    // use max no. bars in day - i.e. usually 78
+    pub fn new(window: usize) -> Self {
+        assert!(window > 0);
+        Self {
+            window,
+            date: None,
+            cum_price_vol: dec!(0.0),
+            cum_vol: dec!(0.0),
+        }
+    }
+
+    /// Push a new value.
+    /// Returns avg once the window is full, otherwise None.
+    pub fn push(&mut self, bar: &HistoricalDataFullKeys) -> Option<Decimal> {
+        // on first init, return bar directly
+        if self.date.is_none()
+            || self
+                .date
+                .is_some_and(|date| date != bar.get_time().with_timezone(&New_York).date_naive())
+        {
+            self.date = Some(bar.get_time().with_timezone(&New_York).date_naive());
+            self.cum_price_vol = dec!(0);
+            self.cum_vol = dec!(0);
+        }
+
+        self.cum_price_vol += Decimal::from_f64(bar.get_price())
+            .expect("Expected to be able to convert bar close to Decimal")
+            * bar.get_volume();
+        self.cum_vol += bar.get_volume();
+
+        Some(
+            self.cum_price_vol
+                .checked_div(self.cum_vol)
+                .unwrap_or_else(|| {
+                    tracing::error!("Failed to get actual vwap");
+                    Decimal::from_f64(bar.get_price())
+                        .expect("Expected to be able to convert bar close to Decimal")
+                }),
+        )
+    }
+
+    // /// Replace the last pushed value (same index).
+    // ///
+    // /// Returns Some(in) once the window is full, otherwise None.
+    // ///
+    // /// If no value has been pushed yet, returns None.
+    // pub fn replace_last(&mut self, bar: HistoricalDataFullKeys) -> Option<f64> {
+    //     self.replace_last_dec(Decimal::from_f64(value).expect(
+    //         "Expected to be able to represent value passed to replace_last\
+    //                 in rust decimal for rolling_sum",
+    //     ))
+    //     .map(|dec_val| {
+    //         dec_val
+    //             .to_f64()
+    //             .expect("Expected to be able to represent rolling_sum as f64")
+    //     })
+    // }
+
+    pub fn vwap(&self) -> Option<Decimal> {
+        if self.date.is_none() {
+            return None;
+        }
+
+        Some(
+            self.cum_price_vol
+                .checked_div(self.cum_vol)
+                .unwrap_or_else(|| {
+                    tracing::error!("Failed to get actual vwap");
+                    self.cum_price_vol
+                }),
+        )
     }
 }

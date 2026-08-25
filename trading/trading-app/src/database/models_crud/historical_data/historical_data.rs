@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Timelike, TimeZone, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use ordered_float::OrderedFloat;
@@ -74,6 +74,33 @@ impl HistoricalDataFullKeys {
             Self::Forex(v) => v.ask_close.unwrap_or(v.bid_close.unwrap_or(-1.0)),
             Self::Options(v) => v.close,
             Self::DailyStock(v) => v.close.to_f64().expect("Expected conversion to f64"),
+        }
+    }
+
+    pub fn get_open_price(&self) -> f64 {
+        match self {
+            Self::Stock(v) => v.open,
+            Self::Forex(v) => v.ask_open.unwrap_or(v.bid_open.unwrap_or(-1.0)),
+            Self::Options(v) => v.open,
+            Self::DailyStock(v) => v.open.to_f64().expect("Expected conversion to f64"),
+        }
+    }
+
+    pub fn get_high_price(&self) -> f64 {
+        match self {
+            Self::Stock(v) => v.high,
+            Self::Forex(v) => v.ask_high.unwrap_or(v.bid_high.unwrap_or(-1.0)),
+            Self::Options(v) => v.high,
+            Self::DailyStock(v) => v.high.to_f64().expect("Expected conversion to f64"),
+        }
+    }
+
+    pub fn get_volume(&self) -> Decimal {
+        match self {
+            Self::Stock(v) => v.volume,
+            Self::Forex(v) => panic!("Tried to get volume from forex bar"),
+            Self::Options(v) => v.volume,
+            Self::DailyStock(v) => v.volume,
         }
     }
 
@@ -476,11 +503,13 @@ pub trait HistoricalDataOps {
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<AggregatedBars, String>;
     async fn read_last_bar(
         &self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<HistoricalDataFullKeys, String>;
     async fn read_last_vwap(
         &self,
@@ -503,12 +532,14 @@ pub trait NoiseOps {
     async fn get_avg_move_since_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
+        avg_move_lookback: i64,
     ) -> Result<f64, String>;
     #[cfg(feature = "backtest")]
     async fn get_avg_move_since_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
+        avg_move_lookback: i64,
     ) -> Result<f64, String>;
 
     async fn get_most_recent_daily_open(
@@ -518,12 +549,17 @@ pub trait NoiseOps {
     ) -> Result<f64, String>;
 
     #[cfg(not(feature = "backtest"))]
-    async fn get_daily_vol(&self, pk: HistoricalStockDataPrimaryKeysWoTime) -> Result<f64, String>;
+    async fn get_daily_vol(
+        &self,
+        pk: HistoricalStockDataPrimaryKeysWoTime,
+        vol_lookback: i64,
+    ) -> Result<f64, String>;
     #[cfg(feature = "backtest")]
     async fn get_daily_vol(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
+        vol_lookback: i64,
     ) -> Result<f64, String>;
 }
 
@@ -545,7 +581,9 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<AggregatedBars, String> {
+        let now = Utc::now();
         let mut full = Vec::new();
         let mut incomplete = Vec::new();
 
@@ -572,6 +610,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     WHERE stock = $1
                       AND primary_exchange = $2
                       AND currency = $3
+                      AND time <= $6
                     GROUP BY bucket, stock, primary_exchange, currency
                     ORDER BY bucket DESC
                     LIMIT $5
@@ -581,6 +620,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                     timestep_minutes as i32,
                     limit as i32,
+                    now
                 )
                 .fetch_all(self.get_pg_pool())
                 .await
@@ -631,6 +671,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     WHERE pair = $1
                       AND bid_open IS NOT NULL
                       AND ask_open IS NOT NULL
+                      AND time <= $4
                     GROUP BY bucket, pair
                     ORDER BY bucket DESC
                     LIMIT $3;
@@ -638,6 +679,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     pair,
                     timestep_minutes as i32,
                     limit as i32,
+                    now
                 )
                 .fetch_all(self.get_pg_pool())
                 .await
@@ -702,6 +744,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                       AND multiplier = $5
                       AND strike = $6
                       AND option_type = $7::option_type
+                      AND time <= $10
                     GROUP BY
                         bucket,
                         stock,
@@ -723,6 +766,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     option_type as OptionType,
                     timestep_minutes as i32,
                     limit as i32,
+                    now
                 )
                 .fetch_all(self.get_pg_pool())
                 .await
@@ -763,6 +807,37 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                 },
             ) => {
+                #[cfg(feature = "backtest")]
+                #[cfg(feature = "backtest")]
+                let max_complete_day: chrono::DateTime<chrono::Utc> = {
+                    let now_eastern = now.with_timezone(&New_York);
+                    let today_eastern = now_eastern.date_naive();
+
+                    let market_close_today = today_eastern
+                        .and_hms_opt(16, 0, 0)
+                        .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
+                        .unwrap();
+
+                    if now_eastern < market_close_today {
+                        // Cut off at the end of yesterday (23:59:59.999 Eastern converted to UTC)
+                        let yesterday = today_eastern.pred_opt().unwrap_or(today_eastern);
+                        yesterday
+                            .and_hms_micro_opt(23, 59, 59, 999_999)
+                            .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
+                            .unwrap()
+                            .with_timezone(&chrono::Utc)
+                    } else {
+                        // Cut off at the end of today (23:59:59.999 Eastern converted to UTC)
+                        today_eastern
+                            .and_hms_micro_opt(23, 59, 59, 999_999)
+                            .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
+                            .unwrap()
+                            .with_timezone(&chrono::Utc)
+                    }
+                };
+                #[cfg(not(feature = "backtest"))]
+                let max_complete_day = now;
+
                 let rows = sqlx::query!(
                     r#"
                     SELECT
@@ -779,6 +854,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     WHERE stock = $1
                       AND primary_exchange = $2
                       AND currency = $3
+                      AND day <= $5
                     ORDER BY day DESC
                     LIMIT $4
                     "#,
@@ -786,6 +862,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     primary_exchange,
                     currency,
                     limit as i32,
+                    max_complete_day
                 )
                 .fetch_all(self.get_pg_pool())
                 .await
@@ -821,9 +898,16 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         &self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
+        #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<HistoricalDataFullKeys, String> {
         let mut agg_bars = self
-            .read_last_n(pk, timestep_minutes, 1)
+            .read_last_n(
+                pk,
+                timestep_minutes,
+                1,
+                #[cfg(feature = "backtest")]
+                now,
+            )
             .await
             .map_err(|e| format!("Failed to read last bar: {e:?}"))?;
         match (agg_bars.full.is_empty(), agg_bars.incomplete.is_empty()) {
@@ -851,9 +935,12 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         // In-memory cache (backtest only): look up the pre-computed value.
         #[cfg(feature = "backtest")]
         {
-            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current()
+            {
                 if let Some(vals) = cache.get(&now) {
-                    return Ok(Some(vals.vwap));
+                    if let Some(&val) = vals.get("vwap") {
+                        return Ok(Some(val));
+                    }
                 }
             }
         }
@@ -1130,6 +1217,7 @@ impl NoiseOps for HistoricalDataCRUD {
     async fn get_avg_move_since_open(
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
+        avg_move_lookback: i64,
     ) -> Result<f64, String> {
         match sqlx::query_scalar!(
             r#"
@@ -1160,7 +1248,7 @@ impl NoiseOps for HistoricalDataCRUD {
                   AND h.time::time = latest.latest_close_time
                   AND h.time::date <> latest.latest_date  -- exclude today
                 ORDER BY h.time DESC
-                LIMIT 15
+                LIMIT $4
             ),
             opens AS (
                 SELECT stock, primary_exchange, day AS trading_day, open AS open_at_0930
@@ -1179,7 +1267,8 @@ impl NoiseOps for HistoricalDataCRUD {
             "#,
             pk.stock,
             pk.primary_exchange,
-            pk.currency
+            pk.currency,
+            avg_move_lookback
         )
         .fetch_all(self.get_pg_pool())
         .await
@@ -1209,12 +1298,15 @@ impl NoiseOps for HistoricalDataCRUD {
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
+        avg_move_lookback: i64,
     ) -> Result<f64, String> {
         // In-memory cache: look up the pre-computed value (set by the sweep
         // runner via the thread-local). Falls through to the SQL if not set.
         if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
             if let Some(vals) = cache.get(&now) {
-                return Ok(vals.avg_move_since_open);
+                if let Some(&val) = vals.get("avg_move_since_open") {
+                    return Ok(val);
+                }
             }
         }
         match sqlx::query_scalar!(
@@ -1247,7 +1339,7 @@ impl NoiseOps for HistoricalDataCRUD {
                   AND h.time::time = latest.latest_close_time
                   AND h.time::date <> latest.latest_date
                 ORDER BY h.time DESC
-                LIMIT 15
+                LIMIT $5
             ),
             opens AS (
                 SELECT stock, primary_exchange, day AS trading_day, open AS open_at_0930
@@ -1267,7 +1359,8 @@ impl NoiseOps for HistoricalDataCRUD {
             pk.stock,
             pk.primary_exchange,
             pk.currency,
-            now
+            now,
+            avg_move_lookback
         )
         .fetch_all(self.get_pg_pool())
         .await
@@ -1302,9 +1395,12 @@ impl NoiseOps for HistoricalDataCRUD {
         // In-memory cache (backtest only): look up the pre-computed value.
         #[cfg(feature = "backtest")]
         {
-            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
+            if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current()
+            {
                 if let Some(vals) = cache.get(&now) {
-                    return Ok(vals.most_recent_daily_open);
+                    if let Some(&val) = vals.get("most_recent_daily_open") {
+                        return Ok(val);
+                    }
                 }
             }
         }
@@ -1383,20 +1479,28 @@ impl NoiseOps for HistoricalDataCRUD {
     }
 
     #[cfg(not(feature = "backtest"))]
-    async fn get_daily_vol(&self, pk: HistoricalStockDataPrimaryKeysWoTime) -> Result<f64, String> {
+    async fn get_daily_vol(
+        &self,
+        pk: HistoricalStockDataPrimaryKeysWoTime,
+        vol_lookback: i64,
+    ) -> Result<f64, String> {
         let daily_vol = sqlx::query_scalar!(
             r#"
-            SELECT rolling_volatility
-            FROM market_data.daily_volatility
-            WHERE stock = $1
-                AND primary_exchange = $2
-                AND currency = $3
-            ORDER BY day DESC
-            LIMIT 1;
-        "#,
+            SELECT stddev_samp(close / open) AS rolling_volatility
+            FROM (
+                SELECT day, open, close
+                FROM market_data.daily_ohlcv
+                WHERE stock = $1
+                    AND primary_exchange = $2
+                    AND currency = $3
+                ORDER BY day DESC
+                LIMIT $4
+            ) sub;
+            "#,
             pk.stock,
             pk.primary_exchange,
-            pk.currency
+            pk.currency,
+            vol_lookback
         )
         .fetch_one(self.get_pg_pool())
         .await
@@ -1420,29 +1524,36 @@ impl NoiseOps for HistoricalDataCRUD {
         &self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
+        vol_lookback: i64,
     ) -> Result<f64, String> {
         // In-memory cache: look up the pre-computed value. Falls through to
         // the SQL if not set.
         if let Some(cache) = crate::backtester::methods::in_memory::historical_cache::current() {
             if let Some(vals) = cache.get(&now) {
-                return Ok(vals.daily_vol);
+                if let Some(&val) = vals.get("daily_vol") {
+                    return Ok(val);
+                }
             }
         }
         let daily_vol = sqlx::query_scalar!(
             r#"
-            SELECT rolling_volatility
-            FROM market_data.daily_volatility
-            WHERE stock = $1
-                AND primary_exchange = $2
-                AND currency = $3
-                AND day <= $4
-            ORDER BY day DESC
-            LIMIT 1;
-        "#,
+            SELECT stddev_samp(close / open) AS rolling_volatility
+            FROM (
+                SELECT day, open, close
+                FROM market_data.daily_ohlcv
+                WHERE stock = $1
+                    AND primary_exchange = $2
+                    AND currency = $3
+                    AND day <= $4
+                ORDER BY day DESC
+                LIMIT $5
+            ) sub;
+            "#,
             pk.stock,
             pk.primary_exchange,
             pk.currency,
-            now
+            now,
+            vol_lookback
         )
         .fetch_one(self.get_pg_pool())
         .await
