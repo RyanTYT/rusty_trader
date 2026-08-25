@@ -419,7 +419,12 @@ pub async fn init_app(
             let mut strategy = strat_param.strategy;
             // let strat_name = strategy.get_name();
             // let consolidator = cloned_consolidator.clone();
-            strategy.warm_up_data(&cloned_consolidator);
+            if let Err(e) = strategy.warm_up_data(&cloned_consolidator).await {
+                tracing::error!(
+                    "Failed to warm up {:?} properly: {e:?}",
+                    strategy.get_name()
+                );
+            };
 
             // if let Err(e) = tokio::task::spawn_blocking(move || {
             //     handle.block_on(strategy.warm_up_data(&consolidator))

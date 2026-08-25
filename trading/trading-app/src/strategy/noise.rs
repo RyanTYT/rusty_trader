@@ -1,10 +1,20 @@
+use std::collections::HashMap;
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
-use chrono::{Datelike, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use chrono_tz::America::New_York;
+use chrono_tz::Tz;
 use ibapi::{Client, prelude::Contract};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
+use yfinance_rs::NewsTab;
 
+#[cfg(feature = "backtest")]
+use crate::backtester::methods::in_memory::historical_cache::CacheQuery;
+use crate::strategy::helpers::rolling_fn::{RollingDayVwap, RollingMean, RollingStd};
+use crate::strategy::helpers::rolling_window::RollingWindow;
+use crate::strategy::strategy::StrategyDetails;
 use crate::{
     database::{
         crud::CRUDTrait,
@@ -29,12 +39,54 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+const NUM_BARS_PER_DAY: usize = 78;
+
+#[derive(Debug)]
+pub struct NoiseFnData {
+    // most recent 5 minute bar with time == 9:30
+    most_recent_day_bar: HistoricalDataFullKeys,
+    last_close: f64,
+
+    day_vwap: RollingDayVwap,
+    daily_volatility: RollingStd,
+    avg_moves: HashMap<DateTime<Tz>, RollingMean>,
+}
+
+impl NoiseFnData {
+    fn push(&mut self, bar: HistoricalDataFullKeys) {
+        self.day_vwap.push(&bar);
+        if bar.get_time().with_timezone(&New_York).date_naive()
+            != self
+                .most_recent_day_bar
+                .get_time()
+                .with_timezone(&New_York)
+                .date_naive()
+        {
+            self.daily_volatility
+                .push(self.last_close / self.most_recent_day_bar.get_open_price());
+            self.last_close = bar.get_price();
+            self.most_recent_day_bar = bar;
+            return;
+        }
+
+        self.last_close = bar.get_price();
+        let day_open = self.most_recent_day_bar.get_open_price();
+        self.avg_moves
+            .entry(bar.get_time().with_timezone(&New_York))
+            .and_modify(|rolling_mean| {
+                let movement_since_open = (bar.get_price() / day_open - 1.0).abs();
+                rolling_mean.push(movement_since_open);
+            });
+    }
+}
+
+#[derive(Debug)]
 pub struct Noise {
     priority: u32,
     name: String,
     pool: PgPool,
     tokio_handle: tokio::runtime::Handle,
+    data: Option<NoiseFnData>,
     /// Generic backtest params (key → value), read by cfg-gated branches in
     /// `on_bar_update`. Populated from `BacktestConfig.strategy_params["noise"]`
     /// via [`with_backtest_params`]. `None` under the default build + when no
@@ -43,28 +95,28 @@ pub struct Noise {
     backtest_params: Option<std::collections::HashMap<String, f64>>,
 }
 
-impl PartialEq for Noise {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority == other.priority && self.name == other.name
-    }
-}
-
-impl Eq for Noise {}
-
-impl PartialOrd for Noise {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Noise {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.priority.cmp(&other.priority) {
-            Ordering::Equal => self.name.cmp(&other.name),
-            other => other,
-        }
-    }
-}
+// impl PartialEq for Noise {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.priority == other.priority && self.name == other.name
+//     }
+// }
+//
+// impl Eq for Noise {}
+//
+// impl PartialOrd for Noise {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
+//
+// impl Ord for Noise {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         match self.priority.cmp(&other.priority) {
+//             Ordering::Equal => self.name.cmp(&other.name),
+//             other => other,
+//         }
+//     }
+// }
 
 impl Noise {
     pub fn new(pool: PgPool, tokio_handle: tokio::runtime::Handle) -> Self {
@@ -73,6 +125,7 @@ impl Noise {
             name: "noise".to_string(),
             pool,
             tokio_handle,
+            data: None,
             #[cfg(feature = "backtest")]
             backtest_params: None,
         }
@@ -82,10 +135,7 @@ impl Noise {
     /// cfg-gated `on_bar_update` branches read from this map via [`param`],
     /// falling back to hardcoded values when a key is absent.
     #[cfg(feature = "backtest")]
-    pub fn with_backtest_params(
-        mut self,
-        params: std::collections::HashMap<String, f64>,
-    ) -> Self {
+    pub fn with_backtest_params(mut self, params: std::collections::HashMap<String, f64>) -> Self {
         self.backtest_params = Some(params);
         self
     }
@@ -109,12 +159,30 @@ impl StrategyExecutor for Noise {
         self.name.clone()
     }
 
-    fn is_fx_strategy(&self) -> bool {
-        return false;
+    fn get_strategy_details(&self) -> StrategyDetails {
+        StrategyDetails::new(1, self.name.clone(), false)
     }
 
+    // /// The strategy's declared cache queries (the 4 NoiseOps + read_last_vwap).
+    // /// The lookback params are read from `backtest_params` (the fixed
+    // /// `cache_params` per-sweep) — the cache + the strategy's `on_bar_update`
+    // /// use the SAME values.
+    // #[cfg(feature = "backtest")]
+    // fn cache_queries(&self) -> Vec<std::sync::Arc<dyn CacheQuery>> {
+    //     vec![
+    //         std::sync::Arc::new(AvgMoveSinceOpenQuery {
+    //             avg_move_lookback: self.param("avg_move_lookback", 15.0) as i64,
+    //         }),
+    //         std::sync::Arc::new(DailyVolQuery {
+    //             vol_lookback: self.param("vol_lookback", 14.0) as i64,
+    //         }),
+    //         std::sync::Arc::new(MostRecentDailyOpenQuery),
+    //         std::sync::Arc::new(LastVwapQuery),
+    //     ]
+    // }
+
     fn on_bar_update(
-        &self,
+        &mut self,
         contract: &Contract,
         bar: &HistoricalDataFullKeys,
         consolidator: &Arc<Consolidator>,
@@ -142,7 +210,32 @@ impl StrategyExecutor for Noise {
         res
     }
 
-    async fn warm_up_data(&self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
+    async fn warm_up_data(
+        &mut self,
+        consolidator: &Arc<Consolidator>,
+        #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
+    ) -> Result<(), String> {
+        let avg_move_lookback = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("avg_move_lookback", 15.0) as i64
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                15_i64
+            }
+        };
+        let vol_lookback = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("vol_lookback", 14.0) as i64
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                14_i64
+            }
+        };
+
         #[cfg(not(feature = "backtest"))]
         {
             let consolidator = consolidator.clone();
@@ -164,87 +257,13 @@ impl StrategyExecutor for Noise {
                 .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))?;
         }
 
-        Ok(())
-    }
-}
-
-#[hotpath::measure_all]
-impl Noise {
-    fn _on_bar_update(
-        &self,
-        _contract: &Contract,
-        raw_bar: &HistoricalDataFullKeys,
-        consolidator: &Arc<Consolidator>,
-    ) -> Result<BarUpdateOutcome, BarUpdateOutcome> {
-        let bar = match raw_bar {
-            HistoricalDataFullKeys::Stock(v) => v,
-            _ => panic!("Should not be receiving any other type of bar other than Stock"),
-        };
-        let bar_time = bar.time;
-
-        // tracing::info!("bar")
-        let historical_data_crud_orig =
-            HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let avg_move_since_open_thread = self.tokio_handle.spawn(hotpath::future!(
+        let avg_move_lookback_period = avg_move_lookback as usize;
+        let mut avg_moves = HashMap::new();
+        let historical_data_crud = HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
+        let last_n_bars_thread = self.tokio_handle.spawn(hotpath::future!(
             async move {
                 historical_data_crud
-                    .get_avg_move_since_open(
-                        HistoricalStockDataPrimaryKeysWoTime {
-                            stock: "QQQ".to_string(),
-                            primary_exchange: "NASDAQ".to_string(),
-                            currency: "USD".to_string(),
-                        },
-                        #[cfg(feature = "backtest")]
-                        bar_time,
-                    )
-                    // .get_avg_move_since_open("QQQ", "NASDAQ", "USD")
-                    .await
-                    .map_err(|e| format!("{}", e))
-            },
-            label = "noise_get_avg_move_since_open"
-        ));
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let most_recent_open_thread = self.tokio_handle.spawn(hotpath::future!(
-            async move {
-                historical_data_crud
-                    .get_most_recent_daily_open(
-                        HistoricalStockDataPrimaryKeysWoTime {
-                            stock: "QQQ".to_string(),
-                            primary_exchange: "NASDAQ".to_string(),
-                            currency: "USD".to_string(),
-                        },
-                        #[cfg(feature = "backtest")]
-                        bar_time,
-                    )
-                    .await
-                    .map_err(|e| format!("{}", e))
-            },
-            label = "noise_get_most_recent_daily_open"
-        ));
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let most_recent_daily_vol_thread = self.tokio_handle.spawn(hotpath::future!(
-            async move {
-                historical_data_crud
-                    .get_daily_vol(
-                        HistoricalStockDataPrimaryKeysWoTime {
-                            stock: "QQQ".to_string(),
-                            primary_exchange: "NASDAQ".to_string(),
-                            currency: "USD".to_string(),
-                        },
-                        #[cfg(feature = "backtest")]
-                        bar_time,
-                    )
-                    .await
-                    .map_err(|e| format!("{}", e))
-            },
-            label = "noise_get_daily_vol"
-        ));
-        let historical_data_crud = historical_data_crud_orig.clone();
-        let vwap_thread = self.tokio_handle.spawn(hotpath::future!(
-            async move {
-                historical_data_crud
-                    .read_last_vwap(
+                    .read_last_n(
                         HistoricalDataPrimaryKeysWoTime::Stock(
                             HistoricalStockDataPrimaryKeysWoTime {
                                 stock: "QQQ".to_string(),
@@ -252,145 +271,157 @@ impl Noise {
                                 currency: "USD".to_string(),
                             },
                         ),
-                        Some("US/Eastern".to_string()),
-                        VwapBarValue::Close,
+                        5,
+                        (NUM_BARS_PER_DAY * avg_move_lookback_period + NUM_BARS_PER_DAY) as u32,
                         #[cfg(feature = "backtest")]
                         bar_time,
                     )
                     .await
                     .map_err(|e| format!("{}", e))
             },
-            label = "noise_read_last_vwap"
+            label = "noise_get_avg_move_since_open"
         ));
-        // let historical_data_crud = historical_data_crud_orig.clone();
-        // let current_price_thread = self.tokio_handle.spawn(async move {
-        //     historical_data_crud
-        //         .read_last_bar(
-        //             HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
-        //                 stock: "QQQ".to_string(),
-        //                 primary_exchange: "NASDAQ".to_string(),
-        //                 currency: "USD".to_string(),
-        //             }),
-        //             5,
-        //         )
-        //         .await
-        //         .map_err(|e| format!("{}", e))
-        //         .expect("Expected at least one bar of QQQ in historical_data table")
-        // });
-        // let strat_name = self.name.to_string();
-        // let current_stock_positions_crud =
-        //     CurrentPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
-        // let current_pos_thread = self.tokio_handle.spawn(async move {
-        //     current_stock_positions_crud
-        //         .get_pos_by_strat(strat_name.as_str())
-        //         .await
-        //         .map_err(|e| format!("{}", e))
-        // });
+        let vol_lookback_period = vol_lookback as usize;
+        let daily_historical_data_crud = HistoricalDataCRUD::daily_stock(self.pool.clone());
+        let last_n_daily_bars_thread = self.tokio_handle.spawn(hotpath::future!(
+            async move {
+                daily_historical_data_crud
+                    .read_last_n(
+                        HistoricalDataPrimaryKeysWoTime::DailyStock(
+                            crate::database::models::DailyHistoricalStockDataPrimaryKeysWoTime {
+                                stock: "QQQ".to_string(),
+                                primary_exchange: "NASDAQ".to_string(),
+                                currency: "USD".to_string(),
+                            },
+                        ),
+                        5,
+                        vol_lookback_period as u32,
+                        #[cfg(feature = "backtest")]
+                        bar_time,
+                    )
+                    .await
+                    .map_err(|e| format!("{}", e))
+            },
+            label = "noise_get_n_daily_bars"
+        ));
 
-        let (
-            avg_move_since_open_joined,
-            most_recent_open_joined,
-            most_recent_daily_vol_joined,
-            vwap_joined,
-            // current_price_thread,
-            // current_pos_thread,
-        ) = hotpath::measure_block!("noise_join_db_queries", {
-            self.tokio_handle.block_on(async {
-                tokio::join!(
-                    avg_move_since_open_thread,
-                    most_recent_open_thread,
-                    most_recent_daily_vol_thread,
-                    vwap_thread,
-                    // current_price_thread,
-                    // current_pos_thread
-                )
-            })
+        // ==== unwrapping of futures ====
+        let (last_n_bars_joined, last_n_daily_bars_joined) =
+            hotpath::measure_block!("noise_join_db_queries", {
+                self.tokio_handle
+                    .block_on(async { tokio::join!(last_n_bars_thread, last_n_daily_bars_thread,) })
+            });
+        let last_n_bars = match last_n_bars_joined {
+            Ok(abc) => abc?,
+            Err(e) => {
+                tracing::error!("Could not fetch last N bars for noise: {e:?}");
+                return Err(format!("Could not fetch last N bars for noise: {e:?}"));
+            }
+        };
+        if !last_n_bars.incomplete.is_empty() {
+            tracing::error!(
+                "Fetching last N bars of timestep 5 returned incomplete bars for noise"
+            );
+            return Err(format!(
+                "Fetching last N bars of timestep 5 returned incomplete bars for noise"
+            ));
+        }
+        // ==== unwrapping of futures ====
+
+        let mut day_vwap = RollingDayVwap::new(78);
+        let mut daily_opens = HashMap::new();
+        for bar in last_n_bars.full.iter() {
+            day_vwap.push(&bar);
+            let bar_time = bar.get_time().with_timezone(&New_York);
+            let bar_date = bar_time.date_naive();
+            let is_date_open = bar_time.hour() == 9 && bar_time.minute() == 30;
+
+            if is_date_open {
+                daily_opens.insert(bar_date, bar);
+            } else {
+                if let Some(open_bar) = daily_opens.get(&bar_date) {
+                    let movement_since_open =
+                        (bar.get_price() / open_bar.get_open_price() - 1.0).abs();
+                    avg_moves
+                        .entry(bar_time)
+                        .and_modify(|rolling_mean: &mut RollingMean| {
+                            rolling_mean.push(movement_since_open);
+                        })
+                        .or_insert(RollingMean::new(avg_move_lookback_period));
+                }
+            }
+        }
+
+        let most_recent_day_open = daily_opens
+            .get(
+                daily_opens
+                    .keys()
+                    .max()
+                    .expect("Expected at least one daily open in noise"),
+            )
+            .unwrap();
+
+        let mut daily_volatility = RollingStd::new(vol_lookback_period);
+        let last_n_daily_bars = match last_n_daily_bars_joined {
+            Ok(abc) => abc?,
+            Err(e) => {
+                tracing::error!("Could not fetch last N bars for noise: {e:?}");
+                return Err(format!("Could not fetch last N bars for noise: {e:?}"));
+            }
+        };
+        if !last_n_daily_bars.incomplete.is_empty() {
+            tracing::error!("Fetching last N bars of daily returned incomplete bars for noise");
+            return Err(format!(
+                "Fetching last N bars of daily returned incomplete bars for noise"
+            ));
+        }
+        for bar in last_n_daily_bars.full {
+            daily_volatility.push(bar.get_price() / bar.get_open_price());
+        }
+
+        self.data = Some(NoiseFnData {
+            most_recent_day_bar: (*most_recent_day_open).clone(),
+            last_close: last_n_bars.full.last().unwrap().get_price(),
+            day_vwap,
+            daily_volatility,
+            avg_moves,
         });
 
-        let (
-            avg_move_since_open_res,
-            most_recent_open_res,
-            most_recent_daily_vol_res,
-            vwap_res,
-            // current_price_thread,
-            // current_pos_thread,
-        ) = (
-            avg_move_since_open_joined.map_err(|e| {
-                tracing::error!("avg_move_since_open_joined failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            most_recent_open_joined.map_err(|e| {
-                tracing::error!("most_recent_open_joined failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            most_recent_daily_vol_joined.map_err(|e| {
-                tracing::error!("most_recent_daily_vol_joined joined failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            vwap_joined.map_err(|e| {
-                tracing::error!("vwap_joined joined failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            // current_price_thread,
-            // current_pos_thread,
-        );
+        Ok(())
+    }
+}
 
-        let (
-            avg_move_since_open,
-            most_recent_open,
-            most_recent_daily_vol,
-            vwap_opt,
-            // (high, low, close, time),
-            // mut current_positions,
-        ) = (
-            avg_move_since_open_res.map_err(|e| {
-                tracing::error!("avg_move_since_open_res failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            most_recent_open_res.map_err(|e| {
-                tracing::error!("most_recent_open_res failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            most_recent_daily_vol_res.map_err(|e| {
-                tracing::error!("most_recent_daily_vol_res failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            vwap_res.map_err(|e| {
-                tracing::error!("vwap_res failed to resolve: {e:?}");
-                BarUpdateOutcome::NoAction
-            })?,
-            // match current_price_res {
-            //     HistoricalDataFullKeys::Stock(v) => (v.high, v.low, v.close, v.time),
-            //     _ => panic!("Fetch current price for noise returned Non-stock"),
-            // },
-            // current_pos_res
-            //     .map_err(|e| {
-            //         tracing::error!("Failed to fetch current_pos: {e:?}");
-            //         BarUpdateOutcome::NoAction
-            //     })?
-            //     .into_iter()
-            //     .map(|pos| match pos {
-            //         CurrentPositionsFullKeys::Stock(v) => (v.stock.clone(), v.quantity),
-            //         _ => panic!("Fetch current positions for noise returned Non-stock"),
-            //     })
-            // .collect::<Vec<(String, f64)>>(),
+#[hotpath::measure_all]
+impl Noise {
+    fn _on_bar_update(
+        &mut self,
+        _contract: &Contract,
+        bar: &HistoricalDataFullKeys,
+        consolidator: &Arc<Consolidator>,
+    ) -> Result<BarUpdateOutcome, BarUpdateOutcome> {
+        let mut noise_data = self
+            .data
+            .as_mut()
+            .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+        noise_data.push(bar.clone());
+
+        let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
+            noise_data
+                .avg_moves
+                .get(&bar.get_time().with_timezone(&New_York))
+                .expect("Expected to be able to get avg_moves")
+                .rolling_mean()
+                .expect("Expected sufficient data for avg move since open"),
+            noise_data.most_recent_day_bar.get_open_price(),
+            noise_data
+                .daily_volatility
+                .rolling_std()
+                .expect("Expected sufficient data for daily vol"),
+            noise_data
+                .day_vwap
+                .vwap()
+                .expect("Expected sufficient data for vwap"),
         );
-        // if current_positions.len() > 1 {
-        //     tracing::error!(
-        //         "Got excessive number of positions for noise: {}",
-        //         current_positions
-        //             .into_iter()
-        //             .map(|(stock, qty)| format!("{stock}: {qty}"))
-        //             .collect::<Vec<String>>()
-        //             .join("\n")
-        //     );
-        //     return Err(BarUpdateOutcome::NoAction);
-        // }
-        if let None = vwap_opt {
-            tracing::warn!("Not enough data from today (in ET) to calculate VWAP for QQQ");
-            return Err(BarUpdateOutcome::NoAction);
-        }
-        let vwap = vwap_opt.unwrap();
 
         // Minimum required qty for decent stats is 5.0
         // 50/100 gives a decent reward-return of 5% roughly annualised returns
@@ -408,24 +439,66 @@ impl Noise {
                 BarUpdateOutcome::NoAction
             })?;
 
+        // The noise-band sensitivity: upper_noise = (1 + noise_multiplier *
+        // avg_move) * open. Default 1.0 (the band = the avg move since open).
+        let noise_multiplier = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("noise_multiplier", 1.0)
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                1.0
+            }
+        };
+        // The act-on-bar interval (minutes). The strategy only places/closes
+        // when `bar.minute % act_interval == 0`. Default 30 (the :00 + :30
+        // bars). Must divide evenly into 60 (the bar minute is 0..59).
+        let act_interval = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("act_interval_minutes", 30.0) as u32
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                30_u32
+            }
+        };
+
         let ideal_qty = if most_recent_daily_vol >= {
             #[cfg(feature = "backtest")]
-            { self.param("daily_vol_threshold", 0.04) }
+            {
+                self.param("daily_vol_threshold", 0.04)
+            }
             #[cfg(not(feature = "backtest"))]
-            { 0.04 }
+            {
+                0.04
+            }
         } {
             #[cfg(feature = "backtest")]
-            { self.param("ideal_qty_high_vol", 70.0) as i64 }
+            {
+                self.param("ideal_qty_high_vol", 70.0) as i64
+            }
             #[cfg(not(feature = "backtest"))]
-            { 70 as i64 }
+            {
+                70 as i64
+            }
         } else {
             #[cfg(feature = "backtest")]
-            { self.param("ideal_qty_low_vol", 100.0) as i64 }
+            {
+                self.param("ideal_qty_low_vol", 100.0) as i64
+            }
             #[cfg(not(feature = "backtest"))]
-            { 100 as i64 }
+            {
+                100 as i64
+            }
         };
-        let allowable_positions_tuple =
-            proportional_integer_reduce(&vec![ideal_qty], &vec![bar.high], curr_available_funds);
+
+        let allowable_positions_tuple = proportional_integer_reduce(
+            &vec![ideal_qty],
+            &vec![bar.get_high_price()],
+            curr_available_funds,
+        );
         let allowable_positions = allowable_positions_tuple.0.first().unwrap();
         let qty = {
             if *allowable_positions != ideal_qty {
@@ -439,25 +512,19 @@ impl Noise {
         } as f64;
 
         let (upper_noise, _lower_noise) = (
-            (1.0 + avg_move_since_open) * most_recent_open,
-            (1.0 - avg_move_since_open) * most_recent_open,
+            (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open,
+            (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
         );
 
         tracing::info!(
             message=%format!(
                 "QQQ price is {}, upper noise is {}",
-                &bar.close,
+                &bar.get_price(),
                 &upper_noise
             )
         );
 
-        // let current_pos = current_positions.pop().unwrap_or(("QQQ".to_string(), 0.0));
-        // if current_pos.0 != "QQQ".to_string() {
-        //     tracing::error!("Encountered foreign asset in Noise: {}", current_pos.0);
-        //     return Err(BarUpdateOutcome::NoAction);
-        // }
-        // let qty = current_pos.1;
-
+        let (bar_close, bar_time) = (bar.get_price(), bar.get_time().with_timezone(&New_York));
         if qty != 0.0 {
             let current_time = Utc::now().with_timezone(&New_York);
             let last_time = New_York
@@ -470,8 +537,11 @@ impl Noise {
                     0,
                 )
                 .unwrap();
-            if ((bar.close < upper_noise || bar.close <= vwap)
-                && (bar.time.minute() == 0 || bar.time.minute() == 30))
+            if ((bar_close < upper_noise
+                || Decimal::from_f64(bar_close)
+                    .expect("Expected bar_close conversion to Decimal to be ok")
+                    <= vwap)
+                && bar_time.minute() % act_interval == 0)
                 || current_time >= last_time
             {
                 let target_stock_positions_crud =
@@ -480,7 +550,9 @@ impl Noise {
                 #[cfg(feature = "backtest")]
                 {
                     use crate::backtester::methods::in_memory::state::PositionKey;
-                    if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+                    if let Some(state) =
+                        crate::backtester::methods::in_memory::thread_local::current()
+                    {
                         state.delete_target(&PositionKey {
                             strategy: name.clone(),
                             stock: "QQQ".to_string(),
@@ -513,14 +585,15 @@ impl Noise {
             return Ok(BarUpdateOutcome::NoAction);
         }
 
-        if bar.close > upper_noise && (bar.time.minute() == 0 || bar.time.minute() == 30) {
+        if bar_close > upper_noise && bar_time.minute() % act_interval == 0 {
             let target_stock_positions_crud =
                 TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
             let name = self.get_name();
             #[cfg(feature = "backtest")]
             {
                 use crate::backtester::methods::in_memory::state::PositionKey;
-                if let Some(state) = crate::backtester::methods::in_memory::thread_local::current() {
+                if let Some(state) = crate::backtester::methods::in_memory::thread_local::current()
+                {
                     state.set_target(
                         PositionKey {
                             strategy: name.clone(),
@@ -562,4 +635,3 @@ impl Noise {
         return Ok(BarUpdateOutcome::NoAction);
     }
 }
-
