@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use crate::{
     execution::{fx_backed_up_order::OrderStore, order_update_stream},
-    strategy::strategy::StrategyEnum,
+    strategy::strategy::StrategyDetails,
 };
 
 static ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
@@ -103,7 +103,7 @@ impl OrderUpdateStreamController {
     pub fn new(
         pool: PgPool,
         weak_client: Weak<Client>,
-        strategy_map: Arc<HashMap<String, StrategyEnum>>,
+        strategy_details: Arc<HashMap<String, StrategyDetails>>,
         default_strategy: Option<String>,
         handle: tokio::runtime::Handle,
         backed_up_orders: Arc<OrderStore>,
@@ -194,7 +194,6 @@ impl OrderUpdateStreamController {
         // async reciever that asynchronously awaits for updates
         let pool = pool.clone();
         let def_strat = default_strategy.unwrap_or("unknown".to_string());
-        let strategy_map = strategy_map.clone();
         let cloned_handle = handle.clone();
         let weak_client = weak_client.clone();
         let backed_up_orders = backed_up_orders.clone();
@@ -204,7 +203,7 @@ impl OrderUpdateStreamController {
                     Some(order_update) => {
                         tracing::info!("Received order update in tokio runtime");
                         if let Err(e) = on_order_update_received(
-                            strategy_map.clone(),
+                            strategy_details.clone(),
                             pool.clone(),
                             order_update,
                             def_strat.as_str(),
@@ -235,7 +234,7 @@ impl OrderUpdateStreamController {
 
 /// Async only because it has to await open order handle
 async fn on_order_update_received(
-    strategy_map: Arc<HashMap<String, StrategyEnum>>,
+    strategy_details: Arc<HashMap<String, StrategyDetails>>,
     pool: PgPool,
     order_update: OrderUpdate,
     default_strategy: &str,
@@ -320,7 +319,7 @@ async fn on_order_update_received(
             if let Err(e) = order_update_stream::event_handlers::execution::on_execution_update(
                 pool.clone(),
                 execution_data,
-                strategy_map.clone(),
+                &strategy_details,
                 default_strategy,
                 handle,
                 weak_client,

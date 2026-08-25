@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
+#[cfg(feature = "backtest")]
+use chrono::{DateTime, Utc};
 use ibapi::{
     Client,
     prelude::{Contract, Symbol},
@@ -11,7 +13,7 @@ use crate::{
         models::AssetType, models_crud::historical_data::historical_data::HistoricalDataFullKeys,
     },
     market_data::consolidator::Consolidator,
-    strategy::strategy::{BarUpdateOutcome, StrategyExecutor},
+    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyExecutor},
 };
 
 #[derive(Debug, Clone)]
@@ -20,28 +22,28 @@ pub struct Unknown {
     name: String,
 }
 
-impl PartialEq for Unknown {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority == other.priority && self.name == other.name
-    }
-}
-
-impl Eq for Unknown {}
-
-impl PartialOrd for Unknown {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Unknown {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.priority.cmp(&other.priority) {
-            Ordering::Equal => self.name.cmp(&other.name),
-            other => other,
-        }
-    }
-}
+// impl PartialEq for Unknown {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.priority == other.priority && self.name == other.name
+//     }
+// }
+//
+// impl Eq for Unknown {}
+//
+// impl PartialOrd for Unknown {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
+//
+// impl Ord for Unknown {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         match self.priority.cmp(&other.priority) {
+//             Ordering::Equal => self.name.cmp(&other.name),
+//             other => other,
+//         }
+//     }
+// }
 
 impl Unknown {
     pub fn new(_pool: PgPool) -> Self {
@@ -59,12 +61,12 @@ impl StrategyExecutor for Unknown {
         self.name.clone()
     }
 
-    fn is_fx_strategy(&self) -> bool {
-        return false;
+    fn get_strategy_details(&self) -> StrategyDetails {
+        StrategyDetails::new(1, self.name.clone(), false)
     }
 
     fn on_bar_update(
-        &self,
+        &mut self,
         _contract: &Contract,
         _bar: &HistoricalDataFullKeys,
         _consolidator: &Arc<Consolidator>,
@@ -93,7 +95,11 @@ impl StrategyExecutor for Unknown {
         ]
     }
 
-    async fn warm_up_data(&self, _consolidator: &Arc<Consolidator>) -> Result<(), String> {
+    async fn warm_up_data(
+        &mut self,
+        _consolidator: &Arc<Consolidator>,
+        #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
+    ) -> Result<(), String> {
         Ok(())
     }
 }

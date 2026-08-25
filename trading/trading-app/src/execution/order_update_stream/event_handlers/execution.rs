@@ -22,7 +22,7 @@ use crate::{
                 TransactionsCRUD, TransactionsFullKeys, TransactionsPrimaryKeys,
             },
         },
-    }, execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine}, strategy::strategy::{StrategyEnum, StrategyExecutor},
+    }, execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine}, strategy::strategy::{StrategyDetails},
 };
 
 /// Should be triggered by ExecutionUpdate(ExecutionData) events
@@ -35,7 +35,7 @@ use crate::{
 pub fn on_execution_update(
     pool: PgPool,
     execution_data: ExecutionData,
-    strategy_map: Arc<HashMap<String, StrategyEnum>>,
+    strategy_details: &Arc<HashMap<String, StrategyDetails>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
     weak_client: &Weak<Client>,
@@ -65,10 +65,10 @@ pub fn on_execution_update(
     }
 
     let strategy_name = execution_data.execution.order_reference.clone();
-    let strategy = strategy_map
+    let strategy_detail = strategy_details
         .get(&strategy_name)
         .unwrap_or(
-            strategy_map
+            strategy_details
                 .get(default_strategy)
                 .expect("Expected default strategy to be defined in strategy map"),
         )
@@ -291,7 +291,7 @@ pub fn on_execution_update(
 
         // ===== Update Positions =====
         let mut current_positions_pk = CurrentPositionsPrimaryKeys::from_open_order(&open_order);
-        let stock = if strategy.is_fx_strategy() {
+        let stock = if strategy_detail.is_fx_strategy {
             stock
         } else {
             match stock.strip_prefix("FX:") {

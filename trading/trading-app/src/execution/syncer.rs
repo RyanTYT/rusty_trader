@@ -33,7 +33,7 @@ use crate::{
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from, get_local_symbol},
     init_app::StrategyParameters,
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
-    strategy::strategy::{StrategyEnum, StrategyExecutor},
+    strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor},
 };
 
 pub struct SyncerEngine {
@@ -41,7 +41,7 @@ pub struct SyncerEngine {
     account: String,
 
     // Strategy -> StrategyEnum (for mapping DB fields)
-    strategy_map: Arc<HashMap<String, StrategyEnum>>,
+    strategy_details: Arc<HashMap<String, StrategyDetails>>,
     // Contract -> Strategy
     // - Prioritisation of Strategy happens here
     contract_to_strategy: HashMap<HashContract, String>,
@@ -55,40 +55,35 @@ impl SyncerEngine {
         active_strategies: &Vec<StrategyParameters>,
         handle: tokio::runtime::Handle,
     ) -> SyncerEngine {
-        let mut contract_to_full_strategy: HashMap<HashContract, StrategyEnum> = HashMap::new();
+        let mut strategy_details = HashMap::new();
+        let mut contract_to_full_strategy: HashMap<HashContract, StrategyDetails> = HashMap::new();
         for strategy in active_strategies {
+            let strategy_detail = strategy.strategy.get_strategy_details();
+            strategy_details.insert(strategy_detail.name.clone(), strategy_detail.clone());
+
             for contract_sub in &strategy.subscribed_contracts {
                 let hashed_contract = HashContract {
                     contract: contract_sub.contract.clone(),
                 };
-                if contract_to_full_strategy.contains_key(&hashed_contract) {
-                    // Update contract_to_strategy
-                    let current_strategy = contract_to_full_strategy.get(&hashed_contract).unwrap();
-                    if strategy.strategy > *current_strategy {
-                        contract_to_full_strategy
-                            .insert(hashed_contract, strategy.strategy.clone());
-                    }
-                } else {
-                    // Update contract_to_strategy
-                    contract_to_full_strategy.insert(hashed_contract, strategy.strategy.clone());
-                }
+                contract_to_full_strategy
+                    .entry(hashed_contract)
+                    .and_modify(|current_strategy| {
+                        if strategy_detail > *current_strategy {
+                            *current_strategy = strategy_detail.clone();
+                        }
+                    })
+                    .or_insert(strategy_detail.clone());
             }
         }
         let mut contract_to_strategy = HashMap::new();
-        for (contract, full_strategy) in contract_to_full_strategy.iter() {
-            contract_to_strategy.insert(contract.clone(), full_strategy.get_name());
-        }
-
-        // create strategy map
-        let mut strategy_map = HashMap::new();
-        for strategy in active_strategies {
-            strategy_map.insert(strategy.strategy.get_name(), strategy.strategy.clone());
+        for (contract, full_strategy) in contract_to_full_strategy.into_iter() {
+            contract_to_strategy.insert(contract.clone(), full_strategy.name);
         }
 
         Self {
             pool,
             account,
-            strategy_map: Arc::new(strategy_map),
+            strategy_details: Arc::new(strategy_details),
             contract_to_strategy,
             handle,
         }
@@ -159,7 +154,7 @@ impl SyncOps for SyncerEngine {
                         order_update_stream::event_handlers::execution::on_execution_update(
                             self.pool.clone(),
                             execution_data,
-                            self.strategy_map.clone(),
+                            &self.strategy_details,
                             &def_strat,
                             self.handle.clone(),
                             &Arc::downgrade(&client),
