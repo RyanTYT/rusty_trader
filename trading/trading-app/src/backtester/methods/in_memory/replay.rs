@@ -44,13 +44,6 @@ pub struct InMemoryRunContext<'a> {
     pub clock: &'a BacktestClock,
     pub prices: &'a BacktestPriceSupplier,
     pub consolidator: &'a Arc<Consolidator>,
-    /// Pre-computed historical-query cache (the 4 `NoiseOps` + `read_last_vwap`
-    /// values per bar). `Some` in the sweep route (pre-computed once, shared);
-    /// `None` in the single-backtest route (the CRUD methods fall through to
-    /// the SQL per bar).
-    pub historical_cache: Option<
-        Arc<crate::backtester::methods::in_memory::historical_cache::InMemoryHistoricalCache>,
-    >,
 }
 
 /// In-memory backtest method. Unit struct — no state; the `InMemoryState` is
@@ -78,12 +71,6 @@ impl InMemoryReplay {
         // 2. Set the thread-local so the strategy's cfg-gated CRUD branches +
         //    the Consolidator's read branch use the InMemoryState.
         thread_local::set(state.clone());
-        // Set the historical cache (if provided) so the 4 NoiseOps +
-        // read_last_vwap cfg-gated branches look up the pre-computed values
-        // instead of hitting the DB per bar.
-        if let Some(cache) = &ctx.historical_cache {
-            historical_cache::set(cache.clone());
-        }
 
         // 3. Replay.
         let contract: Contract = ctx
@@ -137,7 +124,6 @@ impl InMemoryReplay {
         // 5. Clear the thread-local (the Arc<InMemoryState> is returned, so the
         //    sweep can still compute results from it).
         thread_local::clear();
-        historical_cache::clear();
         Ok((equity, state))
     }
 }
@@ -151,16 +137,48 @@ impl BacktestMethod for InMemoryReplay {
             bars.len(),
             ctx.config.period
         );
+
+        // Set the bar cache (the bars, shared via Arc) so warm_up_data's
+        // `read_last_n` reads from the cache (no DB) + tracks `max_end_time`
+        // (the latest bar fetched) for the post-warm-up trim below.
+        let bars_arc = Arc::new(bars);
+        let cache = Arc::new(historical_cache::InMemoryHistoricalCache::new(bars_arc.clone()));
+        historical_cache::set(cache.clone());
+
+        // Warm up the strategy's data (pure — reads the lookback from the
+        // cache, builds the rolling fns). `warm_up_data` is async + takes
+        // `&mut self`; block_on it on this (spawn_blocking) thread.
+        let mut strategy = ctx.strategy;
+        if let Some(first_bar) = bars_arc.first() {
+            let bar_time = first_bar.get_time();
+            ctx.handle
+                .block_on(strategy.warm_up_data(&ctx.consolidator, bar_time))
+                .map_err(|e| format!("warm_up_data: {e}"))?;
+        }
+
+        // Trim the bars to post-warm-up. The bars are sorted ascending, so the
+        // warm-up window (bars <= max_end_time) is a short prefix — linear-scan
+        // from the front (cache-friendly) for the split + take the suffix as a
+        // slice (no clone). No data leakage (the rolling fns already saw the
+        // prefix).
+        let trimmed: &[HistoricalDataFullKeys] = match cache.max_end_time() {
+            Some(t) => {
+                let split = bars_arc.iter().position(|b| b.get_time() > t).unwrap_or(0);
+                &bars_arc[split..]
+            }
+            None => &bars_arc[..],
+        };
+
         let in_mem_ctx = InMemoryRunContext {
             config: &ctx.config,
-            strategy: ctx.strategy,
+            strategy,
             handle: &ctx.handle,
             clock: &ctx.clock,
             prices: &ctx.prices,
             consolidator: &ctx.consolidator,
-            historical_cache: None,
         };
-        let (equity, _state) = self.run_with_bars(in_mem_ctx, &bars)?;
+        let (equity, _state) = self.run_with_bars(in_mem_ctx, trimmed)?;
+        historical_cache::clear();
         Ok(equity)
     }
 }
