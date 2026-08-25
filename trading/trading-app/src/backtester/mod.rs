@@ -65,8 +65,19 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
         // Pre-compute the 4 historical-query values per bar ONCE (the strategy's
         // `NoiseOps` + `read_last_vwap` queries), shared across all sweep
         // backtests via a thread-local. Eliminates the per-bar DB queries.
-        let bars_contract = config.subscribed_contracts.first().cloned().expect("subscribed_contracts non-empty");
-        let historical_cache = crate::backtester::methods::in_memory::historical_cache::precompute_historical_cache(&pool, &bars, &bars_contract).await;
+        let bars_contract = config
+            .subscribed_contracts
+            .first()
+            .cloned()
+            .expect("subscribed_contracts non-empty");
+        let historical_cache =
+            crate::backtester::methods::in_memory::historical_cache::precompute_historical_cache(
+                &pool,
+                &bars,
+                &bars_contract,
+                &[],
+            )
+            .await;
         // Run the sweep (sync, CPU-bound) on a blocking thread.
         let pool_clone = pool.clone();
         let handle_clone = handle.clone();
@@ -130,8 +141,8 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
     let mode = config.mode;
     let ctx = BacktestContext::build(config, pool.clone(), handle.clone(), strategy);
     let equity = tokio::task::spawn_blocking(move || match mode {
-        BacktestMode::InMemory => InMemoryReplay.run(&ctx),
-        BacktestMode::Db => HistoricalReplay.run(&ctx),
+        BacktestMode::InMemory => InMemoryReplay.run(ctx),
+        BacktestMode::Db => HistoricalReplay.run(ctx),
     })
     .await
     .map_err(|e| format!("replayer join: {e:?}"))??;

@@ -23,10 +23,8 @@ use crate::strategy::strategy::StrategyEnum;
 
 use crate::backtester::clock::BacktestClock;
 use crate::backtester::config::BacktestConfig;
+use crate::backtester::methods::in_memory::historical_cache::{self, InMemoryHistoricalCache};
 use crate::backtester::methods::in_memory::replay::{InMemoryReplay, InMemoryRunContext};
-use crate::backtester::methods::in_memory::historical_cache::{
-    self, InMemoryHistoricalCache,
-};
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::results::BacktestResults;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
@@ -68,8 +66,8 @@ pub fn run_backtest_sweep(
     // I/O thread — writes each result as a JSONL line as it arrives (flush
     // after each write so `tail -f` shows live updates).
     let io_thread = std::thread::spawn(move || -> Result<(), String> {
-        let mut file = std::fs::File::create(&output_path)
-            .map_err(|e| format!("create output file: {e}"))?;
+        let mut file =
+            std::fs::File::create(&output_path).map_err(|e| format!("create output file: {e}"))?;
         for result in rx {
             let line = serde_json::to_string(&result)
                 .map_err(|e| format!("serialize sweep result: {e}"))?;
@@ -89,14 +87,20 @@ pub fn run_backtest_sweep(
             let task_params = params.clone();
             let task_cache = historical_cache.clone();
             s.spawn(move |_| {
-                match run_one_backtest(&task_pool, config, &task_params, bars, &task_cache, &task_handle) {
+                match run_one_backtest(
+                    &task_pool,
+                    config,
+                    &task_params,
+                    bars,
+                    &task_cache,
+                    &task_handle,
+                ) {
                     Ok(result) => {
                         let _ = task_tx.send(result);
                     }
-                    Err(e) => tracing::error!(
-                        "sweep backtest failed (params {:?}): {e:?}",
-                        task_params
-                    ),
+                    Err(e) => {
+                        tracing::error!("sweep backtest failed (params {:?}): {e:?}", task_params)
+                    }
                 }
             });
         }
@@ -142,14 +146,14 @@ pub fn run_one_backtest(
     ));
     let in_mem_ctx = InMemoryRunContext {
         config,
-        strategy: &strategy,
+        strategy: strategy,
         handle,
         clock: &clock,
         prices: &prices,
         consolidator: &consolidator,
         historical_cache: Some(historical_cache.clone()),
     };
-    let (equity, state) = InMemoryReplay.run_with_bars(&in_mem_ctx, bars)?;
+    let (equity, state) = InMemoryReplay.run_with_bars(in_mem_ctx, bars)?;
     let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd);
     Ok(SweepResult {
         params: params.clone(),

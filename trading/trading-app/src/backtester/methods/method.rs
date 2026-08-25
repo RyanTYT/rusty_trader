@@ -9,5 +9,5 @@ use crate::backtester::equity::EquityCurve;
 pub trait BacktestMethod {
     /// Run the backtest method against the shared `ctx`. Returns the per-bar
     /// equity curve.
-    fn run(&self, ctx: &BacktestContext) -> Result<EquityCurve, String>;
+    fn run(&self, ctx: BacktestContext) -> Result<EquityCurve, String>;
 }
