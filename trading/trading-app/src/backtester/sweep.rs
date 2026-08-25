@@ -18,12 +18,11 @@ use serde::Serialize;
 use crate::market_data::consolidator::Consolidator;
 use crate::market_data::handler::MarketDataHandler;
 use crate::market_data::traits::current_price::PriceSupplier;
-use crate::strategy::noise::Noise;
-use crate::strategy::strategy::StrategyEnum;
+use crate::strategy::strategy::StrategyExecutor;
 
 use crate::backtester::clock::BacktestClock;
 use crate::backtester::config::BacktestConfig;
-use crate::backtester::methods::in_memory::historical_cache::{self, InMemoryHistoricalCache};
+use crate::backtester::methods::in_memory::historical_cache;
 use crate::backtester::methods::in_memory::replay::{InMemoryReplay, InMemoryRunContext};
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::results::BacktestResults;
@@ -53,11 +52,11 @@ pub fn parse_sweep_file(path: &Path) -> Vec<HashMap<String, f64>> {
 /// backtest's result streams to an I/O thread via a channel (JSONL output for
 /// live updates). Blocks until all backtests finish + the I/O thread drains.
 pub fn run_backtest_sweep(
+    name: &str,
     pool: sqlx::PgPool,
     config: &BacktestConfig,
     param_grid: &[HashMap<String, f64>],
-    bars: &[HistoricalDataFullKeys],
-    historical_cache: &Arc<InMemoryHistoricalCache>,
+    bars: Arc<Vec<HistoricalDataFullKeys>>,
     handle: &tokio::runtime::Handle,
 ) -> Result<(), String> {
     let (tx, rx) = std::sync::mpsc::channel::<SweepResult>();
@@ -85,14 +84,15 @@ pub fn run_backtest_sweep(
             let task_pool = pool.clone();
             let task_handle = handle.clone();
             let task_params = params.clone();
-            let task_cache = historical_cache.clone();
+            let task_bars = bars.clone();
+            let task_name = name.to_string();
             s.spawn(move |_| {
                 match run_one_backtest(
+                    &task_name,
                     &task_pool,
                     config,
                     &task_params,
-                    bars,
-                    &task_cache,
+                    task_bars,
                     &task_handle,
                 ) {
                     Ok(result) => {
@@ -123,15 +123,20 @@ pub fn run_backtest_sweep(
 /// it directly — the optimizer builds a param grid, runs each via this, +
 /// scores the results.
 pub fn run_one_backtest(
+    name: &str,
     pool: &sqlx::PgPool,
     config: &BacktestConfig,
     params: &HashMap<String, f64>,
-    bars: &[HistoricalDataFullKeys],
-    historical_cache: &Arc<InMemoryHistoricalCache>,
+    bars: Arc<Vec<HistoricalDataFullKeys>>,
     handle: &tokio::runtime::Handle,
 ) -> Result<SweepResult, String> {
-    let noise = Noise::new(pool.clone(), handle.clone()).with_backtest_params(params.clone());
-    let strategy = StrategyEnum::Noise(noise);
+    let mut strategy = crate::strategy::construct_strategy(
+        name,
+        pool.clone(),
+        handle.clone(),
+        Some(params.clone()),
+    )
+    .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
     let clock = Arc::new(BacktestClock::new());
     let prices = Arc::new(BacktestPriceSupplier::new(
         clock.clone(),
@@ -144,16 +149,41 @@ pub fn run_one_backtest(
         prices.clone() as Arc<dyn PriceSupplier + Send + Sync>,
         market_data_handler,
     ));
+
+    // Set the bar cache so warm_up_data's `read_last_n` reads from the cache
+    // (no DB) + tracks `max_end_time` for the post-warm-up trim.
+    let cache = Arc::new(historical_cache::InMemoryHistoricalCache::new(bars.clone()));
+    historical_cache::set(cache.clone());
+
+    // Warm up the strategy's data (pure — reads the lookback from the cache,
+    // builds the rolling fns). block_on on this rayon worker thread.
+    if let Some(first_bar) = bars.first() {
+        let bar_time = first_bar.get_time();
+        handle
+            .block_on(strategy.warm_up_data(&consolidator, bar_time))
+            .map_err(|e| format!("warm_up_data: {e}"))?;
+    }
+
+    // Trim the bars to post-warm-up. Linear-scan from the front (the
+    // warm-up prefix is short) for the split + take the suffix slice.
+    let trimmed: &[HistoricalDataFullKeys] = match cache.max_end_time() {
+        Some(t) => {
+            let split = bars.iter().position(|b| b.get_time() > t).unwrap_or(0);
+            &bars[split..]
+        }
+        None => &bars[..],
+    };
+
     let in_mem_ctx = InMemoryRunContext {
         config,
-        strategy: strategy,
+        strategy,
         handle,
         clock: &clock,
         prices: &prices,
         consolidator: &consolidator,
-        historical_cache: Some(historical_cache.clone()),
     };
-    let (equity, state) = InMemoryReplay.run_with_bars(in_mem_ctx, bars)?;
+    let (equity, state) = InMemoryReplay.run_with_bars(in_mem_ctx, trimmed)?;
+    historical_cache::clear();
     let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd);
     Ok(SweepResult {
         params: params.clone(),

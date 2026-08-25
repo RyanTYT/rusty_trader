@@ -42,60 +42,76 @@ pub use oracle::BacktestPriceSupplier;
 pub use results::BacktestResults;
 
 use sqlx::PgPool;
+use std::sync::Arc;
 
-use crate::strategy::noise::Noise;
-use crate::strategy::strategy::{StrategyEnum, StrategyExecutor};
+use crate::strategy::strategy::StrategyExecutor;
 
 /// Entry point. Accepts a fully-built [`BacktestConfig`] (the interface layer).
 /// Thin orchestration: data load → seed → context → method → results.
 pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
     let handle = tokio::runtime::Handle::current();
 
-    // Sweep route: if a `<strategy>.json` file (e.g. `noise.json`) is found in
-    // the working directory, parse it as a param grid + run N backtests in
-    // parallel (rayon, core-sized pool). Results stream to an I/O thread
-    // (JSONL output for live `tail -f` updates). Else, fall through to the
-    // normal single-backtest route (env-var params).
-    let sweep_file = std::path::Path::new("noise.json");
-    if sweep_file.exists() {
-        let param_grid = crate::backtester::sweep::parse_sweep_file(sweep_file);
-        tracing::info!("Sweep: {} backtests from noise.json", param_grid.len());
-        // Load the bars once (shared across all sweep backtests — no per-backtest DB query).
-        let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
-        // Pre-compute the 4 historical-query values per bar ONCE (the strategy's
-        // `NoiseOps` + `read_last_vwap` queries), shared across all sweep
-        // backtests via a thread-local. Eliminates the per-bar DB queries.
-        let bars_contract = config
-            .subscribed_contracts
-            .first()
-            .cloned()
-            .expect("subscribed_contracts non-empty");
-        let historical_cache =
-            crate::backtester::methods::in_memory::historical_cache::precompute_historical_cache(
-                &pool,
-                &bars,
-                &bars_contract,
-                &[],
-            )
-            .await;
-        // Run the sweep (sync, CPU-bound) on a blocking thread.
-        let pool_clone = pool.clone();
-        let handle_clone = handle.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::backtester::sweep::run_backtest_sweep(
-                pool_clone,
-                &config,
-                &param_grid,
-                &bars,
-                &historical_cache,
-                &handle_clone,
-            )
+    // Sweep route: scan the working dir for `*.json` sweep files. Each
+    // filename (e.g. `noise.json`) names a strategy; the file is the param
+    // grid (a JSON array of param objects). `construct_strategies` filters
+    // to recognised strategies (only the chosen run). For each, run a
+    // parallel sweep (rayon, core-sized pool). Results stream to an I/O
+    // thread (JSONL output for live `tail -f` updates).
+    let sweep_names: Vec<String> = std::fs::read_dir(".")
+        .map_err(|e| format!("read working dir: {e}"))?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+            } else {
+                None
+            }
         })
-        .await
-        .map_err(|e| format!("sweep join: {e:?}"))??;
+        .collect();
+    if !sweep_names.is_empty() {
+        // Discovery: construct_strategies filters to valid strategies.
+        let strategies = crate::strategy::construct_strategies(
+            sweep_names,
+            pool.clone(),
+            handle.clone(),
+        );
+        if strategies.is_empty() {
+            return Err("No recognised strategies found in *.json sweep files".into());
+        }
+        // Load the bars once (shared across all strategies' sweeps via Arc).
+        let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+        let bars_arc = Arc::new(bars);
+        for strategy in strategies {
+            let name = strategy.get_name();
+            let sweep_file = std::path::PathBuf::from(format!("{name}.json"));
+            if !sweep_file.exists() {
+                continue;
+            }
+            let param_grid = crate::backtester::sweep::parse_sweep_file(&sweep_file);
+            tracing::info!("Sweep: {} backtests from {name}.json", param_grid.len());
+            let pool_clone = pool.clone();
+            let handle_clone = handle.clone();
+            let config_clone = config.clone();
+            let bars_clone = bars_arc.clone();
+            let name_clone = name.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::backtester::sweep::run_backtest_sweep(
+                    &name_clone,
+                    pool_clone,
+                    &config_clone,
+                    &param_grid,
+                    bars_clone,
+                    &handle_clone,
+                )
+            })
+            .await
+            .map_err(|e| format!("sweep join: {e:?}"))??;
+        }
         return Ok(());
     }
 
+    // ── Single-backtest route (no *.json sweep files) ─────────────────────
     // 1. Load market data (only for TimeRange; NumBars assumes bars are
     //    already in the DB from a prior load).
     if let BacktestPeriod::TimeRange { start, end } = &config.period {
@@ -109,50 +125,49 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
         .await?;
     }
 
-    // 2. Real prod strategy — the SAME Noise that runs in production. Under
-    //    backtest, inject the generic strategy params (from NOISE_<VAR> env
-    //    vars) so the strategy's cfg-gated `on_bar_update` branches use them.
-    let mut noise = Noise::new(pool.clone(), handle.clone());
-    #[cfg(feature = "backtest")]
-    {
-        if let Some(noise_params) = config.strategy_params.get("noise") {
-            noise = noise.with_backtest_params(noise_params.clone());
-        }
-    }
-    let strategy = StrategyEnum::Noise(noise);
-
-    // 3. Seed the initial capital. For Db mode, seed CASH:SGD in the DB
-    //    (the strategy's `get_strategy_sgd_value` reads this as available
-    //    cash). For InMemory mode, the `InMemoryReplay` seeds the
-    //    `InMemoryState` internally (no DB seed needed).
-    if config.mode == BacktestMode::Db {
-        crate::backtester::seed::seed_initial_capital(
-            &pool,
-            &strategy.get_name(),
-            config.starting_capital_sgd,
-        )
-        .await?;
-    }
-
-    // 4. Build the shared execution surface + run the method on a blocking
-    //    thread (sync strategy fns + `handle.block_on` need a non-tokio thread).
+    // 2. Construct the chosen strategies (from `config.strategy_params`) with
+    //    their env-var params + run each. `construct_strategy` is the single
+    //    name→variant mapping (no hardcoded Noise::new()).
     let starting_capital = config.starting_capital_sgd;
-    let output_path = config.output_path.clone();
     let mode = config.mode;
-    let ctx = BacktestContext::build(config, pool.clone(), handle.clone(), strategy);
-    let equity = tokio::task::spawn_blocking(move || match mode {
-        BacktestMode::InMemory => InMemoryReplay.run(ctx),
-        BacktestMode::Db => HistoricalReplay.run(ctx),
-    })
-    .await
-    .map_err(|e| format!("replayer join: {e:?}"))??;
+    for (name, params) in &config.strategy_params {
+        let strategy = crate::strategy::construct_strategy(
+            name,
+            pool.clone(),
+            handle.clone(),
+            Some(params.clone()),
+        )
+        .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
 
-    // 5. Results.
-    let results = BacktestResults::compute(&pool, &equity, starting_capital).await?;
-    results.write_json(&output_path)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&results).map_err(|e| format!("serialize: {e}"))?
-    );
+        // 3. Seed the initial capital (Db mode only). For InMemory mode the
+        //    `InMemoryReplay` seeds the `InMemoryState` internally.
+        if mode == BacktestMode::Db {
+            crate::backtester::seed::seed_initial_capital(
+                &pool,
+                &strategy.get_name(),
+                starting_capital,
+            )
+            .await?;
+        }
+
+        // 4. Build the shared execution surface + run the method on a blocking
+        //    thread (sync strategy fns + `handle.block_on` need a non-tokio thread).
+        let ctx = BacktestContext::build(config.clone(), pool.clone(), handle.clone(), strategy);
+        let equity = tokio::task::spawn_blocking(move || match mode {
+            BacktestMode::InMemory => InMemoryReplay.run(ctx),
+            BacktestMode::Db => HistoricalReplay.run(ctx),
+        })
+        .await
+        .map_err(|e| format!("replayer join: {e:?}"))??;
+
+        // 5. Results.
+        let results = BacktestResults::compute(&pool, &equity, starting_capital).await?;
+        let output_path = format!("backtest_results_{name}.json");
+        results.write_json(&output_path)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&results).map_err(|e| format!("serialize: {e}"))?
+        );
+    }
     Ok(())
 }
