@@ -256,67 +256,24 @@ impl StrategyExecutor for Noise {
                 .map_err(|e| format!("Error in update_at_least_n_days_data: {}", e))?;
         }
 
-        let avg_move_lookback_period = avg_move_lookback as usize;
+        let num_days = avg_move_lookback.max(vol_lookback) as usize;
         let mut avg_moves = HashMap::new();
         let historical_data_crud = HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
-        let last_n_bars_thread = self.tokio_handle.spawn(hotpath::future!(
-            async move {
-                historical_data_crud
-                    .read_last_n(
-                        HistoricalDataPrimaryKeysWoTime::Stock(
-                            HistoricalStockDataPrimaryKeysWoTime {
-                                stock: "QQQ".to_string(),
-                                primary_exchange: "NASDAQ".to_string(),
-                                currency: "USD".to_string(),
-                            },
-                        ),
-                        5,
-                        (NUM_BARS_PER_DAY * avg_move_lookback_period + NUM_BARS_PER_DAY) as u32,
-                        #[cfg(feature = "backtest")]
-                        bar_time,
-                    )
-                    .await
-                    .map_err(|e| format!("{}", e))
-            },
-            label = "noise_get_avg_move_since_open"
-        ));
-        let vol_lookback_period = vol_lookback as usize;
-        let daily_historical_data_crud = HistoricalDataCRUD::daily_stock(self.pool.clone());
-        let last_n_daily_bars_thread = self.tokio_handle.spawn(hotpath::future!(
-            async move {
-                daily_historical_data_crud
-                    .read_last_n(
-                        HistoricalDataPrimaryKeysWoTime::DailyStock(
-                            crate::database::models::DailyHistoricalStockDataPrimaryKeysWoTime {
-                                stock: "QQQ".to_string(),
-                                primary_exchange: "NASDAQ".to_string(),
-                                currency: "USD".to_string(),
-                            },
-                        ),
-                        5,
-                        vol_lookback_period as u32,
-                        #[cfg(feature = "backtest")]
-                        bar_time,
-                    )
-                    .await
-                    .map_err(|e| format!("{}", e))
-            },
-            label = "noise_get_n_daily_bars"
-        ));
+        let last_n_bars = historical_data_crud
+            .read_last_n(
+                HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+                    stock: "QQQ".to_string(),
+                    primary_exchange: "NASDAQ".to_string(),
+                    currency: "USD".to_string(),
+                }),
+                5,
+                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY) as u32,
+                #[cfg(feature = "backtest")]
+                bar_time,
+            )
+            .await
+            .map_err(|e| format!("{}", e))?;
 
-        // ==== unwrapping of futures ====
-        let (last_n_bars_joined, last_n_daily_bars_joined) =
-            hotpath::measure_block!("noise_join_db_queries", {
-                self.tokio_handle
-                    .block_on(async { tokio::join!(last_n_bars_thread, last_n_daily_bars_thread,) })
-            });
-        let last_n_bars = match last_n_bars_joined {
-            Ok(abc) => abc?,
-            Err(e) => {
-                tracing::error!("Could not fetch last N bars for noise: {e:?}");
-                return Err(format!("Could not fetch last N bars for noise: {e:?}"));
-            }
-        };
         if !last_n_bars.incomplete.is_empty() {
             tracing::error!(
                 "Fetching last N bars of timestep 5 returned incomplete bars for noise"
@@ -325,28 +282,56 @@ impl StrategyExecutor for Noise {
                 "Fetching last N bars of timestep 5 returned incomplete bars for noise"
             ));
         }
-        // ==== unwrapping of futures ====
+        if last_n_bars.full.is_empty() {
+            return Err("Failed to fetch any full bars during noise warmup".to_string());
+        }
 
         let mut day_vwap = RollingDayVwap::new(78);
         let mut daily_opens = HashMap::new();
-        for bar in last_n_bars.full.iter() {
-            day_vwap.push(&bar);
-            let bar_time = bar.get_time().with_timezone(&New_York);
-            let bar_date = bar_time.date_naive();
-            let is_date_open = bar_time.hour() == 9 && bar_time.minute() == 30;
+        let mut daily_volatility = RollingStd::new(vol_lookback as usize);
 
-            if is_date_open {
-                daily_opens.insert(bar_date, bar);
+        // read first bar first, since loop will use windows(2) and ignore first bar
+        let first_bar = last_n_bars.full.first().unwrap();
+        day_vwap.push(&first_bar);
+        let first_bar_time = first_bar.get_time().with_timezone(&New_York);
+        if first_bar_time.hour() == 9 && first_bar_time.minute() == 30 {
+            daily_opens.insert(first_bar_time.date_naive(), first_bar.clone());
+        }
+
+        let mut first_switch = true;
+        for bars in last_n_bars.full.windows(2) {
+            let first_bar = &bars[0];
+            let second_bar = &bars[1];
+
+            day_vwap.push(&second_bar);
+            let first_bar_time = first_bar.get_time().with_timezone(&New_York);
+            let second_bar_time = second_bar.get_time().with_timezone(&New_York);
+            let first_bar_date = first_bar_time.date_naive();
+            let second_bar_date = second_bar_time.date_naive();
+
+            if first_bar_date != second_bar_date {
+                match daily_opens.get(&first_bar_date) {
+                    Some(open) => {
+                        daily_volatility.push(first_bar.get_price() / open.get_open_price());
+                    }
+                    None => {
+                        if !first_switch {
+                            tracing::error!("Failed to get open of previous bar");
+                        }
+                    }
+                }
+                daily_opens.insert(second_bar_date, second_bar.clone());
+                first_switch = false;
             } else {
-                if let Some(open_bar) = daily_opens.get(&bar_date) {
+                if let Some(open_bar) = daily_opens.get(&second_bar_date) {
                     let movement_since_open =
-                        (bar.get_price() / open_bar.get_open_price() - 1.0).abs();
+                        (second_bar.get_price() / open_bar.get_open_price() - 1.0).abs();
                     avg_moves
-                        .entry(bar_time)
+                        .entry(second_bar_time)
                         .and_modify(|rolling_mean: &mut RollingMean| {
                             rolling_mean.push(movement_since_open);
                         })
-                        .or_insert(RollingMean::new(avg_move_lookback_period));
+                        .or_insert(RollingMean::new(avg_move_lookback as usize));
                 }
             }
         }
@@ -359,24 +344,6 @@ impl StrategyExecutor for Noise {
                     .expect("Expected at least one daily open in noise"),
             )
             .unwrap();
-
-        let mut daily_volatility = RollingStd::new(vol_lookback_period);
-        let last_n_daily_bars = match last_n_daily_bars_joined {
-            Ok(abc) => abc?,
-            Err(e) => {
-                tracing::error!("Could not fetch last N bars for noise: {e:?}");
-                return Err(format!("Could not fetch last N bars for noise: {e:?}"));
-            }
-        };
-        if !last_n_daily_bars.incomplete.is_empty() {
-            tracing::error!("Fetching last N bars of daily returned incomplete bars for noise");
-            return Err(format!(
-                "Fetching last N bars of daily returned incomplete bars for noise"
-            ));
-        }
-        for bar in last_n_daily_bars.full {
-            daily_volatility.push(bar.get_price() / bar.get_open_price());
-        }
 
         self.data = Some(NoiseFnData {
             most_recent_day_bar: (*most_recent_day_open).clone(),
