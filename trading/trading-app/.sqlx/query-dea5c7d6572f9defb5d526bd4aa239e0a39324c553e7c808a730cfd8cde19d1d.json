@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT\n                        time_bucket(make_interval(mins => $4), time) AS bucket,\n                        stock,\n                        primary_exchange,\n                        currency,\n                        first(open, time)       AS \"open!\",\n                        max(high)               AS \"high!\",\n                        min(low)                AS \"low!\",\n                        last(close, time)       AS \"close!\",\n                        sum(volume)             AS \"volume!\",\n                        count(*)                AS bar_count\n                    FROM market_data.historical_data\n                    WHERE stock = $1\n                      AND primary_exchange = $2\n                      AND currency = $3\n                    GROUP BY bucket, stock, primary_exchange, currency\n                    ORDER BY bucket DESC\n                    LIMIT $5\n                    ",
+  "query": "\n                    SELECT\n                        time_bucket(make_interval(mins => $4), time) AS bucket,\n                        stock,\n                        primary_exchange,\n                        currency,\n                        first(open, time)       AS \"open!\",\n                        max(high)               AS \"high!\",\n                        min(low)                AS \"low!\",\n                        last(close, time)       AS \"close!\",\n                        sum(volume)             AS \"volume!\",\n                        count(*)                AS bar_count\n                    FROM market_data.historical_data\n                    WHERE stock = $1\n                      AND primary_exchange = $2\n                      AND currency = $3\n                      AND time <= $6\n                    GROUP BY bucket, stock, primary_exchange, currency\n                    ORDER BY bucket DESC\n                    LIMIT $5\n                    ",
   "describe": {
     "columns": [
       {
@@ -60,7 +60,8 @@
         "Text",
         "Text",
         "Int4",
-        "Int8"
+        "Int8",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -76,5 +77,5 @@
       null
     ]
   },
-  "hash": "e81419251b9fa0fb463c4f0088c4ff58043ac6802681ce7c3640546ded538b3a"
+  "hash": "dea5c7d6572f9defb5d526bd4aa239e0a39324c553e7c808a730cfd8cde19d1d"
 }
