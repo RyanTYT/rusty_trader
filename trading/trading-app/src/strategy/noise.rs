@@ -511,73 +511,61 @@ impl Noise {
         // );
 
         let (bar_close, bar_time) = (bar.get_price(), bar.get_time().with_timezone(&New_York));
-        if qty != 0.0 {
-            // let current_time = Utc::now().with_timezone(&New_York);
-            let last_time = New_York
-                .with_ymd_and_hms(
-                    bar_time.year(),
-                    bar_time.month(),
-                    bar_time.day(),
-                    15,
-                    45,
-                    0,
-                )
-                .unwrap();
-            if ((bar_close < upper_noise
-                || Decimal::from_f64(bar_close)
-                    .expect("Expected bar_close conversion to Decimal to be ok")
-                    <= vwap)
-                && bar_time.minute() % act_interval == 0)
-                || bar_time >= last_time
+        if qty == 0.0 {
+            return Ok(BarUpdateOutcome::NoAction);
+        }
+
+        // If (Either < upper noise, < VWAP && time to act) || (final time to trade)
+        let last_time = New_York
+            .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
+            .unwrap();
+        if ((bar_close < upper_noise
+            || Decimal::from_f64(bar_close)
+                .expect("Expected bar_close conversion to Decimal to be ok")
+                <= vwap)
+            && bar_time.minute() % act_interval == 0)
+            || bar_time >= last_time
+        {
+            let target_stock_positions_crud =
+                TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
+            let name = self.get_name();
+            #[cfg(feature = "backtest")]
             {
-                let target_stock_positions_crud =
-                    TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
-                let name = self.get_name();
-                #[cfg(feature = "backtest")]
-                {
-                    use crate::backtester::methods::in_memory::state::PositionKey;
-                    if let Some(state) = crate::backtester::methods::in_memory::state::current() {
-                        state.delete_target(&PositionKey {
-                            strategy: name.clone(),
-                            stock: "QQQ".to_string(),
-                            primary_exchange: "NASDAQ".to_string(),
-                            currency: "USD".to_string(),
-                        });
-                        return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
-                    }
+                use crate::backtester::methods::in_memory::state::PositionKey;
+                if let Some(state) = crate::backtester::methods::in_memory::state::current() {
+                    state.delete_target(&PositionKey {
+                        strategy: name.clone(),
+                        stock: "QQQ".to_string(),
+                        primary_exchange: "NASDAQ".to_string(),
+                        currency: "USD".to_string(),
+                    });
+                    return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
                 }
-                hotpath::measure_block!("noise_delete_target_position", {
-                    self.tokio_handle.block_on(async move {
-                        target_stock_positions_crud
-                            .delete(&TargetPositionsPrimaryKeys::Stock(
-                                TargetStockPositionsPrimaryKeys {
-                                    strategy: name,
-                                    stock: "QQQ".to_string(),
-                                    primary_exchange: "NASDAQ".to_string(),
-                                    currency: "USD".to_string(),
-                                },
-                            ))
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Failed to delete QQQ: {e:?}");
-                                BarUpdateOutcome::NoAction
-                            })
-                    })
-                })?;
-                let mut noise_data = self
-                    .data
-                    .as_mut()
-                    .expect("Expected sufficient data in noise fn warm up for on_bar_update");
-                noise_data.push(bar.clone());
-                return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
             }
+            hotpath::measure_block!("noise_delete_target_position", {
+                self.tokio_handle.block_on(async move {
+                    target_stock_positions_crud
+                        .delete(&TargetPositionsPrimaryKeys::Stock(
+                            TargetStockPositionsPrimaryKeys {
+                                strategy: name,
+                                stock: "QQQ".to_string(),
+                                primary_exchange: "NASDAQ".to_string(),
+                                currency: "USD".to_string(),
+                            },
+                        ))
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to delete QQQ: {e:?}");
+                            BarUpdateOutcome::NoAction
+                        })
+                })
+            })?;
             let mut noise_data = self
                 .data
                 .as_mut()
                 .expect("Expected sufficient data in noise fn warm up for on_bar_update");
-
             noise_data.push(bar.clone());
-            return Ok(BarUpdateOutcome::NoAction);
+            return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
         }
 
         if bar_close > upper_noise && bar_time.minute() % act_interval == 0 {
