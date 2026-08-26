@@ -61,15 +61,10 @@ impl NoiseFnData {
             })
         {
             if let Some(last_bar) = &self.last_bar {
-                self.daily_volatility.push(
-                    last_bar.get_price()
-                        / self
-                            .most_recent_day_bar
-                            .as_ref()
-                            .unwrap()
-                            .1
-                            .get_open_price(),
-                );
+                if let Some(most_recent_day_bars) = &self.most_recent_day_bar {
+                    self.daily_volatility
+                        .push(last_bar.get_price() / most_recent_day_bars.1.get_open_price());
+                }
                 self.most_recent_day_bar = Some((last_bar.clone(), bar.clone()));
             }
             self.last_bar = Some(bar);
