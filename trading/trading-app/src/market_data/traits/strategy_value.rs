@@ -271,10 +271,10 @@ impl Consolidator {
         )>,
     ) -> Result<f64, String> {
         use crate::backtester::methods::in_memory::state::PositionKey;
-        use std::collections::HashMap;
+        use crate::helpers::contract::HashContract;
         use ibapi::contracts::Contract;
         use ibapi::prelude::SecurityType;
-        use crate::helpers::contract::HashContract;
+        use std::collections::HashMap;
 
         let call_price = |contract: Contract| -> Result<f64, String> {
             price_supplier.get_current_price(contract, false, &[])
@@ -283,6 +283,8 @@ impl Consolidator {
         let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
 
         for (key, pos) in positions {
+            use crate::helpers::contract::build_contract_from_stock;
+
             if pos.quantity.abs() < 1e-9 {
                 continue;
             }
@@ -304,13 +306,8 @@ impl Consolidator {
                 continue;
             }
             // Stock position.
-            let contract = Contract {
-                symbol: key.stock.clone().into(),
-                security_type: SecurityType::Stock,
-                exchange: key.primary_exchange.clone().into(),
-                currency: key.currency.clone().into(),
-                ..Default::default()
-            };
+            let contract =
+                build_contract_from_stock(&key.stock, &key.primary_exchange, &key.currency);
             let mkt_value = call_price(contract.clone())? * pos.quantity;
             if key.currency == "SGD" {
                 sgd_value += mkt_value;
@@ -322,7 +319,9 @@ impl Consolidator {
                     currency: "SGD".into(),
                     ..Default::default()
                 };
-                let hash_contract = HashContract { contract: fx_contract.clone() };
+                let hash_contract = HashContract {
+                    contract: fx_contract.clone(),
+                };
                 let rate = if let Some(&r) = exchange_rates.get(&hash_contract) {
                     r
                 } else {
