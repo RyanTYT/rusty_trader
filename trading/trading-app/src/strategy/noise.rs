@@ -371,7 +371,7 @@ impl Noise {
 
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
         if !noise_data.avg_moves.contains_key(bar_time) {
-            if bar_time == NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
+            if bar_time == &NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
                 return Ok(BarUpdateOutcome::NoAction);
             } else {
                 tracing::error!("avg_moves doesn't contain: {bar_time:?}");
