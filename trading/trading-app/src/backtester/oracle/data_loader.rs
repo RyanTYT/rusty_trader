@@ -19,16 +19,15 @@ use ibapi::Client;
 use ibapi::contracts::Contract;
 use ibapi::market_data::TradingHours;
 use ibapi::market_data::historical::{BarSize, ToDuration, WhatToShow};
-use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::AssetType;
 use crate::database::models_crud::historical_data::historical_data::{
-    HistoricalDataCRUD, HistoricalDataFullKeys, HistoricalDataOps,
-    HistoricalDataPrimaryKeys, HistoricalDataPrimaryKeysWoTime,
-    HistoricalDataUpdateKeys,
+    HistoricalDataCRUD, HistoricalDataFullKeys, HistoricalDataOps, HistoricalDataPrimaryKeys,
+    HistoricalDataPrimaryKeysWoTime, HistoricalDataUpdateKeys,
 };
 use crate::ibc::with_gateway_retry;
 
@@ -104,8 +103,8 @@ async fn try_ibkr(
     let pool = pool.clone();
     let contracts = contracts.to_vec();
     with_gateway_retry("/tmp/ibc.log", 2, |_gateway| async move {
-        let client = Client::connect("localhost:4002", 0)
-            .map_err(|e| format!("connect to IBKR: {e}"))?;
+        let client =
+            Client::connect("localhost:4002", 0).map_err(|e| format!("connect to IBKR: {e}"))?;
         let mut total = 0;
         for contract in &contracts {
             total += paginate_historical_data(&client, contract, start, end, &pool).await?;
@@ -129,7 +128,11 @@ async fn paginate_historical_data(
     let asset_type = AssetType::from_str(&contract.security_type);
     let is_forex = asset_type == AssetType::ForexPair;
 
-    let bar_size = if is_forex { BarSize::Min } else { BarSize::Min5 };
+    let bar_size = if is_forex {
+        BarSize::Min
+    } else {
+        BarSize::Min5
+    };
     let bar_interval_secs: i64 = if is_forex { 60 } else { 300 };
 
     // For forex, fetch Bid first, then Ask (mirrors prod recursion).
@@ -142,7 +145,14 @@ async fn paginate_historical_data(
     let mut total = 0;
     for what_to_show in &what_to_shows {
         total += paginate_single_direction(
-            client, contract, start, end, pool, *what_to_show, bar_size.clone(), bar_interval_secs,
+            client,
+            contract,
+            start,
+            end,
+            pool,
+            *what_to_show,
+            bar_size.clone(),
+            bar_interval_secs,
         )
         .await?;
     }
@@ -203,7 +213,7 @@ async fn paginate_single_direction(
         // Determine the earliest bar's time (to move the cursor backwards).
         // bars are DESC order (most recent first); last() is the earliest.
         let earliest = bars
-            .last()
+            .first()
             .map(|b| {
                 DateTime::from_timestamp(b.date.unix_timestamp(), b.date.nanosecond() as u32)
                     .unwrap_or(end_cursor)
@@ -216,15 +226,18 @@ async fn paginate_single_direction(
                 continue; // skip the latest (possibly incomplete) bar
             }
 
-            let bar_time =
-                DateTime::from_timestamp(bar_ts, bar.date.nanosecond() as u32).unwrap_or(end_cursor);
+            let bar_time = DateTime::from_timestamp(bar_ts, bar.date.nanosecond() as u32)
+                .unwrap_or(end_cursor);
 
             let fk = HistoricalDataFullKeys::from_contract_and_bar(contract, &what_to_show, bar);
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, bar_time);
             let uk = HistoricalDataUpdateKeys::from_historical_bar(contract, &what_to_show, &fk);
 
             if let Err(e) = crud.create_or_update(&pk, &uk).await {
-                tracing::error!("Failed to upsert historical bar for {}: {e:?}", contract.symbol);
+                tracing::error!(
+                    "Failed to upsert historical bar for {}: {e:?}",
+                    contract.symbol
+                );
             }
         }
 
@@ -262,8 +275,8 @@ async fn try_alpaca(
 ) -> Result<(), String> {
     let api_key = std::env::var("ALPACA_API_KEY")
         .map_err(|_| "ALPACA_API_KEY not set — cannot fall back to Alpaca".to_string())?;
-    let api_secret = std::env::var("ALPACA_API_SECRET")
-        .map_err(|_| "ALPACA_API_SECRET not set".to_string())?;
+    let api_secret =
+        std::env::var("ALPACA_API_SECRET").map_err(|_| "ALPACA_API_SECRET not set".to_string())?;
 
     tracing::info!("Fetching historical data from Alpaca...");
 
