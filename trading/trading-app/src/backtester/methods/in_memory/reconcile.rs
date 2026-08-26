@@ -87,22 +87,11 @@ pub fn handle_bar_update_outcome_in_memory(
                     ..Default::default()
                 };
                 // The order's contract mirrors the target's key.
-                let contract = Contract {
-                    symbol: key.stock.clone().into(),
-                    security_type: if key.stock.starts_with("CASH:") {
-                        SecurityType::ForexPair
-                    } else {
-                        SecurityType::Stock
-                    },
-                    exchange: if key.stock.starts_with("CASH:") {
-                        "IDEALPRO".into()
-                    } else {
-                        "".into()
-                    },
-                    primary_exchange: key.primary_exchange.clone().into(),
-                    currency: key.currency.clone().into(),
-                    ..Default::default()
-                };
+                let contract = crate::helpers::contract::build_contract_from_stock(
+                    &key.stock,
+                    &key.primary_exchange,
+                    &key.currency,
+                );
                 fill_order_in_memory(config, prices, state, &contract, &order, bar, order_id)?;
             }
             Ok(())
