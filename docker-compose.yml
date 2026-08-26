@@ -227,8 +227,8 @@ services:
   optimizer:
     restart: "no"
     build: 
-      context: ./trading/optimizer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./trading/optimizer/Dockerfile
     platform: linux/amd64
     volumes:
       - ./data/optimizer-runs:/data
