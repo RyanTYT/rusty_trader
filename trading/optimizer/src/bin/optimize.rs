@@ -27,7 +27,7 @@
 //! loader the backtester uses (`load_market_data`) — so the DB is guaranteed
 //! to have the bars for the full period before the optimization runs.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;

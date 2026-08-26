@@ -35,6 +35,7 @@ COPY trading/trading-app/crud_models ./trading-app/crud_models
 COPY trading/trading-app/spmc-ring ./trading-app/spmc-ring
 COPY trading/trading-app/.sqlx ./trading-app/.sqlx
 COPY trading/trading-app/migrations ./trading-app/migrations
+COPY trading/trading-app/src ./trading-app/src
 
 # Copy the optimizer crate.
 COPY trading/optimizer/Cargo.toml ./optimizer/Cargo.toml
