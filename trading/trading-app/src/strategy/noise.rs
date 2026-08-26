@@ -370,6 +370,10 @@ impl Noise {
         noise_data.push(bar.clone());
 
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
+        if !noise_data.avg_moves.contains_key(bar_time) {
+            tracing::error!("avg_moves doesn't contain: {bar_time:?}");
+            return Err(BarUpdateOutcome::NoAction);
+        }
         let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
             match noise_data
                 .avg_moves
