@@ -371,8 +371,12 @@ impl Noise {
 
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
         if !noise_data.avg_moves.contains_key(bar_time) {
-            tracing::error!("avg_moves doesn't contain: {bar_time:?}");
-            return Err(BarUpdateOutcome::NoAction);
+            if bar_time == NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
+                return Ok(BarUpdateOutcome::NoAction);
+            } else {
+                tracing::error!("avg_moves doesn't contain: {bar_time:?}");
+                return Err(BarUpdateOutcome::NoAction);
+            }
         }
         let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
             match noise_data
@@ -380,13 +384,13 @@ impl Noise {
                 .get(bar_time)
                 .expect("Expected to be able to get avg_moves")
                 .rolling_mean()
-                {
-                    Some(v) => v,
-                    None  => {
-                        tracing::error!("Not enough data for {bar_time:?}");
-                        return Err(BarUpdateOutcome::NoAction);
-                    }
-                },
+            {
+                Some(v) => v,
+                None => {
+                    tracing::error!("Not enough data for {bar_time:?}");
+                    return Err(BarUpdateOutcome::NoAction);
+                }
+            },
             noise_data.most_recent_day_bar.get_open_price(),
             noise_data
                 .daily_volatility
