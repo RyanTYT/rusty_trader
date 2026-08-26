@@ -369,13 +369,20 @@ impl Noise {
             .expect("Expected sufficient data in noise fn warm up for on_bar_update");
         noise_data.push(bar.clone());
 
+        let bar_time = &bar.get_time().with_timezone(&New_York).time();
         let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
-            noise_data
+            match noise_data
                 .avg_moves
-                .get(&bar.get_time().with_timezone(&New_York).time())
+                .get(bar_time)
                 .expect("Expected to be able to get avg_moves")
                 .rolling_mean()
-                .expect("Expected sufficient data for avg move since open"),
+                {
+                    Some(v) => v,
+                    None  => {
+                        tracing::error!("Not enough data for {bar_time:?}");
+                        return Err(BarUpdateOutcome::NoAction);
+                    }
+                },
             noise_data.most_recent_day_bar.get_open_price(),
             noise_data
                 .daily_volatility
