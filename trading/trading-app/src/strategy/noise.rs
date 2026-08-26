@@ -547,8 +547,8 @@ impl Noise {
             .get_open_price()
             .min(most_recent_open_bars.0.get_price());
         let (upper_noise, lower_noise) = (
-            (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open,
-            (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
+            (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open_upper,
+            (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open_lower,
         );
 
         // if bar.get_price() > upper_noise {
