@@ -90,6 +90,16 @@ pub async fn run_optimization(
         }
     }
     tracing::info!("Optimization: {} candidates evaluated", history.len());
+    let mut throw = history.clone();
+    throw.sort_by(|a, b| b.results.num_trades.cmp(&a.results.num_trades));
+    println!(
+        "{}",
+        throw
+            .iter()
+            .map(|v| format!("{:?}", v.results.num_trades))
+            .collect::<Vec<String>>()
+            .join(" ")
+    );
 
     // 3. Pick the top-K (by phase-1 score).
     let mut scored = history.clone();
