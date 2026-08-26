@@ -426,6 +426,7 @@ impl Noise {
                 tracing::error!("Failed to fetch strategy SGD value for noise: {e:?}");
                 BarUpdateOutcome::NoAction
             })?;
+        tracing::info!("strat_val: {:?}", curr_available_funds);
 
         // The noise-band sensitivity: upper_noise = (1 + noise_multiplier *
         // avg_move) * open. Default 1.0 (the band = the avg move since open).
