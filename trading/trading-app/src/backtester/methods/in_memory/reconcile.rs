@@ -175,13 +175,13 @@ fn fill_order_in_memory(
     };
     state.update_current_additive(cash_key, cash_sgd_delta, 1.0);
 
-    tracing::info!(
-        "InMemory FILL bt-{order_id}: {} {:?} {} @ {} (fees {fees}), strat {}",
-        contract.symbol,
-        order.action,
-        fill.fill_qty,
-        fill.fill_price,
-        state.strategy_name,
-    );
+    // tracing::info!(
+    //     "InMemory FILL bt-{order_id}: {} {:?} {} @ {} (fees {fees}), strat {}",
+    //     contract.symbol,
+    //     order.action,
+    //     fill.fill_qty,
+    //     fill.fill_price,
+    //     state.strategy_name,
+    // );
     Ok(())
 }
