@@ -363,12 +363,10 @@ impl Noise {
         bar: &HistoricalDataFullKeys,
         consolidator: &Arc<Consolidator>,
     ) -> Result<BarUpdateOutcome, BarUpdateOutcome> {
-        let mut noise_data = self
+        let noise_data = self
             .data
-            .as_mut()
+            .as_ref()
             .expect("Expected sufficient data in noise fn warm up for on_bar_update");
-        noise_data.push(bar.clone());
-
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
         if !noise_data.avg_moves.contains_key(bar_time) {
             if bar_time == &NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
@@ -495,6 +493,15 @@ impl Noise {
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
         );
 
+        if bar.get_price() > upper_noise {
+            tracing::info!(
+                "{}: Price ({:?}) > Upper Noise ({:})",
+                bar.get_time().with_timezone(&New_York),
+                bar.get_price(),
+                upper_noise
+            );
+        }
+
         // tracing::info!(
         //     message=%format!(
         //         "QQQ price is {}, upper noise is {}",
@@ -557,8 +564,19 @@ impl Noise {
                             })
                     })
                 })?;
+                let mut noise_data = self
+                    .data
+                    .as_mut()
+                    .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+                noise_data.push(bar.clone());
                 return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
             }
+            let mut noise_data = self
+                .data
+                .as_mut()
+                .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+
+            noise_data.push(bar.clone());
             return Ok(BarUpdateOutcome::NoAction);
         }
 
@@ -580,6 +598,11 @@ impl Noise {
                         qty,
                         0.0,
                     );
+                    let mut noise_data = self
+                        .data
+                        .as_mut()
+                        .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+                    noise_data.push(bar.clone());
                     return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
                 }
             }
@@ -605,9 +628,19 @@ impl Noise {
                         })
                 })
             })?;
+            let mut noise_data = self
+                .data
+                .as_mut()
+                .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+            noise_data.push(bar.clone());
             return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
         }
 
+        let mut noise_data = self
+            .data
+            .as_mut()
+            .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+        noise_data.push(bar.clone());
         return Ok(BarUpdateOutcome::NoAction);
     }
 }
