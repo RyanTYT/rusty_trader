@@ -11,7 +11,7 @@ use crate::database::models::AssetType;
 use crate::database::models_crud::current_positions::current_positions::{
     CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
 };
-use crate::helpers::contract::{get_contract_from, LocalContractTypes};
+use crate::helpers::contract::{LocalContractTypes, get_contract_from};
 use crate::market_data::traits::current_price::PriceSupplier;
 
 #[derive(Debug, Clone)]
@@ -116,7 +116,10 @@ pub async fn compute_snapshot(
 /// logic used by the in-memory `compute_snapshot` branch. `CASH:*` → `cash`,
 /// the rest → `positions_value` (valued via the price supplier).
 pub fn compute_snapshot_from_positions(
-    positions: Vec<(crate::backtester::methods::in_memory::state::PositionKey, crate::backtester::methods::in_memory::state::InMemoryPosition)>,
+    positions: Vec<(
+        crate::backtester::methods::in_memory::state::PositionKey,
+        crate::backtester::methods::in_memory::state::InMemoryPosition,
+    )>,
     prices: &dyn PriceSupplier,
     time: DateTime<Utc>,
     fallback_close: f64,
@@ -127,21 +130,11 @@ pub fn compute_snapshot_from_positions(
         if pos.quantity.abs() < 1e-9 {
             continue;
         }
-        let pcontract = Contract {
-            symbol: key.stock.clone().into(),
-            security_type: if key.stock.starts_with("CASH:") {
-                SecurityType::ForexPair
-            } else {
-                SecurityType::Stock
-            },
-            exchange: if key.stock.starts_with("CASH:") {
-                "IDEALPRO".into()
-            } else {
-                key.primary_exchange.clone().into()
-            },
-            currency: key.currency.clone().into(),
-            ..Default::default()
-        };
+        let pcontract = crate::helpers::contract::build_contract_from_stock(
+            &key.stock,
+            &key.primary_exchange,
+            &key.currency,
+        );
         let price = if key.stock == "CASH:SGD" {
             1.0
         } else {

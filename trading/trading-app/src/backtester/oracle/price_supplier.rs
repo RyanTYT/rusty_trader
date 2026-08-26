@@ -15,13 +15,13 @@
 //! is a TODO for when accurate FX is needed.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
 
-use crate::helpers::contract::HashContract;
+use crate::helpers::contract::{HashContract, HashContractRef};
 use crate::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 
 pub struct BacktestPriceSupplier {
@@ -57,7 +57,14 @@ impl BacktestPriceSupplier {
         let slot_map = contracts
             .iter()
             .enumerate()
-            .map(|(i, c)| (HashContract { contract: c.clone() }, i))
+            .map(|(i, c)| {
+                (
+                    HashContract {
+                        contract: c.clone(),
+                    },
+                    i,
+                )
+            })
             .collect();
         let mut fx_map = HashMap::new();
         // Default fixed rates (strategies that ignore FX just use these).
