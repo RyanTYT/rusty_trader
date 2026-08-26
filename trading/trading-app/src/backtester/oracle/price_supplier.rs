@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
 
-use crate::helpers::contract::{HashContract, HashContractRef};
+use crate::helpers::contract::{HashContract};
 use crate::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 
 pub struct BacktestPriceSupplier {
