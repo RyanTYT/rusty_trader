@@ -265,7 +265,7 @@ impl StrategyExecutor for Noise {
                     currency: "USD".to_string(),
                 }),
                 5,
-                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
+                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 5) as u32,
                 #[cfg(feature = "backtest")]
                 None,
             )
