@@ -265,7 +265,7 @@ impl StrategyExecutor for Noise {
                     currency: "USD".to_string(),
                 }),
                 5,
-                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 5) as u32,
+                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
                 #[cfg(feature = "backtest")]
                 None,
             )
@@ -512,12 +512,12 @@ impl Noise {
 
         let (bar_close, bar_time) = (bar.get_price(), bar.get_time().with_timezone(&New_York));
         if qty != 0.0 {
-            let current_time = Utc::now().with_timezone(&New_York);
+            // let current_time = Utc::now().with_timezone(&New_York);
             let last_time = New_York
                 .with_ymd_and_hms(
-                    current_time.year(),
-                    current_time.month(),
-                    current_time.day(),
+                    bar_time.year(),
+                    bar_time.month(),
+                    bar_time.day(),
                     15,
                     45,
                     0,
@@ -528,7 +528,7 @@ impl Noise {
                     .expect("Expected bar_close conversion to Decimal to be ok")
                     <= vwap)
                 && bar_time.minute() % act_interval == 0)
-                || current_time >= last_time
+                || bar_time >= last_time
             {
                 let target_stock_positions_crud =
                     TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
