@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
-use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::America::New_York;
 use chrono_tz::Tz;
 use ibapi::{Client, prelude::Contract};
@@ -46,7 +46,7 @@ pub struct NoiseFnData {
 
     day_vwap: RollingDayVwap,
     daily_volatility: RollingStd,
-    avg_moves: HashMap<DateTime<Tz>, RollingMean>,
+    avg_moves: HashMap<NaiveTime, RollingMean>,
 }
 
 impl NoiseFnData {
@@ -69,7 +69,7 @@ impl NoiseFnData {
         self.last_close = bar.get_price();
         let day_open = self.most_recent_day_bar.get_open_price();
         self.avg_moves
-            .entry(bar.get_time().with_timezone(&New_York))
+            .entry(bar.get_time().with_timezone(&New_York).time())
             .and_modify(|rolling_mean| {
                 let movement_since_open = (bar.get_price() / day_open - 1.0).abs();
                 rolling_mean.push(movement_since_open);
@@ -325,7 +325,7 @@ impl StrategyExecutor for Noise {
                     let movement_since_open =
                         (second_bar.get_price() / open_bar.get_open_price() - 1.0).abs();
                     avg_moves
-                        .entry(second_bar_time)
+                        .entry(second_bar_time.time())
                         .and_modify(|rolling_mean: &mut RollingMean| {
                             rolling_mean.push(movement_since_open);
                         })
@@ -372,7 +372,7 @@ impl Noise {
         let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
             noise_data
                 .avg_moves
-                .get(&bar.get_time().with_timezone(&New_York))
+                .get(&bar.get_time().with_timezone(&New_York).time())
                 .expect("Expected to be able to get avg_moves")
                 .rolling_mean()
                 .expect("Expected sufficient data for avg move since open"),
