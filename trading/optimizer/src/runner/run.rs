@@ -23,15 +23,15 @@ use sqlx::PgPool;
 use tokio::runtime::Handle;
 
 use trading_app::backtester::methods::load_bars;
-use trading_app::backtester::sweep::{run_one_backtest, SweepResult};
+use trading_app::backtester::sweep::{SweepResult, run_one_backtest};
 use trading_app::backtester::{BacktestConfig, BacktestPeriod, BacktestResults};
 
+use crate::config::opt_config::OptConfig;
+use crate::config::param_spec::ParamSpec;
+use crate::config::validation::{Holdout, ValidationScheme, WalkForward};
 use crate::functions::objective::Objective;
 use crate::functions::optimizer::{EvalResult, Optimizer};
-use crate::config::param_spec::ParamSpec;
 use crate::functions::robustness::RobustnessEvaluator;
-use crate::config::opt_config::OptConfig;
-use crate::config::validation::{Holdout, ValidationScheme, WalkForward};
 
 /// The optimization result: the best candidate + all evaluated candidates +
 /// the out-of-sample validation (if `Holdout`).
@@ -69,7 +69,14 @@ pub async fn run_optimization(
         let results: Vec<SweepResult> = batch
             .par_iter()
             .map(|params| {
-                run_one_backtest(strategy_name, pool_ref, cfg_ref, params, bars_ref.clone(), handle_ref)
+                run_one_backtest(
+                    strategy_name,
+                    pool_ref,
+                    cfg_ref,
+                    params,
+                    bars_ref.clone(),
+                    handle_ref,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         for s in results {
@@ -87,7 +94,8 @@ pub async fn run_optimization(
     // 3. Pick the top-K (by phase-1 score).
     let mut scored = history.clone();
     scored.sort_by(|a, b| {
-        b.score.partial_cmp(&a.score)
+        b.score
+            .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let top_k: Vec<EvalResult> = scored.into_iter().take(cfg.top_k).collect();
@@ -99,9 +107,16 @@ pub async fn run_optimization(
         let neighborhood: Vec<BacktestResults> = neighbors
             .par_iter()
             .filter_map(|p| {
-                run_one_backtest(strategy_name, pool_ref, cfg_ref, p, bars_ref.clone(), handle_ref)
-                    .ok()
-                    .map(|s| s.results)
+                run_one_backtest(
+                    strategy_name,
+                    pool_ref,
+                    cfg_ref,
+                    p,
+                    bars_ref.clone(),
+                    handle_ref,
+                )
+                .ok()
+                .map(|s| s.results)
             })
             .collect();
         ev.score = objective.score(&ev.results, &neighborhood);
@@ -111,7 +126,8 @@ pub async fn run_optimization(
 
     // 5. Pick the best (phase-2 robust score).
     eval_results.sort_by(|a, b| {
-        b.score.partial_cmp(&a.score)
+        b.score
+            .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let best = eval_results
@@ -126,8 +142,20 @@ pub async fn run_optimization(
             let mut oos_config = cfg.base_config.clone();
             oos_config.period = h.out_sample.clone();
             let oos_bars = Arc::new(load_bars(&oos_config, &pool).await?);
-            let oos_results =
-                run_one_backtest(&cfg.strategy_name, &pool, &oos_config, &best.params, oos_bars, handle)?;
+            let mut oos_results_res = None;
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    oos_results_res = Some(run_one_backtest(
+                        &cfg.strategy_name,
+                        &pool,
+                        &oos_config,
+                        &best.params,
+                        oos_bars,
+                        handle,
+                    ))
+                });
+            });
+            let oos_results = oos_results_res.unwrap()?;
             Some(oos_results.results)
         }
         // Walk-forward is handled by `run_walk_forward` (which calls
@@ -194,7 +222,9 @@ pub async fn run_walk_forward(
     let windows = wf.windows(&cfg.base_config.period);
     tracing::info!("Walk-forward: {} windows", windows.len());
     if windows.is_empty() {
-        return Err("walk-forward produced no windows (period too short for the IS+OS sizes)".into());
+        return Err(
+            "walk-forward produced no windows (period too short for the IS+OS sizes)".into(),
+        );
     }
 
     let mut per_window: Vec<WindowResult> = Vec::new();
@@ -253,7 +283,11 @@ pub async fn run_walk_forward(
 /// Aggregate the OOS metrics from the concatenated per-bar returns
 /// (compounded). The returns are scale-invariant → concatenating across
 /// windows (without equity rescaling) gives the true compounded performance.
-fn compute_aggregated_oos(returns: &[f64], starting_capital: f64, num_windows: usize) -> AggregatedMetrics {
+fn compute_aggregated_oos(
+    returns: &[f64],
+    starting_capital: f64,
+    num_windows: usize,
+) -> AggregatedMetrics {
     let mut equity = starting_capital;
     let mut peak = starting_capital;
     let mut max_dd = 0.0_f64;
@@ -298,10 +332,18 @@ fn sharpe_sortino_from_returns(returns: &[f64]) -> (f64, f64) {
     let mean = returns.iter().sum::<f64>() / n;
     let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
     let std = var.sqrt();
-    let downside_var: f64 =
-        returns.iter().filter(|r| **r < 0.0).map(|r| r.powi(2)).sum::<f64>() / n;
+    let downside_var: f64 = returns
+        .iter()
+        .filter(|r| **r < 0.0)
+        .map(|r| r.powi(2))
+        .sum::<f64>()
+        / n;
     let downside_std = downside_var.sqrt();
     let sharpe = if std > 0.0 { mean / std } else { 0.0 };
-    let sortino = if downside_std > 0.0 { mean / downside_std } else { 0.0 };
+    let sortino = if downside_std > 0.0 {
+        mean / downside_std
+    } else {
+        0.0
+    };
     (sharpe, sortino)
 }
