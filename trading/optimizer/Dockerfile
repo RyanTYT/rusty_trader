@@ -1,10 +1,16 @@
 ################################################################################
 # Dockerfile.optimizer — builds the `optimize` binary (the optimizer crate,
-# which depends on trading-app with --features backtest). Lighter than
-# Dockerfile.backtest: no IBC/Xvfb (the optimizer assumes the data is
-# pre-loaded via a prior `backtester` run, OR uses the Alpaca fallback).
+# which depends on trading-app with --features backtest). Includes IBC + Xvfb
+# (same as Dockerfile.backtest) because the optimizer's `load_market_data`
+# calls `with_gateway_retry` → IBC → the IB Gateway GUI (needs a virtual X
+# display) when the bars aren't pre-loaded.
 #
-# Context: the repo root (.) — needs both trading-app/ + optimizer/.
+# Context: the repo root (.) — needs trading-app/ (the lib dep + the IBC
+# artifacts) + optimizer/.
+#
+# NB: `IBCLinux-3.21.2.zip` is gitignored (local) — must be present at
+# `trading/trading-app/IBCLinux-3.21.2.zip` at build time (same as
+# Dockerfile.backtest).
 ################################################################################
 
 FROM debian:bullseye-slim AS build
@@ -40,18 +46,43 @@ RUN cd optimizer && cargo build --release --bin optimize \
     && cp target/release/optimize /bin/optimize
 
 ################################################################################
-# Runtime stage — light (no IBC, no Xvfb).
+# Runtime stage — IBC + Xvfb (same as Dockerfile.backtest, since the optimizer
+# may need to populate data via IBKR when the bars aren't pre-loaded).
 FROM debian:bullseye-slim AS final
 
+# Install runtime deps: Xvfb + IBC libs (needed for the IBKR data-load step
+# via with_gateway_retry) + postgresql-client (pg_isready) + curl.
 RUN apt-get update && apt-get install -y \
-    postgresql-client ca-certificates libssl-dev \
+    libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
+    libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
+    libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
+    xdotool openbox \
+    unzip xvfb \
+    curl bash ca-certificates \
+    postgresql-client \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install IBC (IB Gateway controller) — needed for the data-load step.
+# with_gateway_retry (inside the optimize binary) boots IBC to seed
+# market_data.historical_data; if IBC is absent, the loader falls back to Alpaca.
+COPY trading/trading-app/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/; \
+    chown -R root /IBCLinux-3.21.2/; \
+    chmod -u+x -R /IBCLinux-3.21.2/
+# The macOS config.ini + ibcstart.sh override the Linux IBC's (same workaround
+# as Dockerfile.backtest).
+COPY trading/trading-app/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY trading/trading-app/IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
+RUN chmod -u+x -R /IBCLinux-3.21.2/
+
+# Copy the optimize binary + entrypoint.
 COPY --from=build /bin/optimize /bin/optimize
 COPY trading/optimizer/entrypoint-optimize.sh /entrypoint-optimize.sh
 RUN chmod +x /entrypoint-optimize.sh
 
 ENV RUST_BACKTRACE=1
 ENV RUST_LOG=info
+ENV DISPLAY=:99
 
 CMD ["sh", "/entrypoint-optimize.sh"]
