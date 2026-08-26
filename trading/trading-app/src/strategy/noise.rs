@@ -426,7 +426,6 @@ impl Noise {
                 tracing::error!("Failed to fetch strategy SGD value for noise: {e:?}");
                 BarUpdateOutcome::NoAction
             })?;
-        tracing::info!("strat_val: {:?}", curr_available_funds);
 
         // The noise-band sensitivity: upper_noise = (1 + noise_multiplier *
         // avg_move) * open. Default 1.0 (the band = the avg move since open).
@@ -528,7 +527,7 @@ impl Noise {
         let last_time = New_York
             .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
             .unwrap();
-        if ((bar_close < upper_noise
+        if ((bar_close < lower_noise
             || Decimal::from_f64(bar_close)
                 .expect("Expected bar_close conversion to Decimal to be ok")
                 <= vwap)
