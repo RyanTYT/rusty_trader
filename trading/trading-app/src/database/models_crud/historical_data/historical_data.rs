@@ -503,7 +503,7 @@ pub trait HistoricalDataOps {
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
-        #[cfg(feature = "backtest")] now: DateTime<Utc>,
+        #[cfg(feature = "backtest")] now: Option<DateTime<Utc>>,
     ) -> Result<AggregatedBars, String>;
     async fn read_last_bar(
         &self,
@@ -581,7 +581,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
-        #[cfg(feature = "backtest")] now: DateTime<Utc>,
+        #[cfg(feature = "backtest")] now: Option<DateTime<Utc>>,
     ) -> Result<AggregatedBars, String> {
         #[cfg(feature = "backtest")]
         {
@@ -596,6 +596,8 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }
         }
 
+        #[cfg(feature = "backtest")]
+        let now = now.unwrap_or(Utc::now());
         #[cfg(not(feature = "backtest"))]
         let now = Utc::now();
         let mut full = Vec::new();
@@ -919,7 +921,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 timestep_minutes,
                 1,
                 #[cfg(feature = "backtest")]
-                now,
+                Some(now),
             )
             .await
             .map_err(|e| format!("Failed to read last bar: {e:?}"))?;

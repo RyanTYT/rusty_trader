@@ -4,11 +4,12 @@
 //! the backtester can trim the replay stream to post-warm-up (no data leakage
 //! / corruption).
 //!
-//! `read_last_n(N, bar_time)` reads the N bars before `bar_time` from the
-//! cached bar set (in-memory slice, oldest-first, `min(N, available)`) +
-//! updates `max_end_time` to the most-recent bar returned. The backtester
-//! reads `max_end_time` after warm-up + discards the already-read bars from
-//! the backtest stream.
+//! `read_last_n(N, bar_time)` reads the N bars before `bar_time` (or, when
+//! `bar_time` is `None` — the warm-up case — the N **oldest** bars in the
+//! cache) from the cached bar set (in-memory slice, oldest-first,
+//! `min(N, available)`) + updates `max_end_time` to the most-recent bar
+//! returned. The backtester reads `max_end_time` after warm-up + discards the
+//! already-read bars from the backtest stream.
 //!
 //! Shared across the sweep via a thread-local (set per-backtest in
 //! `run_with_bars`). The bars are shared (the same set for every backtest);
@@ -46,33 +47,49 @@ impl BarCache {
         }
     }
 
-    /// Read the bars before `bar_time` matching `pk` (the lookback window).
+    /// Read the bars matching `pk` for the lookback window. When `bar_time`
+    /// is `Some(t)`: the N bars before `t` (the lookback before the first
+    /// backtest bar). When `bar_time` is `None` (the warm-up case): the N
+    /// **oldest** bars in the cache (the lookback from the start of the data).
     /// Returns `min(limit, available)` bars, oldest-first. Updates
-    /// `max_end_time` to the most-recent bar returned (the end of the window).
-    /// Returns `None` if no matching bars exist before `bar_time` (cache miss
-    /// → the caller falls through to the DB).
+    /// `max_end_time` to the most-recent bar returned (the end of the window)
+    /// — the backtester excludes bars `<= max_end_time` from the replay.
+    /// Returns `None` if no matching bars exist (cache miss → the caller
+    /// falls through to the DB).
     pub fn get_bars_before(
         &self,
         pk: &HistoricalDataPrimaryKeysWoTime,
-        bar_time: DateTime<Utc>,
+        bar_time: Option<DateTime<Utc>>,
         limit: usize,
     ) -> Option<Vec<HistoricalDataFullKeys>> {
-        // Filter by pk (asset type + stock/pe/currency) + time < bar_time.
-        let before: Vec<&HistoricalDataFullKeys> = self
+        // Filter by pk (asset type + stock/pe/currency). For Some(t), also
+        // filter time < t. For None, take all matching (the N oldest).
+        let matching: Vec<&HistoricalDataFullKeys> = self
             .bars
             .iter()
             .filter(|b| bar_matches_pk(b, pk))
-            .filter(|b| b.get_time() < bar_time)
+            .filter(|b| match bar_time {
+                Some(t) => b.get_time() < t,
+                None => true,
+            })
             .collect();
-        if before.is_empty() {
+        if matching.is_empty() {
             return None;
         }
-        // Take the last `limit` (most recent before bar_time), reverse to oldest-first.
-        let take_n = limit.min(before.len());
-        let mut window: Vec<HistoricalDataFullKeys> =
-            before.iter().rev().take(take_n).map(|b| (*b).clone()).collect();
-        window.reverse(); // oldest-first
-        // Track the most-recent bar (the end of the window).
+        let take_n = limit.min(matching.len());
+        // For Some(t): take the last `limit` (most recent before t), reverse to oldest-first.
+        // For None: take the first `limit` (the oldest — bars are sorted ascending).
+        let mut window: Vec<HistoricalDataFullKeys> = match bar_time {
+            Some(_) => {
+                let mut w: Vec<HistoricalDataFullKeys> =
+                    matching.iter().rev().take(take_n).map(|b| (*b).clone()).collect();
+                w.reverse(); // oldest-first
+                w
+            }
+            None => matching.iter().take(take_n).map(|b| (*b).clone()).collect(),
+        };
+        let _ = &mut window; // (keep window mutable for clarity)
+        // Track the most-recent bar (the end of the window) — excluded in the backtest.
         if let Some(latest) = window.last() {
             let t = latest.get_time();
             let mut max_end = self.max_end_time.borrow_mut();
