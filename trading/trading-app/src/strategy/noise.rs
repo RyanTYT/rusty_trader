@@ -493,15 +493,15 @@ impl Noise {
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
         );
 
-        if bar.get_price() > upper_noise {
-            tracing::info!(
-                "{}: Price ({:?}) > Upper Noise ({:})",
-                bar.get_time().with_timezone(&New_York),
-                bar.get_price(),
-                upper_noise
-            );
-        }
-
+        // if bar.get_price() > upper_noise {
+        //     tracing::info!(
+        //         "{}: Price ({:?}) > Upper Noise ({:})",
+        //         bar.get_time().with_timezone(&New_York),
+        //         bar.get_price(),
+        //         upper_noise
+        //     );
+        // }
+        //
         // tracing::info!(
         //     message=%format!(
         //         "QQQ price is {}, upper noise is {}",
