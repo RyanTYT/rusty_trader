@@ -33,6 +33,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use optimizer::{
+    config::opt_config::OptConfig,
     config::param_spec::ParamSpec,
     config::validation::{Holdout, ValidationScheme, WalkForward},
     functions::objective::{Dispersion, RobustSharpe},
@@ -40,7 +41,7 @@ use optimizer::{
     functions::robustness::RobustnessEvaluator,
     functions::tpe::TpeOptimizer,
     report::RobustnessReport,
-    runner::run::{run_optimization, run_walk_forward, OptConfig, OptResult, WalkForwardResult},
+    runner::run::{run_optimization, run_walk_forward, OptResult, WalkForwardResult},
 };
 use trading_app::backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate};
 use trading_app::backtester::{BacktestConfig, BacktestMode, BacktestPeriod};
@@ -231,8 +232,9 @@ async fn main() -> Result<(), String> {
             ValidationScheme::WalkForward(_) => {
                 let factory: Box<dyn Fn() -> Box<dyn Optimizer> + Send + Sync> = {
                     let specs = specs.clone();
+                    let optimizer_kind_string = optimizer_kind.clone();
                     Box::new(move || -> Box<dyn Optimizer> {
-                        match optimizer_kind.as_str() {
+                        match optimizer_kind_string.as_str() {
                             "grid" => Box::new(GridOptimizer::new(&specs, grid_steps)),
                             "random" => Box::new(RandomOptimizer::new(&specs, n_evaluations, seed)),
                             "tpe" => Box::new(TpeOptimizer::new(&specs, n_evaluations, seed)),

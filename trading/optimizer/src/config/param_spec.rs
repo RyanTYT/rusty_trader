@@ -165,8 +165,8 @@ impl Distribution {
 
 /// Sample a standard normal (Box-Muller transform).
 fn sample_standard_normal(rng: &mut StdRng) -> f64 {
-    let u1: f64 = rng.gen();
-    let u2: f64 = rng.gen();
+    let u1: f64 = rng.random();
+    let u2: f64 = rng.random();
     let r = (-2.0 * u1.ln()).sqrt();
     let theta = 2.0 * std::f64::consts::PI * u2;
     r * theta.cos()
