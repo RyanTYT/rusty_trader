@@ -499,7 +499,7 @@ impl Noise {
             }
         } as f64;
 
-        let (upper_noise, _lower_noise) = (
+        let (upper_noise, lower_noise) = (
             (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open,
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
         );
@@ -530,7 +530,7 @@ impl Noise {
         let last_time = New_York
             .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
             .unwrap();
-        if ((bar_close < upper_noise
+        if ((bar_close < lower_noise
             || Decimal::from_f64(bar_close)
                 .expect("Expected bar_close conversion to Decimal to be ok")
                 <= vwap)
