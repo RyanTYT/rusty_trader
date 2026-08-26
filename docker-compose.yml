@@ -197,6 +197,7 @@ services:
       dockerfile: Dockerfile.backtest
     platform: linux/amd64
     volumes:
+      - ib-volume:/home/tws
       - ./data/backtest-results:/data
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
@@ -231,6 +232,7 @@ services:
       dockerfile: ./trading/optimizer/Dockerfile
     platform: linux/amd64
     volumes:
+      - ib-volume:/home/tws
       - ./data/optimizer-runs:/data
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
