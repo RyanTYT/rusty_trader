@@ -8,9 +8,9 @@ use ibapi::contracts::Contract;
 use ibapi::orders::Order;
 use ibapi::prelude::SecurityType;
 
-use crate::backtester::setup::config::BacktestConfig;
-use crate::backtester::execution::fill_model::{commission, decide_fill};
 use super::state::{InMemoryPosition, InMemoryState, InMemoryTransaction, PositionKey};
+use crate::backtester::execution::fill_model::{commission, decide_fill};
+use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::BarUpdateOutcome;
@@ -38,14 +38,25 @@ pub fn handle_bar_update_outcome_in_memory(
         BarUpdateOutcome::EmitOrders(orders) => {
             // Fast path: the strategy pre-built the orders. Fill each one.
             for order_ibkr in orders {
-                fill_order_in_memory(config, prices, state, &order_ibkr.contract, &order_ibkr.order, bar, order_id)?;
+                fill_order_in_memory(
+                    config,
+                    prices,
+                    state,
+                    &order_ibkr.contract,
+                    &order_ibkr.order,
+                    bar,
+                    order_id,
+                )?;
             }
             Ok(())
         }
         BarUpdateOutcome::PendingDbQuery(asset_types) => {
             // Slow path: read the mocked targets, compute deltas, build orders.
             // Only Stock is supported (mirrors the Noise strategy's QQQ scope).
-            if !asset_types.iter().any(|at| matches!(at, crate::database::models::AssetType::Stock)) {
+            if !asset_types
+                .iter()
+                .any(|at| matches!(at, crate::database::models::AssetType::Stock))
+            {
                 return Ok(());
             }
             // Snapshot the targets (avoid holding the write lock across the fill).
@@ -86,8 +97,9 @@ pub fn handle_bar_update_outcome_in_memory(
                     exchange: if key.stock.starts_with("CASH:") {
                         "IDEALPRO".into()
                     } else {
-                        key.primary_exchange.clone().into()
+                        "".into()
                     },
+                    primary_exchange: key.primary_exchange.clone().into(),
                     currency: key.currency.clone().into(),
                     ..Default::default()
                 };
