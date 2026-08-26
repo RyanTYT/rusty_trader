@@ -265,7 +265,7 @@ impl StrategyExecutor for Noise {
                     currency: "USD".to_string(),
                 }),
                 5,
-                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 5) as u32,
+                (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
                 #[cfg(feature = "backtest")]
                 None,
             )
@@ -376,29 +376,40 @@ impl Noise {
                 return Err(BarUpdateOutcome::NoAction);
             }
         }
-        let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) = (
-            match noise_data
-                .avg_moves
-                .get(bar_time)
-                .expect("Expected to be able to get avg_moves")
-                .rolling_mean()
-            {
-                Some(v) => v,
-                None => {
-                    tracing::error!("Not enough data for {bar_time:?}");
-                    return Err(BarUpdateOutcome::NoAction);
-                }
-            },
-            noise_data.most_recent_day_bar.get_open_price(),
-            noise_data
-                .daily_volatility
-                .rolling_std()
-                .expect("Expected sufficient data for daily vol"),
-            noise_data
-                .day_vwap
-                .vwap()
-                .expect("Expected sufficient data for vwap"),
-        );
+        let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) =
+            (
+                match noise_data
+                    .avg_moves
+                    .get(bar_time)
+                    .expect("Expected to be able to get avg_moves")
+                    .rolling_mean()
+                {
+                    Some(v) => v,
+                    None => {
+                        let mut noise_data = self.data.as_mut().expect(
+                            "Expected sufficient data in noise fn warm up for on_bar_update",
+                        );
+                        noise_data.push(bar.clone());
+                        tracing::error!("Not enough data for {bar_time:?}");
+                        return Err(BarUpdateOutcome::NoAction);
+                    }
+                },
+                noise_data.most_recent_day_bar.get_open_price(),
+                match noise_data.daily_volatility.rolling_std() {
+                    Some(v) => v,
+                    None => {
+                        let mut noise_data = self.data.as_mut().expect(
+                            "Expected sufficient data in noise fn warm up for on_bar_update",
+                        );
+                        noise_data.push(bar.clone());
+                        return Err(BarUpdateOutcome::NoAction);
+                    }
+                },
+                noise_data
+                    .day_vwap
+                    .vwap()
+                    .expect("Expected sufficient data for vwap"),
+            );
 
         // Minimum required qty for decent stats is 5.0
         // 50/100 gives a decent reward-return of 5% roughly annualised returns
