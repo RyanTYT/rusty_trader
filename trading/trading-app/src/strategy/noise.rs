@@ -522,15 +522,12 @@ impl Noise {
         // );
 
         let (bar_close, bar_time) = (bar.get_price(), bar.get_time().with_timezone(&New_York));
-        if qty == 0.0 {
-            return Ok(BarUpdateOutcome::NoAction);
-        }
 
         // If (Either < upper noise, < VWAP && time to act) || (final time to trade)
         let last_time = New_York
             .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
             .unwrap();
-        if ((bar_close < lower_noise
+        if ((bar_close < upper_noise
             || Decimal::from_f64(bar_close)
                 .expect("Expected bar_close conversion to Decimal to be ok")
                 <= vwap)
