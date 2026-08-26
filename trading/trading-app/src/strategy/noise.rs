@@ -267,7 +267,7 @@ impl StrategyExecutor for Noise {
                 5,
                 (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY) as u32,
                 #[cfg(feature = "backtest")]
-                bar_time,
+                None,
             )
             .await
             .map_err(|e| format!("{}", e))?;
