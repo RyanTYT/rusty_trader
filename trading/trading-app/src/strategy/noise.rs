@@ -495,13 +495,13 @@ impl Noise {
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
         );
 
-        tracing::info!(
-            message=%format!(
-                "QQQ price is {}, upper noise is {}",
-                &bar.get_price(),
-                &upper_noise
-            )
-        );
+        // tracing::info!(
+        //     message=%format!(
+        //         "QQQ price is {}, upper noise is {}",
+        //         &bar.get_price(),
+        //         &upper_noise
+        //     )
+        // );
 
         let (bar_close, bar_time) = (bar.get_price(), bar.get_time().with_timezone(&New_York));
         if qty != 0.0 {
