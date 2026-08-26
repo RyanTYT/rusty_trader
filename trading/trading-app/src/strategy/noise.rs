@@ -41,39 +41,64 @@ const NUM_BARS_PER_DAY: usize = 78;
 #[derive(Debug)]
 pub struct NoiseFnData {
     // most recent 5 minute bar with time == 9:30
-    most_recent_day_bar: HistoricalDataFullKeys,
-    last_close: f64,
+    most_recent_day_bar: Option<(HistoricalDataFullKeys, HistoricalDataFullKeys)>,
+    last_bar: Option<HistoricalDataFullKeys>,
 
     day_vwap: RollingDayVwap,
     daily_volatility: RollingStd,
     avg_moves: HashMap<NaiveTime, RollingMean>,
+    avg_move_lookback: usize,
 }
 
 impl NoiseFnData {
     fn push(&mut self, bar: HistoricalDataFullKeys) {
         self.day_vwap.push(&bar);
-        if bar.get_time().with_timezone(&New_York).date_naive()
-            != self
-                .most_recent_day_bar
-                .get_time()
-                .with_timezone(&New_York)
-                .date_naive()
+        let bar_time = bar.get_time().with_timezone(&New_York).time();
+        if (self.most_recent_day_bar.is_none() && bar_time.hour() == 9 && bar_time.minute() == 30)
+            || self.most_recent_day_bar.as_ref().is_some_and(|bars| {
+                bar.get_time().with_timezone(&New_York).date_naive()
+                    != bars.1.get_time().with_timezone(&New_York).date_naive()
+            })
         {
-            self.daily_volatility
-                .push(self.last_close / self.most_recent_day_bar.get_open_price());
-            self.last_close = bar.get_price();
-            self.most_recent_day_bar = bar;
+            if let Some(last_bar) = &self.last_bar {
+                self.daily_volatility.push(
+                    last_bar.get_price()
+                        / self
+                            .most_recent_day_bar
+                            .as_ref()
+                            .unwrap()
+                            .1
+                            .get_open_price(),
+                );
+                self.most_recent_day_bar = Some((last_bar.clone(), bar.clone()));
+            }
+            self.last_bar = Some(bar);
             return;
         }
 
-        self.last_close = bar.get_price();
-        let day_open = self.most_recent_day_bar.get_open_price();
-        self.avg_moves
-            .entry(bar.get_time().with_timezone(&New_York).time())
-            .and_modify(|rolling_mean| {
-                let movement_since_open = (bar.get_price() / day_open - 1.0).abs();
-                rolling_mean.push(movement_since_open);
-            });
+        if let Some(day_bars) = &self.most_recent_day_bar {
+            // let day_open = day_bars.0.get_price().max(
+            //     self.most_recent_day_bar
+            //         .as_ref()
+            //         .unwrap()
+            //         .1
+            //         .get_open_price(),
+            // );
+            let day_open = day_bars.1.get_price();
+            self.avg_moves
+                .entry(bar.get_time().with_timezone(&New_York).time())
+                .and_modify(|rolling_mean| {
+                    let movement_since_open = (bar.get_price() / day_open - 1.0).abs();
+                    rolling_mean.push(movement_since_open);
+                })
+                .or_insert_with(|| {
+                    let movement_since_open = (bar.get_price() / day_open - 1.0).abs();
+                    let mut mean = RollingMean::new(self.avg_move_lookback);
+                    mean.push(movement_since_open);
+                    mean
+                });
+        }
+        self.last_bar = Some(bar);
     }
 }
 
@@ -285,71 +310,82 @@ impl StrategyExecutor for Noise {
         }
 
         let mut day_vwap = RollingDayVwap::new(78);
-        let mut daily_opens = HashMap::new();
         let mut daily_volatility = RollingStd::new(vol_lookback as usize);
 
-        // read first bar first, since loop will use windows(2) and ignore first bar
-        let first_bar = last_n_bars.full.first().unwrap();
-        day_vwap.push(&first_bar);
-        let first_bar_time = first_bar.get_time().with_timezone(&New_York);
-        if first_bar_time.hour() == 9 && first_bar_time.minute() == 30 {
-            daily_opens.insert(first_bar_time.date_naive(), first_bar.clone());
-        }
+        // // read first bar first, since loop will use windows(2) and ignore first bar
+        // let first_bar = last_n_bars.full.first().unwrap();
+        // day_vwap.push(&first_bar);
+        // let first_bar_time = first_bar.get_time().with_timezone(&New_York);
+        // if first_bar_time.hour() == 9 && first_bar_time.minute() == 30 {
+        //     daily_opens.insert(first_bar_time.date_naive(), first_bar.clone());
+        // }
 
-        let mut first_switch = true;
-        for bars in last_n_bars.full.windows(2) {
-            let first_bar = &bars[0];
-            let second_bar = &bars[1];
-
-            day_vwap.push(&second_bar);
-            let first_bar_time = first_bar.get_time().with_timezone(&New_York);
-            let second_bar_time = second_bar.get_time().with_timezone(&New_York);
-            let first_bar_date = first_bar_time.date_naive();
-            let second_bar_date = second_bar_time.date_naive();
-
-            if first_bar_date != second_bar_date {
-                match daily_opens.get(&first_bar_date) {
-                    Some(open) => {
-                        daily_volatility.push(first_bar.get_price() / open.get_open_price());
-                    }
-                    None => {
-                        if !first_switch {
-                            tracing::error!("Failed to get open of previous bar");
-                        }
-                    }
-                }
-                daily_opens.insert(second_bar_date, second_bar.clone());
-                first_switch = false;
-            } else {
-                if let Some(open_bar) = daily_opens.get(&second_bar_date) {
-                    let movement_since_open =
-                        (second_bar.get_price() / open_bar.get_open_price() - 1.0).abs();
-                    avg_moves
-                        .entry(second_bar_time.time())
-                        .and_modify(|rolling_mean: &mut RollingMean| {
-                            rolling_mean.push(movement_since_open);
-                        })
-                        .or_insert(RollingMean::new(avg_move_lookback as usize));
-                }
-            }
-        }
-
-        let most_recent_day_open = daily_opens
-            .get(
-                daily_opens
-                    .keys()
-                    .max()
-                    .expect("Expected at least one daily open in noise"),
-            )
-            .unwrap();
-
-        self.data = Some(NoiseFnData {
-            most_recent_day_bar: (*most_recent_day_open).clone(),
-            last_close: last_n_bars.full.last().unwrap().get_price(),
+        let mut data = NoiseFnData {
+            most_recent_day_bar: None,
+            last_bar: None,
             day_vwap,
             daily_volatility,
             avg_moves,
-        });
+            avg_move_lookback: avg_move_lookback as usize,
+        };
+        for bar in last_n_bars.full.into_iter() {
+            data.push(bar);
+        }
+        self.data = Some(data);
+
+        // let mut first_switch = true;
+        // for bars in last_n_bars.full.windows(2) {
+        //     let first_bar = &bars[0];
+        //     let second_bar = &bars[1];
+        //
+        //     day_vwap.push(&second_bar);
+        //     let first_bar_time = first_bar.get_time().with_timezone(&New_York);
+        //     let second_bar_time = second_bar.get_time().with_timezone(&New_York);
+        //     let first_bar_date = first_bar_time.date_naive();
+        //     let second_bar_date = second_bar_time.date_naive();
+        //
+        //     if first_bar_date != second_bar_date {
+        //         match daily_opens.get(&first_bar_date) {
+        //             Some(open) => {
+        //                 daily_volatility.push(first_bar.get_price() / open.get_open_price());
+        //             }
+        //             None => {
+        //                 if !first_switch {
+        //                     tracing::error!("Failed to get open of previous bar");
+        //                 }
+        //             }
+        //         }
+        //         daily_opens.insert(second_bar_date, second_bar.clone());
+        //         first_switch = false;
+        //     } else {
+        //         if let Some(open_bar) = daily_opens.get(&second_bar_date) {
+        //             let movement_since_open =
+        //                 (second_bar.get_price() / open_bar.get_open_price() - 1.0).abs();
+        //             avg_moves
+        //                 .entry(second_bar_time.time())
+        //                 .and_modify(|rolling_mean: &mut RollingMean| {
+        //                     rolling_mean.push(movement_since_open);
+        //                 })
+        //                 .or_insert(RollingMean::new(avg_move_lookback as usize));
+        //         }
+        //     }
+        // }
+        // let most_recent_day_open = daily_opens
+        //     .get(
+        //         daily_opens
+        //             .keys()
+        //             .max()
+        //             .expect("Expected at least one daily open in noise"),
+        //     )
+        //     .unwrap();
+        //
+        // self.data = Some(NoiseFnData {
+        //     most_recent_day_bar: (*most_recent_day_open).clone(),
+        //     last_close: last_n_bars.full.last().unwrap().get_price(),
+        //     day_vwap,
+        //     daily_volatility,
+        //     avg_moves,
+        // });
 
         Ok(())
     }
@@ -376,7 +412,7 @@ impl Noise {
                 return Err(BarUpdateOutcome::NoAction);
             }
         }
-        let (avg_move_since_open, most_recent_open, most_recent_daily_vol, vwap) =
+        let (avg_move_since_open, most_recent_open_bars, most_recent_daily_vol, vwap) =
             (
                 match noise_data
                     .avg_moves
@@ -394,7 +430,10 @@ impl Noise {
                         return Err(BarUpdateOutcome::NoAction);
                     }
                 },
-                noise_data.most_recent_day_bar.get_open_price(),
+                noise_data
+                    .most_recent_day_bar
+                    .as_ref()
+                    .expect("Expected sufficient data for day bars"),
                 match noise_data.daily_volatility.rolling_std() {
                     Some(v) => v,
                     None => {
@@ -499,6 +538,14 @@ impl Noise {
             }
         } as f64;
 
+        let most_recent_open_upper = most_recent_open_bars
+            .1
+            .get_open_price()
+            .max(most_recent_open_bars.0.get_price());
+        let most_recent_open_lower = most_recent_open_bars
+            .1
+            .get_open_price()
+            .min(most_recent_open_bars.0.get_price());
         let (upper_noise, lower_noise) = (
             (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open,
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open,
@@ -527,7 +574,7 @@ impl Noise {
         let last_time = New_York
             .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
             .unwrap();
-        if ((bar_close < lower_noise
+        if ((bar_close < upper_noise
             || Decimal::from_f64(bar_close)
                 .expect("Expected bar_close conversion to Decimal to be ok")
                 <= vwap)
@@ -550,6 +597,7 @@ impl Noise {
                     return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
                 }
             }
+            #[cfg(not(feature = "backtest"))]
             hotpath::measure_block!("noise_delete_target_position", {
                 self.tokio_handle.block_on(async move {
                     target_stock_positions_crud
@@ -594,14 +642,9 @@ impl Noise {
                         qty,
                         0.0,
                     );
-                    let mut noise_data = self
-                        .data
-                        .as_mut()
-                        .expect("Expected sufficient data in noise fn warm up for on_bar_update");
-                    noise_data.push(bar.clone());
-                    return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
                 }
             }
+            #[cfg(not(feature = "backtest"))]
             hotpath::measure_block!("noise_create_or_update_target_position", {
                 self.tokio_handle.block_on(async move {
                     target_stock_positions_crud
