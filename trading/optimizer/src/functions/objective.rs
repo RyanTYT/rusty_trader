@@ -98,11 +98,11 @@ impl RobustSharpe {
 
 impl Objective for RobustSharpe {
     fn score(&self, results: &BacktestResults, neighborhood: &[BacktestResults]) -> f64 {
-        let own_sharpe = results.sharpe_per_bar;
+        let own_sharpe = results.sharpe;
         if neighborhood.is_empty() {
             return own_sharpe;
         }
-        let mut sharpes: Vec<f64> = neighborhood.iter().map(|r| r.sharpe_per_bar).collect();
+        let mut sharpes: Vec<f64> = neighborhood.iter().map(|r| r.sharpe).collect();
         sharpes.push(own_sharpe); // include the candidate in its own neighborhood
         let mean = sharpes.iter().sum::<f64>() / sharpes.len() as f64;
         let disp = self.dispersion.compute(&sharpes);

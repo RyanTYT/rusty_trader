@@ -27,13 +27,12 @@
 //! loader the backtester uses (`load_market_data`) — so the DB is guaranteed
 //! to have the bars for the full period before the optimization runs.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use optimizer::{
-    config::opt_config::OptConfig,
     config::param_spec::ParamSpec,
     config::validation::{Holdout, ValidationScheme, WalkForward},
     functions::objective::{Dispersion, RobustSharpe},
@@ -41,7 +40,7 @@ use optimizer::{
     functions::robustness::RobustnessEvaluator,
     functions::tpe::TpeOptimizer,
     report::RobustnessReport,
-    runner::run::{run_optimization, run_walk_forward, OptResult, WalkForwardResult},
+    runner::run::{run_optimization, run_walk_forward, OptConfig, OptResult, WalkForwardResult},
 };
 use trading_app::backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate};
 use trading_app::backtester::{BacktestConfig, BacktestMode, BacktestPeriod};
@@ -232,9 +231,8 @@ async fn main() -> Result<(), String> {
             ValidationScheme::WalkForward(_) => {
                 let factory: Box<dyn Fn() -> Box<dyn Optimizer> + Send + Sync> = {
                     let specs = specs.clone();
-                    let optimizer_kind_string = optimizer_kind.clone();
                     Box::new(move || -> Box<dyn Optimizer> {
-                        match optimizer_kind_string.as_str() {
+                        match optimizer_kind.as_str() {
                             "grid" => Box::new(GridOptimizer::new(&specs, grid_steps)),
                             "random" => Box::new(RandomOptimizer::new(&specs, n_evaluations, seed)),
                             "tpe" => Box::new(TpeOptimizer::new(&specs, n_evaluations, seed)),
@@ -312,7 +310,7 @@ fn report_holdout(result: &OptResult) {
     println!("Best score (RobustSharpe): {:.4}", result.best.score);
     println!(
         "In-sample:   Sharpe={:.4}  PnL={:.2}  MaxDD={:.2}%  trades={}",
-        result.best.results.sharpe_per_bar,
+        result.best.results.sharpe,
         result.best.results.total_pnl,
         result.best.results.max_drawdown_pct,
         result.best.results.num_trades,
@@ -320,10 +318,10 @@ fn report_holdout(result: &OptResult) {
     if let Some(oos) = &result.out_of_sample {
         println!(
             "Out-of-sample: Sharpe={:.4}  PnL={:.2}  MaxDD={:.2}%  trades={}",
-            oos.sharpe_per_bar, oos.total_pnl, oos.max_drawdown_pct, oos.num_trades,
+            oos.sharpe, oos.total_pnl, oos.max_drawdown_pct, oos.num_trades,
         );
-        let ratio = if result.best.results.sharpe_per_bar.abs() > 1e-9 {
-            oos.sharpe_per_bar / result.best.results.sharpe_per_bar
+        let ratio = if result.best.results.sharpe.abs() > 1e-9 {
+            oos.sharpe / result.best.results.sharpe
         } else {
             0.0
         };
@@ -337,8 +335,8 @@ fn report_holdout(result: &OptResult) {
 fn report_walk_forward(result: &WalkForwardResult) {
     println!("=== Walk-forward result ({} windows) ===", result.aggregated_oos.num_windows);
     for (i, w) in result.per_window.iter().enumerate() {
-        let is_sharpe = w.best.results.sharpe_per_bar;
-        let os_sharpe = w.oos.as_ref().map(|o| o.sharpe_per_bar).unwrap_or(0.0);
+        let is_sharpe = w.best.results.sharpe;
+        let os_sharpe = w.oos.as_ref().map(|o| o.sharpe).unwrap_or(0.0);
         let ratio = if is_sharpe.abs() > 1e-9 { os_sharpe / is_sharpe } else { 0.0 };
         println!(
             "  W{}: IS Sharpe={:.4}  OS Sharpe={:.4}  ratio={:.2}  params={:?}",
@@ -347,7 +345,7 @@ fn report_walk_forward(result: &WalkForwardResult) {
     }
     let a = &result.aggregated_oos;
     println!("--- Aggregated OOS ---");
-    println!("  Sharpe={:.4}  Sortino={:.4}", a.sharpe_per_bar, a.sortino_per_bar);
+    println!("  Sharpe={:.4}  Sortino={:.4}", a.sharpe, a.sortino);
     println!("  PnL={:.2}  Return={:.2}%  MaxDD={:.2}%", a.total_pnl, a.total_return_pct, a.max_drawdown_pct);
     println!("  Final equity: {:.2} (from {:.2})", a.final_equity, a.starting_capital);
 }
