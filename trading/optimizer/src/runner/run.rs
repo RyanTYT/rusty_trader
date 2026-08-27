@@ -16,6 +16,7 @@
 //! 5. Pick the best (phase-2 score) + return.
 //! 6. (If `Holdout`) validate the best on the out-of-sample period.
 
+use chrono::Duration;
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -90,16 +91,6 @@ pub async fn run_optimization(
         }
     }
     tracing::info!("Optimization: {} candidates evaluated", history.len());
-    let mut throw = history.clone();
-    throw.sort_by(|a, b| b.results.num_trades.cmp(&a.results.num_trades));
-    println!(
-        "{}",
-        throw
-            .iter()
-            .map(|v| format!("{:?}", v.results.num_trades))
-            .collect::<Vec<String>>()
-            .join(" ")
-    );
 
     // 3. Pick the top-K (by phase-1 score).
     let mut scored = history.clone();
@@ -201,8 +192,10 @@ pub struct AggregatedMetrics {
     pub total_pnl: f64,
     pub total_return_pct: f64,
     pub max_drawdown_pct: f64,
-    pub sharpe_per_bar: f64,
-    pub sortino_per_bar: f64,
+    pub sharpe: f64,
+    pub sortino: f64,
+    pub bar_interval_minutes: i64,
+    pub bars_per_year: f64,
     pub num_windows: usize,
 }
 
@@ -283,7 +276,12 @@ pub async fn run_walk_forward(
     }
 
     let starting_capital = cfg.base_config.starting_capital_sgd;
-    let aggregated = compute_aggregated_oos(&oos_returns, starting_capital, per_window.len());
+    let aggregated = compute_aggregated_oos(
+        &oos_returns,
+        starting_capital,
+        per_window.len(),
+        cfg.base_config.stock_bar_interval,
+    );
     Ok(WalkForwardResult {
         per_window,
         aggregated_oos: aggregated,
@@ -297,6 +295,7 @@ fn compute_aggregated_oos(
     returns: &[f64],
     starting_capital: f64,
     num_windows: usize,
+    bar_interval: Duration,
 ) -> AggregatedMetrics {
     let mut equity = starting_capital;
     let mut peak = starting_capital;
@@ -320,20 +319,33 @@ fn compute_aggregated_oos(
     } else {
         0.0
     };
-    let (sharpe, sortino) = sharpe_sortino_from_returns(returns);
+    let (sharpe_per_bar, sortino_per_bar) = sharpe_sortino_from_returns(returns);
+    // Annualize: same logic as BacktestResults::build
+    let bar_interval_minutes = bar_interval.num_minutes().max(1);
+    let bars_per_year = if bar_interval_minutes >= 1440 {
+        252.0
+    } else {
+        (390.0 * 252.0) / bar_interval_minutes as f64
+    };
+    let annualization_factor = bars_per_year.sqrt();
+    let sharpe = sharpe_per_bar * annualization_factor;
+    let sortino = sortino_per_bar * annualization_factor;
     AggregatedMetrics {
         starting_capital,
         final_equity,
         total_pnl,
         total_return_pct,
         max_drawdown_pct: max_dd,
-        sharpe_per_bar: sharpe,
-        sortino_per_bar: sortino,
+        sharpe,
+        sortino,
+        bar_interval_minutes,
+        bars_per_year,
         num_windows,
     }
 }
 
-/// Sharpe + Sortino (per-bar, not annualized) from a slice of per-bar returns.
+/// Sharpe + Sortino (per-bar, NOT annualized) from a slice of per-bar returns.
+/// Annualization is applied by the caller ().
 fn sharpe_sortino_from_returns(returns: &[f64]) -> (f64, f64) {
     if returns.len() < 2 {
         return (0.0, 0.0);

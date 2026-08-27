@@ -199,10 +199,10 @@ fn compute_pareto_front(candidates: &[&EvalResult]) -> Vec<ParetoPoint> {
         .iter()
         .map(|e| {
             (
-                e.results.sharpe_per_bar,
+                e.results.sharpe,
                 e.results.total_return_pct,
                 e.results.max_drawdown_pct,
-                e.results.sortino_per_bar,
+                e.results.sortino,
                 e.score,
                 &e.params,
             )
@@ -238,8 +238,8 @@ fn compute_stability(candidates: &[&EvalResult]) -> Vec<StabilityPoint> {
         .iter()
         .filter(|e| !e.neighborhood.is_empty())
         .map(|e| {
-            let mut sharpes: Vec<f64> = e.neighborhood.iter().map(|r| r.sharpe_per_bar).collect();
-            sharpes.push(e.results.sharpe_per_bar); // include the candidate's own.
+            let mut sharpes: Vec<f64> = e.neighborhood.iter().map(|r| r.sharpe).collect();
+            sharpes.push(e.results.sharpe); // include the candidate's own.
             let n = sharpes.len() as f64;
             let mean = sharpes.iter().sum::<f64>() / n;
             let var = sharpes.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n;
@@ -249,7 +249,7 @@ fn compute_stability(candidates: &[&EvalResult]) -> Vec<StabilityPoint> {
             let max = sharpes.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             StabilityPoint {
                 params: e.params.clone(),
-                own_sharpe: e.results.sharpe_per_bar,
+                own_sharpe: e.results.sharpe,
                 neighborhood_sharpes: sharpes,
                 mean,
                 std,
@@ -267,8 +267,8 @@ fn compute_walk_forward_tracking(wf: &WalkForwardResult) -> Vec<WalkForwardPoint
         .iter()
         .enumerate()
         .map(|(i, w)| {
-            let is_sharpe = w.best.results.sharpe_per_bar;
-            let os_sharpe = w.oos.as_ref().map(|o| o.sharpe_per_bar).unwrap_or(0.0);
+            let is_sharpe = w.best.results.sharpe;
+            let os_sharpe = w.oos.as_ref().map(|o| o.sharpe).unwrap_or(0.0);
             let ratio = if is_sharpe.abs() > 1e-9 {
                 os_sharpe / is_sharpe
             } else {
