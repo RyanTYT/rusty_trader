@@ -135,7 +135,7 @@ pub fn run_one_backtest(
     // Set the bar cache, warm up, trim to post-warm-up, run_with_bars, clear
     // — all in one helper (shared with the single route).
     let (equity, state) = InMemoryReplay.run_with_warm_up(strategy, bars, config, handle, &light)?;
-    let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd);
+    let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd, config.stock_bar_interval);
     Ok(SweepResult {
         params: params.clone(),
         results,

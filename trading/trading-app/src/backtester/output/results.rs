@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use chrono::Duration;
 use rust_decimal::prelude::ToPrimitive;
 use serde::Serialize;
 
@@ -35,8 +36,10 @@ pub struct BacktestResults {
     pub num_closed_trades: usize,
     pub num_winning_trades: usize,
     pub win_rate_pct: f64,
-    pub sharpe_per_bar: f64,
-    pub sortino_per_bar: f64,
+    pub sharpe: f64,
+    pub sortino: f64,
+    pub bar_interval_minutes: i64,
+    pub bars_per_year: f64,
     pub equity_curve: Vec<EquityPoint>,
 }
 
@@ -55,6 +58,7 @@ impl BacktestResults {
         pool: &sqlx::PgPool,
         equity: &EquityCurve,
         starting_capital: f64,
+        bar_interval: Duration,
     ) -> Result<Self, String> {
         let tx_crud = TransactionsCRUD::from(&AssetType::Stock, pool.clone());
         let transactions = tx_crud
@@ -77,7 +81,7 @@ impl BacktestResults {
             .collect();
         let num_trades = tuples.len();
         let per_trade_pnl = realized_per_trade_pnl(&tuples);
-        Ok(Self::build(equity, starting_capital, num_trades, per_trade_pnl))
+        Ok(Self::build(equity, starting_capital, num_trades, per_trade_pnl, bar_interval))
     }
 
     /// Compute from the in-memory state (the fast mode — no DB I/O; reads
@@ -86,6 +90,7 @@ impl BacktestResults {
         equity: &EquityCurve,
         state: &InMemoryState,
         starting_capital: f64,
+        bar_interval: Duration,
     ) -> Self {
         let txns = state
             .transactions
@@ -106,15 +111,19 @@ impl BacktestResults {
             .collect();
         let num_trades = tuples.len();
         let per_trade_pnl = realized_per_trade_pnl(&tuples);
-        Self::build(equity, starting_capital, num_trades, per_trade_pnl)
+        Self::build(equity, starting_capital, num_trades, per_trade_pnl, bar_interval)
     }
 
     /// Common metrics builder — shared by `compute` (DB) + `compute_in_memory`.
+    /// `bar_interval` is the actual bar frequency used in the backtest (from
+    /// `BacktestConfig::stock_bar_interval`) — drives the Sharpe/Sortino
+    /// annualization factor.
     fn build(
         equity: &EquityCurve,
         starting_capital: f64,
         num_trades: usize,
         per_trade_pnl: Vec<f64>,
+        bar_interval: Duration,
     ) -> Self {
         let num_closed = per_trade_pnl.len();
         let num_winning = per_trade_pnl.iter().filter(|p| **p > 0.0).count();
@@ -132,7 +141,21 @@ impl BacktestResults {
             0.0
         };
         let max_drawdown_pct = max_drawdown_pct(&equity.snapshots);
-        let (sharpe, sortino) = sharpe_sortino(&equity.snapshots);
+        let (sharpe_per_bar, sortino_per_bar) = sharpe_sortino(&equity.snapshots);
+
+        // Annualize: bars_per_year = trading_minutes_per_year / bar_interval
+        // where trading_minutes_per_year = 390 min/day (9:30–16:00 ET) × 252 days.
+        // For daily+ bars (interval >= 1440 min), use 252 bars/year directly.
+        let bar_interval_minutes = bar_interval.num_minutes().max(1);
+        let bars_per_year = if bar_interval_minutes >= 1440 {
+            252.0
+        } else {
+            (390.0 * 252.0) / bar_interval_minutes as f64
+        };
+        let annualization_factor = bars_per_year.sqrt();
+        let sharpe = sharpe_per_bar * annualization_factor;
+        let sortino = sortino_per_bar * annualization_factor;
+
         let curve = equity
             .snapshots
             .iter()
@@ -154,8 +177,10 @@ impl BacktestResults {
             num_closed_trades: num_closed,
             num_winning_trades: num_winning,
             win_rate_pct,
-            sharpe_per_bar: sharpe,
-            sortino_per_bar: sortino,
+            sharpe,
+            sortino,
+            bar_interval_minutes,
+            bars_per_year,
             equity_curve: curve,
         }
     }
