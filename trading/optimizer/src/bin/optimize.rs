@@ -40,9 +40,11 @@ use optimizer::{
     functions::robustness::RobustnessEvaluator,
     functions::tpe::TpeOptimizer,
     report::RobustnessReport,
-    runner::run::{run_optimization, run_walk_forward, OptConfig, OptResult, WalkForwardResult},
+    runner::run::{OptConfig, OptResult, WalkForwardResult, run_optimization, run_walk_forward},
 };
-use trading_app::backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate};
+use trading_app::backtester::oracle::data_loader::{
+    load_market_data, refresh_continuous_aggregate,
+};
 use trading_app::backtester::{BacktestConfig, BacktestMode, BacktestPeriod};
 
 /// The `config` section of `optimiser_params.json`. `start` + `end` are
@@ -110,8 +112,8 @@ async fn main() -> Result<(), String> {
         .try_init()
         .ok();
 
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| "DATABASE_URL must be set".to_string())?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set".to_string())?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
         .connect(&database_url)
@@ -130,8 +132,8 @@ async fn main() -> Result<(), String> {
     let params_file = std::path::Path::new("optimiser_params.json");
     let content = std::fs::read_to_string(params_file)
         .map_err(|e| format!("read optimiser_params.json: {e} — expected in the working dir"))?;
-    let file: OptimiserFile = serde_json::from_str(&content)
-        .map_err(|e| format!("parse optimiser_params.json: {e}"))?;
+    let file: OptimiserFile =
+        serde_json::from_str(&content).map_err(|e| format!("parse optimiser_params.json: {e}"))?;
     let cfg_section = file.config;
 
     let start = DateTime::parse_from_rfc3339(&cfg_section.start)
@@ -145,15 +147,32 @@ async fn main() -> Result<(), String> {
     let oos_fraction = env_or("BACKTEST_OOS_FRACTION", cfg_section.oos_fraction, 0.3);
     let grid_steps = env_or("BACKTEST_GRID_STEPS", cfg_section.grid_steps, 5);
     let top_k = env_or("BACKTEST_TOP_K", cfg_section.top_k, 10);
-    let capital = env_or("BACKTEST_CAPITAL", cfg_section.starting_capital_sgd, 100_000.0);
-    let stock = std::env::var("BACKTEST_STOCK").ok().or(cfg_section.stock).unwrap_or_else(|| "QQQ".to_string());
-    let pe = std::env::var("BACKTEST_PRIMARY_EXCHANGE").ok().or(cfg_section.primary_exchange).unwrap_or_else(|| "NASDAQ".to_string());
-    let currency = std::env::var("BACKTEST_CURRENCY").ok().or(cfg_section.currency).unwrap_or_else(|| "USD".to_string());
+    let capital = env_or(
+        "BACKTEST_CAPITAL",
+        cfg_section.starting_capital_sgd,
+        100_000.0,
+    );
+    let stock = std::env::var("BACKTEST_STOCK")
+        .ok()
+        .or(cfg_section.stock)
+        .unwrap_or_else(|| "QQQ".to_string());
+    let pe = std::env::var("BACKTEST_PRIMARY_EXCHANGE")
+        .ok()
+        .or(cfg_section.primary_exchange)
+        .unwrap_or_else(|| "NASDAQ".to_string());
+    let currency = std::env::var("BACKTEST_CURRENCY")
+        .ok()
+        .or(cfg_section.currency)
+        .unwrap_or_else(|| "USD".to_string());
     let optimizer_kind = std::env::var("BACKTEST_OPTIMIZER")
         .ok()
         .or(cfg_section.optimizer)
         .unwrap_or_else(|| "grid".to_string());
-    let batch_size = env_or("BACKTEST_BATCH_SIZE", cfg_section.batch_size, num_cpus::get());
+    let batch_size = env_or(
+        "BACKTEST_BATCH_SIZE",
+        cfg_section.batch_size,
+        num_cpus::get(),
+    );
     let n_evaluations = env_or("BACKTEST_N_EVALUATIONS", cfg_section.n_evaluations, 100);
     let seed = env_or("BACKTEST_SEED", cfg_section.seed, 42u64);
 
@@ -172,11 +191,26 @@ async fn main() -> Result<(), String> {
         .map_err(|e| format!("load_bars check: {e}"))?
         .is_empty();
     if bars_exist {
-        tracing::info!("Data already loaded for [{}, {}] — refreshing the continuous aggregate.", start, end);
+        tracing::info!(
+            "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
+            start,
+            end
+        );
         refresh_continuous_aggregate(&pool, start, end).await;
     } else {
-        tracing::info!("Data not loaded for [{}, {}] — populating via IBKR/Alpaca (with_gateway_retry internally).", start, end);
-        load_market_data(&base_config.subscribed_contracts, start, end, &pool, &handle).await?;
+        tracing::info!(
+            "Data not loaded for [{}, {}] — populating via IBKR/Alpaca (with_gateway_retry internally).",
+            start,
+            end
+        );
+        load_market_data(
+            &base_config.subscribed_contracts,
+            start,
+            end,
+            &pool,
+            &handle,
+        )
+        .await?;
     }
 
     // 4. Build the validation scheme + split the period (GLOBAL — shared across all strategies).
@@ -187,8 +221,19 @@ async fn main() -> Result<(), String> {
     let (validation, in_sample, _out_sample) = match validation_kind.as_str() {
         "holdout" => {
             let (is, os) = split_period(&base_config.period, oos_fraction);
-            tracing::info!("Holdout: IS {:?}, OS {:?} (fraction {oos_fraction})", is, os);
-            (ValidationScheme::Holdout(Holdout { in_sample: is.clone(), out_sample: os.clone() }), is, os)
+            tracing::info!(
+                "Holdout: IS {:?}, OS {:?} (fraction {oos_fraction})",
+                is,
+                os
+            );
+            (
+                ValidationScheme::Holdout(Holdout {
+                    in_sample: is.clone(),
+                    out_sample: os.clone(),
+                }),
+                is,
+                os,
+            )
         }
         "walk_forward" => {
             let wf_json = cfg_section.walk_forward.as_ref()
@@ -197,11 +242,19 @@ async fn main() -> Result<(), String> {
                 in_sample: chrono::Duration::days(wf_json.in_sample_days),
                 out_sample: chrono::Duration::days(wf_json.out_sample_days),
             };
-            tracing::info!("Walk-forward: IS {}d, OS {}d", wf_json.in_sample_days, wf_json.out_sample_days);
+            tracing::info!(
+                "Walk-forward: IS {}d, OS {}d",
+                wf_json.in_sample_days,
+                wf_json.out_sample_days
+            );
             let dummy = base_config.period.clone();
             (ValidationScheme::WalkForward(wf), dummy.clone(), dummy)
         }
-        other => return Err(format!("unknown validation '{other}' (expected holdout/walk_forward)")),
+        other => {
+            return Err(format!(
+                "unknown validation '{other}' (expected holdout/walk_forward)"
+            ));
+        }
     };
 
     // 5. The objective + robustness (GLOBAL).
@@ -214,7 +267,10 @@ async fn main() -> Result<(), String> {
         tracing::info!("Loaded {} param specs for '{name}'", specs.len());
 
         let opt_cfg = OptConfig {
-            base_config: BacktestConfig { period: in_sample.clone(), ..base_config.clone() },
+            base_config: BacktestConfig {
+                period: in_sample.clone(),
+                ..base_config.clone()
+            },
             specs: specs.clone(),
             objective: objective.clone(),
             robustness: robustness.clone(),
@@ -252,7 +308,11 @@ async fn main() -> Result<(), String> {
                     "grid" => Box::new(GridOptimizer::new(&specs, grid_steps)),
                     "random" => Box::new(RandomOptimizer::new(&specs, n_evaluations, seed)),
                     "tpe" => Box::new(TpeOptimizer::new(&specs, n_evaluations, seed)),
-                    other => return Err(format!("unknown optimizer '{other}' (expected grid/random/tpe)")),
+                    other => {
+                        return Err(format!(
+                            "unknown optimizer '{other}' (expected grid/random/tpe)"
+                        ));
+                    }
                 };
                 let result = run_optimization(pool.clone(), optimizer, opt_cfg, &handle).await?;
                 report_holdout(&result);
@@ -265,7 +325,6 @@ async fn main() -> Result<(), String> {
     }
     Ok(())
 }
-
 
 /// `env > json > default`.
 fn env_or<T: std::str::FromStr>(env: &str, json: Option<T>, default: T) -> T
@@ -291,14 +350,23 @@ fn split_period(period: &BacktestPeriod, oos_fraction: f64) -> (BacktestPeriod, 
             let in_secs = (total_secs as f64 * (1.0 - f)) as i64;
             let split = *start + chrono::Duration::seconds(in_secs);
             (
-                BacktestPeriod::TimeRange { start: *start, end: split },
-                BacktestPeriod::TimeRange { start: split, end: *end },
+                BacktestPeriod::TimeRange {
+                    start: *start,
+                    end: split,
+                },
+                BacktestPeriod::TimeRange {
+                    start: split,
+                    end: *end,
+                },
             )
         }
         BacktestPeriod::NumBars(n) => {
             let in_n = ((*n as f64) * (1.0 - f)) as usize;
             let oos_n = *n - in_n;
-            (BacktestPeriod::NumBars(in_n), BacktestPeriod::NumBars(oos_n))
+            (
+                BacktestPeriod::NumBars(in_n),
+                BacktestPeriod::NumBars(oos_n),
+            )
         }
     }
 }
@@ -325,7 +393,10 @@ fn report_holdout(result: &OptResult) {
         } else {
             0.0
         };
-        println!("OOS/IS Sharpe ratio: {:.2} (≥0.5 suggests the edge generalizes)", ratio);
+        println!(
+            "OOS/IS Sharpe ratio: {:.2} (≥0.5 suggests the edge generalizes)",
+            ratio
+        );
     } else {
         println!("(no out-of-sample validation — set oos_fraction > 0)");
     }
@@ -333,19 +404,36 @@ fn report_holdout(result: &OptResult) {
 
 /// Print the walk-forward result — the per-window results + the aggregated OOS.
 fn report_walk_forward(result: &WalkForwardResult) {
-    println!("=== Walk-forward result ({} windows) ===", result.aggregated_oos.num_windows);
+    println!(
+        "=== Walk-forward result ({} windows) ===",
+        result.aggregated_oos.num_windows
+    );
     for (i, w) in result.per_window.iter().enumerate() {
         let is_sharpe = w.best.results.sharpe;
         let os_sharpe = w.oos.as_ref().map(|o| o.sharpe).unwrap_or(0.0);
-        let ratio = if is_sharpe.abs() > 1e-9 { os_sharpe / is_sharpe } else { 0.0 };
+        let ratio = if is_sharpe.abs() > 1e-9 {
+            os_sharpe / is_sharpe
+        } else {
+            0.0
+        };
         println!(
             "  W{}: IS Sharpe={:.4}  OS Sharpe={:.4}  ratio={:.2}  params={:?}",
-            i + 1, is_sharpe, os_sharpe, ratio, w.best.params,
+            i + 1,
+            is_sharpe,
+            os_sharpe,
+            ratio,
+            w.best.params,
         );
     }
     let a = &result.aggregated_oos;
     println!("--- Aggregated OOS ---");
     println!("  Sharpe={:.4}  Sortino={:.4}", a.sharpe, a.sortino);
-    println!("  PnL={:.2}  Return={:.2}%  MaxDD={:.2}%", a.total_pnl, a.total_return_pct, a.max_drawdown_pct);
-    println!("  Final equity: {:.2} (from {:.2})", a.final_equity, a.starting_capital);
+    println!(
+        "  PnL={:.2}  Return={:.2}%  MaxDD={:.2}%",
+        a.total_pnl, a.total_return_pct, a.max_drawdown_pct
+    );
+    println!(
+        "  Final equity: {:.2} (from {:.2})",
+        a.final_equity, a.starting_capital
+    );
 }

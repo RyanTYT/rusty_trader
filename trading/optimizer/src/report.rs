@@ -112,14 +112,21 @@ impl RobustnessReport {
         html.push_str("<p>Non-dominated candidates across Sharpe / return / max-drawdown. A point on the front is not strictly worse than any other on all 3 metrics.</p>");
         html.push_str(&self.pareto_scatter_svg());
         {
-            let rows: Vec<(HashMap<String, f64>, Vec<(String, f64)>)> = self.pareto_front.iter().map(|p| {
-                (p.params.clone(), vec![
-                    ("Sharpe".to_string(), p.sharpe),
-                    ("Return %".to_string(), p.total_return_pct),
-                    ("MaxDD %".to_string(), p.max_drawdown_pct),
-                    ("Score".to_string(), p.score),
-                ])
-            }).collect();
+            let rows: Vec<(HashMap<String, f64>, Vec<(String, f64)>)> = self
+                .pareto_front
+                .iter()
+                .map(|p| {
+                    (
+                        p.params.clone(),
+                        vec![
+                            ("Sharpe".to_string(), p.sharpe),
+                            ("Return %".to_string(), p.total_return_pct),
+                            ("MaxDD %".to_string(), p.max_drawdown_pct),
+                            ("Score".to_string(), p.score),
+                        ],
+                    )
+                })
+                .collect();
             html.push_str(&params_table("pareto", &rows));
         }
 
@@ -128,16 +135,23 @@ impl RobustnessReport {
         html.push_str("<p>Low std = a plateau (robust edge). High std = a spike (overfit). The MAD (median absolute deviation) is the robust dispersion.</p>");
         html.push_str(&self.stability_bars_svg());
         {
-            let rows: Vec<(HashMap<String, f64>, Vec<(String, f64)>)> = self.stability.iter().map(|s| {
-                (s.params.clone(), vec![
-                    ("Own Sharpe".to_string(), s.own_sharpe),
-                    ("Mean".to_string(), s.mean),
-                    ("Std".to_string(), s.std),
-                    ("MAD".to_string(), s.mad),
-                    ("Min".to_string(), s.min),
-                    ("Max".to_string(), s.max),
-                ])
-            }).collect();
+            let rows: Vec<(HashMap<String, f64>, Vec<(String, f64)>)> = self
+                .stability
+                .iter()
+                .map(|s| {
+                    (
+                        s.params.clone(),
+                        vec![
+                            ("Own Sharpe".to_string(), s.own_sharpe),
+                            ("Mean".to_string(), s.mean),
+                            ("Std".to_string(), s.std),
+                            ("MAD".to_string(), s.mad),
+                            ("Min".to_string(), s.min),
+                            ("Max".to_string(), s.max),
+                        ],
+                    )
+                })
+                .collect();
             html.push_str(&params_table("stability", &rows));
         }
 
@@ -345,9 +359,7 @@ fn svg_scatter(
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| {
             (mn.min(p.2), mx.max(p.2))
         });
-    let mut svg = format!(
-        "<svg width='{w}' height='{h}' xmlns='http://www.w3.org/2000/svg'>"
-    );
+    let mut svg = format!("<svg width='{w}' height='{h}' xmlns='http://www.w3.org/2000/svg'>");
     // Axes.
     svg.push_str(&format!(
         "<line x1='{margin}' y1='{}' x2='{}' y2='{}' stroke='#333'/>",
@@ -435,7 +447,10 @@ fn svg_lines(
     let margin = 50;
     let pw = w - 2 * margin;
     let ph = h - 2 * margin;
-    let all: Vec<(f64, f64)> = lines.iter().flat_map(|(_, pts)| pts.iter().copied()).collect();
+    let all: Vec<(f64, f64)> = lines
+        .iter()
+        .flat_map(|(_, pts)| pts.iter().copied())
+        .collect();
     let (xmin, xmax) = all
         .iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| {
@@ -529,7 +544,9 @@ fn params_table(id: &str, rows: &[(HashMap<String, f64>, Vec<(String, f64)>)]) -
 }
 
 fn wf_table(tracking: &[WalkForwardPoint]) -> String {
-    let mut html = String::from("<table id='wf'><tr><th>Window</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>Ratio</th></tr>");
+    let mut html = String::from(
+        "<table id='wf'><tr><th>Window</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>Ratio</th></tr>",
+    );
     for t in tracking {
         html.push_str(&format!(
             "<tr><td>{}</td><td>{:.4}</td><td>{:.4}</td><td>{:.2}</td></tr>",

@@ -41,8 +41,8 @@ impl Dispersion {
         match self {
             Dispersion::Std => {
                 let mean = values.iter().sum::<f64>() / values.len() as f64;
-                let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
-                    / values.len() as f64;
+                let var =
+                    values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
                 var.sqrt()
             }
             Dispersion::Mad => {
@@ -53,10 +53,10 @@ impl Dispersion {
                 } else {
                     sorted[sorted.len() / 2]
                 };
-                let abs_devs: Vec<f64> =
-                    values.iter().map(|v| (v - median).abs()).collect();
+                let abs_devs: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
                 let mut abs_devs_sorted = abs_devs;
-                abs_devs_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                abs_devs_sorted
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 if abs_devs_sorted.len() % 2 == 0 {
                     (abs_devs_sorted[abs_devs_sorted.len() / 2 - 1]
                         + abs_devs_sorted[abs_devs_sorted.len() / 2])
@@ -86,7 +86,10 @@ pub struct RobustSharpe {
 
 impl Default for RobustSharpe {
     fn default() -> Self {
-        Self { alpha: 1.0, dispersion: Dispersion::Mad }
+        Self {
+            alpha: 1.0,
+            dispersion: Dispersion::Mad,
+        }
     }
 }
 

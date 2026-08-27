@@ -62,10 +62,7 @@ impl WalkForward {
     /// Generate the (in_sample, out_sample) windows for a full `TimeRange`
     /// period. The OOS windows tile `[start + in_sample, end]` contiguously.
     /// Returns an empty vec for non-`TimeRange` periods.
-    pub fn windows(
-        &self,
-        full: &BacktestPeriod,
-    ) -> Vec<(BacktestPeriod, BacktestPeriod)> {
+    pub fn windows(&self, full: &BacktestPeriod) -> Vec<(BacktestPeriod, BacktestPeriod)> {
         let (start, end) = match full {
             BacktestPeriod::TimeRange { start, end } => (*start, *end),
             _ => return Vec::new(),
@@ -76,8 +73,14 @@ impl WalkForward {
             let is_end = cursor + self.in_sample;
             let os_end = is_end + self.out_sample;
             windows.push((
-                BacktestPeriod::TimeRange { start: cursor, end: is_end },
-                BacktestPeriod::TimeRange { start: is_end, end: os_end },
+                BacktestPeriod::TimeRange {
+                    start: cursor,
+                    end: is_end,
+                },
+                BacktestPeriod::TimeRange {
+                    start: is_end,
+                    end: os_end,
+                },
             ));
             cursor = cursor + self.out_sample; // step by out_sample → contiguous OOS
         }
