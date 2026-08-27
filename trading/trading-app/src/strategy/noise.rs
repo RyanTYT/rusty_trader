@@ -401,6 +401,11 @@ impl Noise {
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
         if !noise_data.avg_moves.contains_key(bar_time) {
             if bar_time == &NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
+                let mut noise_data = self
+                    .data
+                    .as_mut()
+                    .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+                noise_data.push(bar.clone());
                 return Ok(BarUpdateOutcome::NoAction);
             } else {
                 tracing::error!("avg_moves doesn't contain: {bar_time:?}");
@@ -589,6 +594,11 @@ impl Noise {
                         primary_exchange: "NASDAQ".to_string(),
                         currency: "USD".to_string(),
                     });
+                    let mut noise_data = self
+                        .data
+                        .as_mut()
+                        .expect("Expected sufficient data in noise fn warm up for on_bar_update");
+                    noise_data.push(bar.clone());
                     return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
                 }
             }
