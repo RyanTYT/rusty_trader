@@ -9,7 +9,9 @@
 
 use chrono::{TimeZone, Utc};
 use chrono_tz::America::New_York;
-use trading_app::test_internals::{is_any_open, is_apac_reset_now, is_autorestart, is_stock_open_hard};
+use trading_app::test_internals::{
+    is_any_open, is_apac_reset_now, is_autorestart, is_stock_open_hard,
+};
 
 // ============================ is_autorestart ============================
 

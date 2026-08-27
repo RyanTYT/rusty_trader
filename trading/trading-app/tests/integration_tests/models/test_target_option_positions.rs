@@ -8,8 +8,8 @@ use trading_app::database::models::{
     TargetOptionPositionsUpdateKeys,
 };
 
-use crate::init_strat;
 use crate::del_strat;
+use crate::init_strat;
 use crate::models::init::{TEST_MUTEX, setup_test_db};
 
 const STRATEGY: &str = "noise";
@@ -19,25 +19,37 @@ const MULTIPLIER: &str = "100";
 
 fn make_fk(stock: &str, qty: f64, price: f64) -> TargetOptionPositionsFullKeys {
     TargetOptionPositionsFullKeys {
-        strategy: STRATEGY.to_string(), stock: stock.to_string(),
-        primary_exchange: "NASDAQ".to_string(), currency: "USD".to_string(),
-        expiry: EXPIRY.to_string(), strike: STRIKE,
-        multiplier: MULTIPLIER.to_string(), option_type: OptionType::Call,
-        avg_price: price, quantity: qty,
+        strategy: STRATEGY.to_string(),
+        stock: stock.to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        expiry: EXPIRY.to_string(),
+        strike: STRIKE,
+        multiplier: MULTIPLIER.to_string(),
+        option_type: OptionType::Call,
+        avg_price: price,
+        quantity: qty,
     }
 }
 
 fn make_pk(stock: &str) -> TargetOptionPositionsPrimaryKeys {
     TargetOptionPositionsPrimaryKeys {
-        strategy: STRATEGY.to_string(), stock: stock.to_string(),
-        primary_exchange: "NASDAQ".to_string(), currency: "USD".to_string(),
-        expiry: EXPIRY.to_string(), strike: STRIKE,
-        multiplier: MULTIPLIER.to_string(), option_type: OptionType::Call,
+        strategy: STRATEGY.to_string(),
+        stock: stock.to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        expiry: EXPIRY.to_string(),
+        strike: STRIKE,
+        multiplier: MULTIPLIER.to_string(),
+        option_type: OptionType::Call,
     }
 }
 
 fn uk(qty: Option<f64>, price: Option<f64>) -> TargetOptionPositionsUpdateKeys {
-    TargetOptionPositionsUpdateKeys { quantity: qty, avg_price: price }
+    TargetOptionPositionsUpdateKeys {
+        quantity: qty,
+        avg_price: price,
+    }
 }
 
 #[tokio::test]
@@ -48,9 +60,15 @@ async fn test_create_read_delete() {
     let crud = trading_app::test_internals::target_option_positions_crud(pool.clone());
 
     let stock = "TOP_crd";
-    crud.create(&make_fk(stock, 5.0, 3.50)).await.expect("create failed");
+    crud.create(&make_fk(stock, 5.0, 3.50))
+        .await
+        .expect("create failed");
     let pk = make_pk(stock);
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.stock, stock);
     assert_eq!(data.quantity, 5.0);
 
@@ -67,11 +85,19 @@ async fn test_update() {
     let crud = trading_app::test_internals::target_option_positions_crud(pool.clone());
 
     let stock = "TOP_upd";
-    crud.create(&make_fk(stock, 5.0, 3.50)).await.expect("create failed");
+    crud.create(&make_fk(stock, 5.0, 3.50))
+        .await
+        .expect("create failed");
     let pk = make_pk(stock);
-    crud.update(&pk, &uk(Some(10.0), Some(4.00))).await.expect("update failed");
+    crud.update(&pk, &uk(Some(10.0), Some(4.00)))
+        .await
+        .expect("update failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.quantity, 10.0);
     assert_eq!(data.avg_price, 4.00);
 
@@ -86,17 +112,26 @@ async fn test_read_all() {
     init_strat!(&pool);
     let crud = trading_app::test_internals::target_option_positions_crud(pool.clone());
 
-    crud.create(&make_fk("TOP_ra_a", 5.0, 3.50)).await.expect("create A failed");
-    crud.create(&make_fk("TOP_ra_b", 3.0, 4.00)).await.expect("create B failed");
+    crud.create(&make_fk("TOP_ra_a", 5.0, 3.50))
+        .await
+        .expect("create A failed");
+    crud.create(&make_fk("TOP_ra_b", 3.0, 4.00))
+        .await
+        .expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.stock == "TOP_ra_a" || p.stock == "TOP_ra_b")
         .collect();
     assert_eq!(ours.len(), 2);
 
-    crud.delete(&make_pk("TOP_ra_a")).await.expect("delete A failed");
-    crud.delete(&make_pk("TOP_ra_b")).await.expect("delete B failed");
+    crud.delete(&make_pk("TOP_ra_a"))
+        .await
+        .expect("delete A failed");
+    crud.delete(&make_pk("TOP_ra_b"))
+        .await
+        .expect("delete B failed");
     del_strat!(&pool);
 }
 
@@ -111,14 +146,26 @@ async fn test_create_or_ignore() {
     let fk = make_fk(stock, 5.0, 3.50);
     let pk = make_pk(stock);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.quantity, 5.0);
 
     let mut fk2 = fk.clone();
     fk2.quantity = 999.0;
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.quantity, 5.0, "conflict path should NOT update");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -136,8 +183,14 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(stock);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(5.0), Some(3.50))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(5.0), Some(3.50)))
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.quantity, 5.0);
     assert_eq!(data.avg_price, 3.50);
 
@@ -154,10 +207,18 @@ async fn test_create_or_update_update_path() {
 
     let stock = "TOP_cou_upd";
     let pk = make_pk(stock);
-    crud.create(&make_fk(stock, 5.0, 3.50)).await.expect("pre-insert failed");
+    crud.create(&make_fk(stock, 5.0, 3.50))
+        .await
+        .expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(10.0), Some(4.00))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(10.0), Some(4.00)))
+        .await
+        .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.quantity, 10.0);
     assert_eq!(data.avg_price, 4.00);
 

@@ -2,7 +2,8 @@ use std::{
     sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
-    }, time::{Duration, Instant},
+    },
+    time::{Duration, Instant},
 };
 
 use chrono::Utc;
@@ -19,7 +20,7 @@ const MAX_SUB_TRY_TIMES: usize = 50;
 
 pub struct MarketDataProducer {
     is_alive: Arc<AtomicBool>,
-    thread_handle: Option<std::thread::JoinHandle<()>>
+    thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MarketDataProducer {
@@ -28,9 +29,7 @@ impl MarketDataProducer {
         if let Some(handle) = self.thread_handle.take() {
             let drop_thread_handle = tokio::task::spawn_blocking(move || {
                 if let Err(e) = handle.join() {
-                    tracing::error!(
-                        "Failed to end tear down producer thread properly: {e:?}"
-                    );
+                    tracing::error!("Failed to end tear down producer thread properly: {e:?}");
                 }
             })
             .await;
@@ -79,7 +78,7 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
         .name(
             format!(
                 "{}_{}_prod",
-                contract.symbol, 
+                contract.symbol,
                 contract.security_type
             )
         )
@@ -214,5 +213,11 @@ pub fn subscribe_to_data<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: us
                 }
             }
         }).expect("Expected producer thread to be able to spawn");
-    return (ring_buffer, MarketDataProducer { is_alive, thread_handle: Some(thread_handle) });
+    return (
+        ring_buffer,
+        MarketDataProducer {
+            is_alive,
+            thread_handle: Some(thread_handle),
+        },
+    );
 }

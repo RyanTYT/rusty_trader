@@ -17,28 +17,107 @@ use crate::database::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct HashContract {
     pub contract: Contract,
 }
 
-impl Hash for HashContract {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.contract.primary_exchange.as_str().trim().hash(state);
-        self.contract.symbol.as_str().hash(state);
-        self.contract.currency.as_str().hash(state);
-        self.contract.security_type.to_string().hash(state);
+/// The fields a [`HashContract`]/[`HashContractRef`] is hashed + eq'd on
+/// (primary_exchange trimmed, symbol, currency, security_type + option
+/// fields) — NOT the full `Contract`. Two contracts with the same
+/// (pe, symbol, currency, security_type) [+ option fields] are equal even
+/// if other `Contract` fields (exchange, trading_class, etc.) differ. This
+/// makes the HashMap key match a caller's contract (e.g. constructed from a
+/// `PositionKey`) to the published contract — so the `publish_close` cache
+/// hits O(1) instead of falling through to a search.
+fn contracts_eq(a: &Contract, b: &Contract) -> bool {
+    let option_fields_match = if a.security_type == SecurityType::Option {
+        a.right == b.right
+            && a.last_trade_date_or_contract_month == b.last_trade_date_or_contract_month
+            && ordered_float::OrderedFloat(a.strike) == ordered_float::OrderedFloat(b.strike)
+            && a.multiplier == b.multiplier
+    } else {
+        true
+    };
+    a.primary_exchange.as_str().trim() == b.primary_exchange.as_str().trim()
+        && a.symbol == b.symbol
+        && a.currency == b.currency
+        && a.security_type == b.security_type
+        && option_fields_match
+}
 
-        if self.contract.security_type == SecurityType::Option {
-            self.contract.right.hash(state);
-            self.contract.last_trade_date_or_contract_month.hash(state);
-            ordered_float::OrderedFloat(self.contract.strike).hash(state);
-            self.contract.multiplier.hash(state);
-        }
+fn hash_contract<H: std::hash::Hasher>(contract: &Contract, state: &mut H) {
+    contract.primary_exchange.as_str().trim().hash(state);
+    contract.symbol.as_str().hash(state);
+    contract.currency.as_str().hash(state);
+    contract.security_type.to_string().hash(state);
+    if contract.security_type == SecurityType::Option {
+        contract.right.hash(state);
+        contract.last_trade_date_or_contract_month.hash(state);
+        ordered_float::OrderedFloat(contract.strike).hash(state);
+        contract.multiplier.hash(state);
+    }
+}
+
+impl PartialEq for HashContract {
+    fn eq(&self, other: &Self) -> bool {
+        contracts_eq(&self.contract, &other.contract)
     }
 }
 
 impl Eq for HashContract {}
+
+impl Hash for HashContract {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_contract(&self.contract, state)
+    }
+}
+
+/// A borrowed [`HashContract`] — wraps a `&Contract` (no clone). Hash + Eq on
+/// the SAME fields as `HashContract`. Use to look up a `HashMap<HashContract, _>`
+/// without cloning the `Contract` into a `HashContract`: build a
+/// `HashContractRef` from the `&Contract` + scan the map (the std `Borrow`
+/// path doesn't work because `Contract` isn't `Hash+Eq` + the borrowed form
+/// has a lifetime). Cross-`PartialEq` with `HashContract` so
+/// `slot_map.iter().find(|(hc, _)| ref_key == *hc)` works.
+#[derive(Debug, Clone, Copy)]
+pub struct HashContractRef<'a> {
+    pub contract: &'a Contract,
+}
+
+impl<'a> HashContractRef<'a> {
+    pub fn new(contract: &'a Contract) -> Self {
+        Self { contract }
+    }
+}
+
+impl<'a> PartialEq for HashContractRef<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        contracts_eq(self.contract, other.contract)
+    }
+}
+
+impl<'a> Eq for HashContractRef<'a> {}
+
+impl<'a> Hash for HashContractRef<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_contract(self.contract, state)
+    }
+}
+
+/// `HashContractRef == HashContract` (cross-comparison — same fields).
+impl<'a> PartialEq<HashContract> for HashContractRef<'a> {
+    fn eq(&self, other: &HashContract) -> bool {
+        contracts_eq(self.contract, &other.contract)
+    }
+}
+
+/// `HashContract == HashContractRef` (cross-comparison — same fields).
+impl<'a> PartialEq<HashContractRef<'a>> for HashContract {
+    fn eq(&self, other: &HashContractRef<'a>) -> bool {
+        contracts_eq(&self.contract, other.contract)
+    }
+}
 
 pub(crate) fn get_local_symbol(contract: &Contract) -> String {
     match AssetType::from_str(&contract.security_type) {

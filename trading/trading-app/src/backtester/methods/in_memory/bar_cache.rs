@@ -81,8 +81,12 @@ impl BarCache {
         // For None: take the first `limit` (the oldest — bars are sorted ascending).
         let mut window: Vec<HistoricalDataFullKeys> = match bar_time {
             Some(_) => {
-                let mut w: Vec<HistoricalDataFullKeys> =
-                    matching.iter().rev().take(take_n).map(|b| (*b).clone()).collect();
+                let mut w: Vec<HistoricalDataFullKeys> = matching
+                    .iter()
+                    .rev()
+                    .take(take_n)
+                    .map(|b| (*b).clone())
+                    .collect();
                 w.reverse(); // oldest-first
                 w
             }
@@ -115,10 +119,14 @@ fn bar_matches_pk(bar: &HistoricalDataFullKeys, pk: &HistoricalDataPrimaryKeysWo
     use crate::database::models_crud::historical_data::historical_data::HistoricalDataPrimaryKeysWoTime as Pk;
     match (bar, pk) {
         (HistoricalDataFullKeys::Stock(b), Pk::Stock(p)) => {
-            b.stock == p.stock && b.primary_exchange == p.primary_exchange && b.currency == p.currency
+            b.stock == p.stock
+                && b.primary_exchange == p.primary_exchange
+                && b.currency == p.currency
         }
         (HistoricalDataFullKeys::DailyStock(b), Pk::DailyStock(p)) => {
-            b.stock == p.stock && b.primary_exchange == p.primary_exchange && b.currency == p.currency
+            b.stock == p.stock
+                && b.primary_exchange == p.primary_exchange
+                && b.currency == p.currency
         }
         (HistoricalDataFullKeys::Options(b), Pk::Options(p)) => {
             b.stock == p.stock

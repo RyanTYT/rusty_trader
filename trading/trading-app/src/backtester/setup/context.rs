@@ -21,10 +21,10 @@ use crate::market_data::handler::MarketDataHandler;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor};
 
-use crate::backtester::setup::clock::BacktestClock;
-use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::execution::broker::BacktestBroker;
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
+use crate::backtester::setup::clock::BacktestClock;
+use crate::backtester::setup::config::BacktestConfig;
 
 /// The light execution surface — clock + price supplier + consolidator. The
 /// pieces every backtest method needs; constructed without the broker /

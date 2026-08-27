@@ -308,7 +308,7 @@ impl Consolidator {
             // Stock position.
             let contract =
                 build_contract_from_stock(&key.stock, &key.primary_exchange, &key.currency);
-            let price = call_price(contract.clone())? ;
+            let price = call_price(contract.clone())?;
             let mkt_value = price * pos.quantity;
 
             // println!("Market value: {mkt_value}, price: {price}, qty: {}", pos.quantity);

@@ -193,7 +193,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     )
                 };
                 let handle_bar_update_outcome = |bar_update_outcome: BarUpdateOutcome| {
-                    let order_store_arc = 
+                    let order_store_arc =
                         match order_store
                             .upgrade() {
                                 Some(order_store_some) => order_store_some,
@@ -431,9 +431,8 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let full_bar =
                     HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
 
-                let bar_update_name: &'static str = Box::leak(
-                    format!("{}_strat_bar_update", strategy).into_boxed_str()
-                );
+                let bar_update_name: &'static str =
+                    Box::leak(format!("{}_strat_bar_update", strategy).into_boxed_str());
                 hotpath::measure_block!(bar_update_name, {
                     let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
                     handle_bar_update_outcome(bar_update_outcome);

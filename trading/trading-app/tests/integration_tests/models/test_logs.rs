@@ -10,13 +10,19 @@ use crate::models::init::{TEST_MUTEX, setup_test_db};
 
 fn make_fk(name: &str) -> LogsFullKeys {
     LogsFullKeys {
-        time: Utc::now(), level: "INFO".to_string(),
-        name: name.to_string(), message: "test message".to_string(),
+        time: Utc::now(),
+        level: "INFO".to_string(),
+        name: name.to_string(),
+        message: "test message".to_string(),
     }
 }
 
 fn make_pk(time: chrono::DateTime<Utc>, name: &str) -> LogsPrimaryKeys {
-    LogsPrimaryKeys { time, level: "INFO".to_string(), name: name.to_string() }
+    LogsPrimaryKeys {
+        time,
+        level: "INFO".to_string(),
+        name: name.to_string(),
+    }
 }
 
 fn uk(message: Option<String>) -> LogsUpdateKeys {
@@ -33,7 +39,11 @@ async fn test_create_read_delete() {
     let pk = make_pk(fk.time, &fk.name);
     crud.create(&fk).await.expect("create failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.name, fk.name);
     assert_eq!(data.message, "test message");
 
@@ -51,8 +61,14 @@ async fn test_update() {
     let pk = make_pk(fk.time, &fk.name);
     crud.create(&fk).await.expect("create failed");
 
-    crud.update(&pk, &uk(Some("updated message".to_string()))).await.expect("update failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.update(&pk, &uk(Some("updated message".to_string())))
+        .await
+        .expect("update failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.message, "updated message");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -72,7 +88,8 @@ async fn test_read_all() {
     crud.create(&fk_b).await.expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.name == "logs_ra_a" || p.name == "logs_ra_b")
         .collect();
     assert_eq!(ours.len(), 2);
@@ -90,15 +107,30 @@ async fn test_create_or_ignore() {
     let fk = make_fk("logs_coi");
     let pk = make_pk(fk.time, &fk.name);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.message, "test message");
 
     let mut fk2 = fk.clone();
     fk2.message = "999".to_string();
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.message, "test message", "conflict path should NOT update");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
+    assert_eq!(
+        data.message, "test message",
+        "conflict path should NOT update"
+    );
 
     crud.delete(&pk).await.expect("delete failed");
 }
@@ -113,8 +145,14 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(fk.time, &fk.name);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some("test message".to_string()))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some("test message".to_string())))
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.message, "test message");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -130,8 +168,14 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(fk.time, &fk.name);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some("updated message".to_string()))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some("updated message".to_string())))
+        .await
+        .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.message, "updated message");
 
     crud.delete(&pk).await.expect("delete failed");

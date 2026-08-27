@@ -32,9 +32,15 @@ const ALL_REGIONS: [IbkrRegion; 3] = [
 fn schedule_north_america() {
     let w = IbkrRegion::NorthAmerica.schedule();
     assert_eq!(w.start_day, chrono::Weekday::Fri);
-    assert_eq!(w.start_time, chrono::NaiveTime::from_hms_opt(23, 0, 0).unwrap());
+    assert_eq!(
+        w.start_time,
+        chrono::NaiveTime::from_hms_opt(23, 0, 0).unwrap()
+    );
     assert_eq!(w.end_day, chrono::Weekday::Sat);
-    assert_eq!(w.end_time, chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap());
+    assert_eq!(
+        w.end_time,
+        chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap()
+    );
 }
 
 #[test]

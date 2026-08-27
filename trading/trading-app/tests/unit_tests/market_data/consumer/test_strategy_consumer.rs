@@ -29,8 +29,10 @@ fn make_consumer(
     symbol: &str,
     what: WhatToShow,
 ) -> IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS> {
-    let ring: Arc<SpmcRingBuffer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>> = Arc::new(SpmcRingBuffer::new());
-    let consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS> = ring.get_new_consumer().unwrap();
+    let ring: Arc<SpmcRingBuffer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>> =
+        Arc::new(SpmcRingBuffer::new());
+    let consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS> =
+        ring.get_new_consumer().unwrap();
     IbkrBarConsumer::new(
         Contract {
             symbol: symbol.into(),

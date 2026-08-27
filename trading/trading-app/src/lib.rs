@@ -1,3 +1,5 @@
+#[cfg(feature = "backtest")]
+pub mod backtester;
 pub mod database;
 pub mod execution;
 pub mod helpers;
@@ -9,8 +11,6 @@ pub mod market_data;
 pub mod schedule;
 pub mod server;
 pub mod strategy;
-#[cfg(feature = "backtest")]
-pub mod backtester;
 
 /// Test-only re-exports of internal items that are otherwise `pub(crate)` or private.
 /// This module is gated on `test-utils` feature (or `test` cfg for unit tests).

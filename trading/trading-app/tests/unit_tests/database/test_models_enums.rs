@@ -16,12 +16,18 @@ use trading_app::database::models::{AssetType, ExecutionSide, OptionType, Status
 
 #[test]
 fn execution_side_bot_to_bought() {
-    assert!(matches!(ExecutionSide::from_str("BOT"), ExecutionSide::Bought));
+    assert!(matches!(
+        ExecutionSide::from_str("BOT"),
+        ExecutionSide::Bought
+    ));
 }
 
 #[test]
 fn execution_side_sld_to_sold() {
-    assert!(matches!(ExecutionSide::from_str("SLD"), ExecutionSide::Sold));
+    assert!(matches!(
+        ExecutionSide::from_str("SLD"),
+        ExecutionSide::Sold
+    ));
 }
 
 #[test]
@@ -118,7 +124,10 @@ fn asset_type_unrecognized_returns_unknown_no_panic() {
     // Use a variant that's NOT in the 5 mapped (Stock/Future/Option/ForexPair/CFD).
     // Bond is one such variant.
     let result = AssetType::from_str(&SecurityType::Bond);
-    assert!(matches!(result, AssetType::Unknown), "expected Unknown, got {result:?}");
+    assert!(
+        matches!(result, AssetType::Unknown),
+        "expected Unknown, got {result:?}"
+    );
 }
 
 // ============================ Display impls ============================

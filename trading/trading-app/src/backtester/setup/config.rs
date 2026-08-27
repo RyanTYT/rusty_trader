@@ -46,7 +46,10 @@ impl BacktestMode {
 #[derive(Debug, Clone)]
 pub enum BacktestPeriod {
     /// Replay bars with `start <= time <= end`.
-    TimeRange { start: DateTime<Utc>, end: DateTime<Utc> },
+    TimeRange {
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    },
     /// Replay the last `n` bars (most recent first in the DB, reversed to ASC).
     NumBars(usize),
 }
@@ -191,15 +194,22 @@ impl BacktestConfig {
         let contract = build_contract_from_stock(&stock, &primary_exchange, &currency);
 
         let period = if let Ok(n) = env::var("BACKTEST_NUM_BARS") {
-            BacktestPeriod::NumBars(n.parse::<usize>().map_err(|e| format!("BACKTEST_NUM_BARS: {e}"))?)
+            BacktestPeriod::NumBars(
+                n.parse::<usize>()
+                    .map_err(|e| format!("BACKTEST_NUM_BARS: {e}"))?,
+            )
         } else {
             let start = env::var("BACKTEST_START")
                 .map_err(|_| "BACKTEST_START (RFC3339) or BACKTEST_NUM_BARS required".to_string())
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).map_err(|e| format!("BACKTEST_START: {e}")))
+                .and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s).map_err(|e| format!("BACKTEST_START: {e}"))
+                })
                 .map(|dt| dt.with_timezone(&Utc))?;
             let end = env::var("BACKTEST_END")
                 .map_err(|_| "BACKTEST_END (RFC3339) or BACKTEST_NUM_BARS required".to_string())
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).map_err(|e| format!("BACKTEST_END: {e}")))
+                .and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s).map_err(|e| format!("BACKTEST_END: {e}"))
+                })
                 .map(|dt| dt.with_timezone(&Utc))?;
             BacktestPeriod::TimeRange { start, end }
         };
@@ -232,8 +242,8 @@ impl BacktestConfig {
             .map(|s| BacktestMode::from_str(&s))
             .transpose()?
             .unwrap_or(BacktestMode::Db);
-        let output_path = env::var("BACKTEST_OUTPUT")
-            .unwrap_or_else(|_| "backtest_results.json".to_string());
+        let output_path =
+            env::var("BACKTEST_OUTPUT").unwrap_or_else(|_| "backtest_results.json".to_string());
 
         // Generic strategy params: scan for <STRATEGY>_<VAR> env vars.
         // Currently NOISE_<VAR> → strategy_params["noise"][<var>].

@@ -16,5 +16,8 @@
 fn placeholder_contract_scheduler_tests_deferred() {
     // This test exists so the module compiles. See the module-level doc
     // comment for why the real tests are deferred.
-    assert!(true, "contract_scheduler tests deferred — needs Client refactor");
+    assert!(
+        true,
+        "contract_scheduler tests deferred — needs Client refactor"
+    );
 }

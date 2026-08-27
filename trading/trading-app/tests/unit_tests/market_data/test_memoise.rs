@@ -7,8 +7,8 @@
 //! - Error propagation
 //! - `call_any` type-erased dispatch (success + mismatch panic)
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use trading_app::test_internals::{AnyMemoized, Memoized};
@@ -87,7 +87,11 @@ fn call_does_not_cache_errors() {
     );
     let _ = m.call("k".to_string());
     let _ = m.call("k".to_string());
-    assert_eq!(COUNTER.load(Ordering::SeqCst), 2, "errors should not be cached");
+    assert_eq!(
+        COUNTER.load(Ordering::SeqCst),
+        2,
+        "errors should not be cached"
+    );
 }
 
 // ============================ TTL expiry ============================

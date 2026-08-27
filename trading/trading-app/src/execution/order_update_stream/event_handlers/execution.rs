@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::{Arc, Weak}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use ibapi::{Client, orders::ExecutionData};
 use sqlx::PgPool;
@@ -22,7 +25,9 @@ use crate::{
                 TransactionsCRUD, TransactionsFullKeys, TransactionsPrimaryKeys,
             },
         },
-    }, execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine}, strategy::strategy::{StrategyDetails},
+    },
+    execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine},
+    strategy::strategy::StrategyDetails,
 };
 
 /// Should be triggered by ExecutionUpdate(ExecutionData) events
@@ -145,7 +150,7 @@ pub fn on_execution_update(
             tokio::spawn(async move {
                 update_currency_and_place_backed_up_orders(cloned_handle, pool.clone(), &weak_client, current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name_cloned).await;
             });
-            
+
             let current_positions_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract(
                 &strategy_name,
                 &execution_data.contract,
@@ -324,7 +329,6 @@ pub fn on_execution_update(
     Ok(())
 }
 
-
 async fn update_currency_and_place_backed_up_orders(
     handle: tokio::runtime::Handle,
     pool: PgPool,
@@ -339,36 +343,56 @@ async fn update_currency_and_place_backed_up_orders(
         .update_positions_additive(pk.clone(), uk)
         .await
     {
-        tracing::error!(
-            "Error inserting into CurrentPositions for unknown strategy: {e:?}"
-        );
+        tracing::error!("Error inserting into CurrentPositions for unknown strategy: {e:?}");
         return;
     };
 
     let strat_orders = backed_up_orders.load_orders(strategy_name).unwrap();
-    if !strat_orders.as_ref().is_none_or(|strat_orders_vec| strat_orders_vec.is_empty()) {
-        let current_positions_currency = 
-            match current_positions_crud.read(&pk).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!("Failed to fetch current currency position, ignoring backed_up_orders! Err: {e:?}");
-                    return;
-                }
+    if !strat_orders
+        .as_ref()
+        .is_none_or(|strat_orders_vec| strat_orders_vec.is_empty())
+    {
+        let current_positions_currency = match current_positions_crud.read(&pk).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to fetch current currency position, ignoring backed_up_orders! Err: {e:?}"
+                );
+                return;
+            }
         };
 
-        let mut currency_value = current_positions_currency.expect("Expected current positions of currency not to be None").get_qty();
+        let mut currency_value = current_positions_currency
+            .expect("Expected current positions of currency not to be None")
+            .get_qty();
         if currency_value > 0.0 {
             for mut strat_order in strat_orders.unwrap() {
-                if !(strat_order.contract.currency.to_string() == pk.get_stock().strip_prefix("CASH:").expect("Expected currency stock to have CASH: prefix")) {
+                if !(strat_order.contract.currency.to_string()
+                    == pk
+                        .get_stock()
+                        .strip_prefix("CASH:")
+                        .expect("Expected currency stock to have CASH: prefix"))
+                {
                     continue;
                 }
-                let price: f64 = strat_order.order.order_ref.strip_prefix(format!("{}:", strategy_name).as_str()).expect("Expected strategy of execution update to be same as strat_order").parse().expect("Expected f64 string in order_ref");
+                let price: f64 = strat_order
+                    .order
+                    .order_ref
+                    .strip_prefix(format!("{}:", strategy_name).as_str())
+                    .expect("Expected strategy of execution update to be same as strat_order")
+                    .parse()
+                    .expect("Expected f64 string in order_ref");
 
                 let required_currency = strat_order.order.total_quantity * price;
                 if required_currency < currency_value {
                     currency_value -= required_currency;
                     strat_order.order.order_ref = strategy_name.to_string();
-                    OrderEngine::place_order(handle.clone(), pool.clone(), &weak_client, strat_order);
+                    OrderEngine::place_order(
+                        handle.clone(),
+                        pool.clone(),
+                        &weak_client,
+                        strat_order,
+                    );
                 }
             }
         }

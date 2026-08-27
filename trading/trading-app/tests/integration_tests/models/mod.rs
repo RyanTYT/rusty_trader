@@ -8,27 +8,27 @@
 pub mod init;
 
 // Per-table CRUD roundtrips (existing)
-mod test_strategy;
-mod test_notification;
-mod test_staged_commissions;
-mod test_logs;
 mod test_cancelled_orders;
-mod test_current_stock_positions;
 mod test_current_option_positions;
-mod test_target_stock_positions;
-mod test_target_option_positions;
-mod test_open_stock_orders;
-mod test_open_option_orders;
-mod test_stock_transactions;
-mod test_option_transactions;
-mod test_historical_data;
-mod test_historical_options_data;
-mod test_historical_forex_data;
+mod test_current_stock_positions;
 mod test_daily_historical_data;
+mod test_historical_data;
+mod test_historical_forex_data;
+mod test_historical_options_data;
+mod test_logs;
+mod test_notification;
+mod test_open_option_orders;
+mod test_open_stock_orders;
+mod test_option_transactions;
+mod test_staged_commissions;
+mod test_stock_transactions;
+mod test_strategy;
+mod test_target_option_positions;
+mod test_target_stock_positions;
 
 // Advanced ops — organized by interface enum
 mod current_positions;
+mod historical_data;
 mod open_orders;
 mod target_positions;
 mod transactions;
-mod historical_data;

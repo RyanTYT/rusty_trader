@@ -9,19 +9,19 @@
 //! a test for `src/strategy/helpers/rolling_fn.rs` lives at
 //! `unit_tests/strategy/helpers/test_rolling_fn.rs`.
 
-#[path ="common/mod.rs"]
+#[path = "common/mod.rs"]
 mod common;
-#[path = "unit_tests/strategy/mod.rs"]
-mod strategy;
-#[path = "unit_tests/helpers/mod.rs"]
-mod helpers;
 #[path = "unit_tests/database/mod.rs"]
 mod database;
-#[path = "unit_tests/market_data/mod.rs"]
-mod market_data;
 #[path = "unit_tests/execution/mod.rs"]
 mod execution;
-#[path = "unit_tests/schedule/mod.rs"]
-mod schedule;
+#[path = "unit_tests/helpers/mod.rs"]
+mod helpers;
 #[path = "unit_tests/logger/mod.rs"]
 mod logger;
+#[path = "unit_tests/market_data/mod.rs"]
+mod market_data;
+#[path = "unit_tests/schedule/mod.rs"]
+mod schedule;
+#[path = "unit_tests/strategy/mod.rs"]
+mod strategy;

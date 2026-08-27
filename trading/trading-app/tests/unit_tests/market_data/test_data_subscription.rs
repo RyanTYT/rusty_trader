@@ -125,8 +125,20 @@ fn option_different_strike_neq() {
         multiplier: "100".into(),
         ..Default::default()
     };
-    let a = DataSubscription::new(Contract { strike: 150.0, ..base.clone() }, WhatToShow::Trades);
-    let b = DataSubscription::new(Contract { strike: 160.0, ..base.clone() }, WhatToShow::Trades);
+    let a = DataSubscription::new(
+        Contract {
+            strike: 150.0,
+            ..base.clone()
+        },
+        WhatToShow::Trades,
+    );
+    let b = DataSubscription::new(
+        Contract {
+            strike: 160.0,
+            ..base.clone()
+        },
+        WhatToShow::Trades,
+    );
     assert_ne!(a, b);
     assert_ne!(hash_of(&a), hash_of(&b));
 }
@@ -142,8 +154,20 @@ fn option_different_right_neq() {
         multiplier: "100".into(),
         ..Default::default()
     };
-    let a = DataSubscription::new(Contract { right: "C".into(), ..base.clone() }, WhatToShow::Trades);
-    let b = DataSubscription::new(Contract { right: "P".into(), ..base.clone() }, WhatToShow::Trades);
+    let a = DataSubscription::new(
+        Contract {
+            right: "C".into(),
+            ..base.clone()
+        },
+        WhatToShow::Trades,
+    );
+    let b = DataSubscription::new(
+        Contract {
+            right: "P".into(),
+            ..base.clone()
+        },
+        WhatToShow::Trades,
+    );
     assert_ne!(a, b);
     assert_ne!(hash_of(&a), hash_of(&b));
 }
