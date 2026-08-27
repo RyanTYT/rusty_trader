@@ -14,6 +14,7 @@ use super::state::{InMemoryPosition, InMemoryState, InMemoryTransaction, Positio
 use crate::backtester::execution::fill_model::{commission, decide_fill};
 use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
+use crate::helpers::contract::get_local_symbol;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::BarUpdateOutcome;
 
@@ -165,7 +166,7 @@ fn fill_order_in_memory(
     // `update_positions_additive`).
     let key = PositionKey {
         strategy: state.strategy_name.clone(),
-        stock: contract.symbol.to_string(),
+        stock: get_local_symbol(&contract),
         primary_exchange: contract.primary_exchange.to_string(),
         currency: contract.currency.to_string(),
     };
