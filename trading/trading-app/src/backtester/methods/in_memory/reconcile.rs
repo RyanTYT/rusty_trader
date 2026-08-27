@@ -53,6 +53,7 @@ pub fn handle_bar_update_outcome_in_memory(
             }
             Ok(())
         }
+
         BarUpdateOutcome::PendingDbQuery(asset_types) => {
             // Slow path: read the mocked targets, compute deltas, build orders.
             // Only Stock is supported (mirrors the Noise strategy's QQQ scope).
@@ -88,7 +89,13 @@ pub fn handle_bar_update_outcome_in_memory(
                     }
                 });
             };
+
             for (key, target_pos) in targets_map.iter() {
+                // skip CASH positions
+                if key.stock.strip_prefix("CASH:").is_some() {
+                    continue;
+                }
+
                 let target_qty = target_pos.quantity;
                 let current_qty = state.current_qty(&key);
                 let delta = target_qty - current_qty;
