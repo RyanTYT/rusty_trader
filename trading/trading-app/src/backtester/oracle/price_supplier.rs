@@ -43,7 +43,7 @@ pub struct BacktestPriceSupplier {
 }
 
 impl BacktestPriceSupplier {
-    /// Build the supplier with a FIXED set of contracts (one cache slot each).
+    /// Btargetsuild the supplier with a FIXED set of contracts (one cache slot each).
     /// The replayer passes `config.subscribed_contracts` here — the strategy
     /// tracks a known, fixed set, so the cache size is fixed + the slot map is
     /// immutable after init.
@@ -66,9 +66,9 @@ impl BacktestPriceSupplier {
                 )
             })
             .collect();
-        let mut fx_map = HashMap::new();
+
         // Default fixed rates (strategies that ignore FX just use these).
-        fx_map.insert(("USD".to_string(), "SGD".to_string()), 1.35);
+        let fx_map = default_fx_map();
 
         Self {
             clock,
@@ -185,4 +185,87 @@ impl PriceSupplier for BacktestPriceSupplier {
         // Backtest pre-loads market_data via the data-loader phase; no-op here.
         Ok(())
     }
+}
+
+/// Snapshot FX rates to SGD, ~2026-08-26 (source: exchange-rates.org).
+/// Key: (base_symbol, "SGD"), Value: units of SGD per 1 unit of base.
+/// Reverse pairs (SGD -> base) are resolved by inverting, per existing convention.
+fn default_fx_map() -> HashMap<(String, String), f64> {
+    let mut fx_map = HashMap::new();
+    let sgd = "SGD".to_string();
+
+    let rates: &[(&str, f64)] = &[
+        // Majors
+        ("USD", 1.2713),
+        ("EUR", 1.4819),
+        ("GBP", 1.7287),
+        ("JPY", 0.007983),
+        ("CNY", 0.1891),
+        ("HKD", 0.1622),
+        ("AUD", 0.9132),
+        ("NZD", 0.7564),
+        ("CAD", 0.9163),
+        ("CHF", 1.5794),
+        // Europe
+        ("SEK", 0.1335),
+        ("NOK", 0.1360),
+        ("DKK", 0.1982),
+        ("PLN", 0.3437),
+        ("CZK", 0.06142),
+        ("HUF", 0.004092),
+        ("RON", 0.2819),
+        ("BGN", 0.7577),
+        ("RUB", 0.01506),
+        ("TRY", 0.02641),
+        // Middle East
+        ("ILS", 0.4267),
+        ("AED", 0.3462),
+        ("SAR", 0.3383),
+        ("QAR", 0.3488),
+        ("KWD", 4.1182),
+        ("BHD", 3.3724),
+        ("OMR", 3.3066),
+        ("JOD", 1.7932),
+        // Africa
+        ("EGP", 0.02532),
+        ("ZAR", 0.07975),
+        ("NGN", 0.0009374),
+        ("KES", 0.009823),
+        ("GHS", 0.1136),
+        ("MAD", 0.1375),
+        ("DZD", 0.009554),
+        ("TND", 0.4386),
+        // Asia
+        ("INR", 0.01332),
+        ("IDR", 0.00007154),
+        ("MYR", 0.3158),
+        ("THB", 0.03877),
+        ("PHP", 0.02063),
+        ("VND", 0.00004870),
+        ("KRW", 0.0009185),
+        ("TWD", 0.03995),
+        ("PKR", 0.004579),
+        ("BDT", 0.01035),
+        ("LKR", 0.003870),
+        ("NPR", 0.008333),
+        ("KHR", 0.0003143),
+        ("MMK", 0.0006055),
+        ("BND", 1.0011),
+        ("MOP", 0.1575),
+        ("SGD", 1.0),
+        // Americas
+        ("MXN", 0.07502),
+        ("BRL", 0.2469),
+        ("ARS", 0.0008396),
+        ("CLP", 0.001382),
+        ("COP", 0.0004109),
+        ("PEN", 0.3793),
+        ("UYU", 0.03163),
+    ];
+
+    for (base, rate) in rates {
+        fx_map.insert((base.to_string(), sgd.clone()), *rate);
+    }
+
+    fx_map
 }
