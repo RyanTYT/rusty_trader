@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use trading_app::test_internals::{timeout, TimeoutError};
+use trading_app::test_internals::{TimeoutError, timeout};
 
 /// Test error type that implements Display + std::error::Error.
 /// (String doesn't impl std::error::Error, so we need a wrapper.)
@@ -46,13 +46,10 @@ fn fast_err_returns_function_error() {
 #[test]
 fn slow_function_times_out() {
     // Function sleeps longer than the timeout → Timeout
-    let res: Result<i32, TimeoutError<TestErr>> = timeout(
-        Duration::from_millis(50),
-        || {
-            thread::sleep(Duration::from_millis(500));
-            Ok::<i32, TestErr>(1)
-        },
-    );
+    let res: Result<i32, TimeoutError<TestErr>> = timeout(Duration::from_millis(50), || {
+        thread::sleep(Duration::from_millis(500));
+        Ok::<i32, TestErr>(1)
+    });
     assert!(matches!(res, Err(TimeoutError::Timeout)));
 }
 
@@ -60,8 +57,7 @@ fn slow_function_times_out() {
 fn fast_zero_duration_still_runs_if_fn_is_fast() {
     // With Duration::ZERO, recv_timeout returns Timeout immediately — the spawned
     // thread hasn't had a chance to send yet. So zero duration → Timeout.
-    let res: Result<i32, TimeoutError<TestErr>> =
-        timeout(Duration::ZERO, || Ok::<i32, TestErr>(7));
+    let res: Result<i32, TimeoutError<TestErr>> = timeout(Duration::ZERO, || Ok::<i32, TestErr>(7));
     assert!(matches!(res, Err(TimeoutError::Timeout)));
 }
 

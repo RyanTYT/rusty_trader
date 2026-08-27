@@ -12,8 +12,8 @@
 //! Runs on a `spawn_blocking` thread (the replayer), so `handle.block_on` is
 //! legal — same precondition as prod's `on_bar_update`.
 
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use arc_swap::ArcSwapOption;
 use atomic_float::AtomicF64;
@@ -25,8 +25,8 @@ use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::{
-    AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
-    StockTransactionsFullKeys, OptionType,
+    AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys, OptionType,
+    StockTransactionsFullKeys,
 };
 use crate::database::models_crud::current_positions::current_positions::{
     CurrentPositionsCRUD, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
@@ -38,8 +38,8 @@ use crate::database::models_crud::transactions::transactions::{
 };
 use crate::helpers::contract::get_local_symbol;
 
-use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::execution::fill_model::{commission, decide_fill};
+use crate::backtester::setup::config::BacktestConfig;
 
 pub struct BacktestBroker {
     pool: PgPool,
@@ -56,7 +56,8 @@ pub struct BacktestBroker {
     cash: AtomicF64,
     /// Point-in-time price oracle — used to look up the FX rate
     /// (contract.currency → SGD) when settling non-SGD fills into CASH:SGD.
-    prices: std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
+    prices:
+        std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
 }
 
 impl BacktestBroker {
@@ -64,7 +65,9 @@ impl BacktestBroker {
         pool: PgPool,
         handle: tokio::runtime::Handle,
         config: BacktestConfig,
-        prices: std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
+        prices: std::sync::Arc<
+            dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync,
+        >,
     ) -> Self {
         let starting_cash = config.starting_capital_sgd;
         Self {
@@ -131,11 +134,7 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
         let strat = order.order_ref.clone();
         let fill_price = outcome.fill_price;
         let fill_qty = outcome.fill_qty; // signed: +buy / -sell
-        let fees_f64 = commission(
-            fill_qty,
-            fill_price,
-            self.config.commission_model,
-        );
+        let fees_f64 = commission(fill_qty, fill_price, self.config.commission_model);
         let fees_decimal = Decimal::from_f64(fees_f64).unwrap_or(Decimal::ZERO);
         // FX rate: contract.currency → SGD. The fill value + commission are in
         // the contract's currency (e.g., USD for QQQ); convert to SGD to
@@ -169,9 +168,11 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
             -(fill_qty * fill_price + fees_f64) * fx_rate
         };
         // Settle the SGD cash balance (lock-free atomic update).
-        let _ = self.cash.fetch_update(Ordering::Release, Ordering::Acquire, |c| {
-            Some(c + cash_sgd_delta)
-        });
+        let _ = self
+            .cash
+            .fetch_update(Ordering::Release, Ordering::Acquire, |c| {
+                Some(c + cash_sgd_delta)
+            });
         let time = bar.get_time();
         let execution_id = format!("bt-{order_id}");
 

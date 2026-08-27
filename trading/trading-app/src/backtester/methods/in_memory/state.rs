@@ -98,7 +98,13 @@ impl InMemoryState {
         self.target_positions
             .write()
             .expect("InMemoryState target_positions poisoned")
-            .insert(key, InMemoryPosition { quantity: qty, avg_price });
+            .insert(
+                key,
+                InMemoryPosition {
+                    quantity: qty,
+                    avg_price,
+                },
+            );
     }
 
     /// Delete the target position for `key` (mirrors `TargetPositionsCRUD::delete`).

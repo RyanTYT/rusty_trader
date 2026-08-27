@@ -20,8 +20,8 @@ use trading_app::database::models_crud::current_positions::current_positions::{
     CurrentPositionsPrimaryKeys as CPInterfacePK, CurrentPositionsUpdateKeys as CPInterfaceUK,
 };
 
-use crate::init_strat;
 use crate::del_strat;
+use crate::init_strat;
 use crate::models::init::{TEST_MUTEX, setup_test_db};
 
 // ============================ Table-driven test helpers ============================
@@ -162,23 +162,36 @@ async fn test_get_pos_by_strat_stock_multiple() {
         let mut pks = vec![];
         for (qty, stock) in positions {
             let fk = CurrentStockPositionsFullKeys {
-                stock: stock.to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
-                quantity: *qty, avg_price: 150.0, last_updated: Utc::now(),
+                stock: stock.to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
+                quantity: *qty,
+                avg_price: 150.0,
+                last_updated: Utc::now(),
             };
             crud.create(&CPFK::Stock(fk)).await.expect("create failed");
             pks.push(CPInterfacePK::Stock(CurrentStockPositionsPrimaryKeys {
-                stock: stock.to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
+                stock: stock.to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
             }));
         }
 
-        let result = crud.get_pos_by_strat("noise").await.expect("get_pos_by_strat failed");
+        let result = crud
+            .get_pos_by_strat("noise")
+            .await
+            .expect("get_pos_by_strat failed");
         // Filter to just our test stocks (table may have other rows)
         let our_count = result.iter().filter(|p| {
             matches!(p, CPFK::Stock(s) if s.strategy == "noise" && (s.stock == "AAPL" || s.stock == "MSFT" || s.stock == "GOOG"))
         }).count();
-        assert_eq!(our_count, expected_count, "case '{}': expected {} positions", name, expected_count);
+        assert_eq!(
+            our_count, expected_count,
+            "case '{}': expected {} positions",
+            name, expected_count
+        );
 
         for pk in &pks {
             let _ = crud.delete(pk).await;
@@ -196,8 +209,19 @@ async fn test_get_pos_by_strat_options_multiple() {
     let crud = CurrentPositionsCRUD::option(pool.clone());
 
     let test_cases: Vec<(&str, &[(f64, f64, &str, OptionType)], usize)> = vec![
-        ("multiple option positions", &[(5.0, 150.0, "AAPL", OptionType::Call), (3.0, 160.0, "AAPL", OptionType::Put)], 2),
-        ("single option position", &[(10.0, 155.0, "MSFT", OptionType::Call)], 1),
+        (
+            "multiple option positions",
+            &[
+                (5.0, 150.0, "AAPL", OptionType::Call),
+                (3.0, 160.0, "AAPL", OptionType::Put),
+            ],
+            2,
+        ),
+        (
+            "single option position",
+            &[(10.0, 155.0, "MSFT", OptionType::Call)],
+            1,
+        ),
         ("no positions", &[], 0),
     ];
 
@@ -205,26 +229,45 @@ async fn test_get_pos_by_strat_options_multiple() {
         let mut pks = vec![];
         for (qty, strike, stock, ot) in positions {
             let fk = CurrentOptionPositionsFullKeys {
-                stock: stock.to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
-                expiry: "20250119".to_string(), strike: *strike,
-                multiplier: "100".to_string(), option_type: ot.clone(),
-                quantity: *qty, avg_price: 3.50, last_updated: Utc::now(),
+                stock: stock.to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
+                expiry: "20250119".to_string(),
+                strike: *strike,
+                multiplier: "100".to_string(),
+                option_type: ot.clone(),
+                quantity: *qty,
+                avg_price: 3.50,
+                last_updated: Utc::now(),
             };
-            crud.create(&CPFK::Options(fk)).await.expect("create failed");
+            crud.create(&CPFK::Options(fk))
+                .await
+                .expect("create failed");
             pks.push(CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
-                stock: stock.to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
-                expiry: "20250119".to_string(), strike: *strike,
-                multiplier: "100".to_string(), option_type: ot.clone(),
+                stock: stock.to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
+                expiry: "20250119".to_string(),
+                strike: *strike,
+                multiplier: "100".to_string(),
+                option_type: ot.clone(),
             }));
         }
 
-        let result = crud.get_pos_by_strat("noise").await.expect("get_pos_by_strat failed");
+        let result = crud
+            .get_pos_by_strat("noise")
+            .await
+            .expect("get_pos_by_strat failed");
         let our_count = result.iter().filter(|p| {
             matches!(p, CPFK::Options(o) if o.strategy == "noise" && o.stock == "AAPL" || o.stock == "MSFT")
         }).count();
-        assert_eq!(our_count, expected_count, "case '{}': expected {} option positions", name, expected_count);
+        assert_eq!(
+            our_count, expected_count,
+            "case '{}': expected {} option positions",
+            name, expected_count
+        );
 
         for pk in &pks {
             let _ = crud.delete(pk).await;
@@ -245,18 +288,27 @@ async fn test_get_pos_by_pk_stock_found_and_not_found() {
 
     // Insert a position
     let fk = CurrentStockPositionsFullKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
-        quantity: 100.0, avg_price: 150.0, last_updated: Utc::now(),
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
+        quantity: 100.0,
+        avg_price: 150.0,
+        last_updated: Utc::now(),
     };
     crud.create(&CPFK::Stock(fk)).await.expect("create failed");
 
     // Test: found
     let pk_found = CPInterfacePK::Stock(CurrentStockPositionsPrimaryKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
     });
-    let result = crud.get_pos_by_pk(pk_found.clone()).await.expect("get_pos_by_pk failed");
+    let result = crud
+        .get_pos_by_pk(pk_found.clone())
+        .await
+        .expect("get_pos_by_pk failed");
     assert!(result.is_some(), "found PK → should return Some");
     match result.unwrap() {
         CPFK::Stock(s) => {
@@ -268,10 +320,15 @@ async fn test_get_pos_by_pk_stock_found_and_not_found() {
 
     // Test: not found (different stock)
     let pk_not_found = CPInterfacePK::Stock(CurrentStockPositionsPrimaryKeys {
-        stock: "NONEXISTENT".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
+        stock: "NONEXISTENT".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
     });
-    let result = crud.get_pos_by_pk(pk_not_found).await.expect("get_pos_by_pk failed");
+    let result = crud
+        .get_pos_by_pk(pk_not_found)
+        .await
+        .expect("get_pos_by_pk failed");
     assert!(result.is_none(), "nonexistent PK → should return None");
 
     crud.delete(&pk_found).await.expect("delete failed");
@@ -287,22 +344,37 @@ async fn test_get_pos_by_pk_options_found_and_not_found() {
     let crud = CurrentPositionsCRUD::option(pool.clone());
 
     let fk = CurrentOptionPositionsFullKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
-        expiry: "20250119".to_string(), strike: 150.0,
-        multiplier: "100".to_string(), option_type: OptionType::Call,
-        quantity: 5.0, avg_price: 3.50, last_updated: Utc::now(),
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
+        expiry: "20250119".to_string(),
+        strike: 150.0,
+        multiplier: "100".to_string(),
+        option_type: OptionType::Call,
+        quantity: 5.0,
+        avg_price: 3.50,
+        last_updated: Utc::now(),
     };
-    crud.create(&CPFK::Options(fk)).await.expect("create failed");
+    crud.create(&CPFK::Options(fk))
+        .await
+        .expect("create failed");
 
     // Found
     let pk_found = CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
-        expiry: "20250119".to_string(), strike: 150.0,
-        multiplier: "100".to_string(), option_type: OptionType::Call,
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
+        expiry: "20250119".to_string(),
+        strike: 150.0,
+        multiplier: "100".to_string(),
+        option_type: OptionType::Call,
     });
-    let result = crud.get_pos_by_pk(pk_found.clone()).await.expect("get_pos_by_pk failed");
+    let result = crud
+        .get_pos_by_pk(pk_found.clone())
+        .await
+        .expect("get_pos_by_pk failed");
     assert!(result.is_some());
     match result.unwrap() {
         CPFK::Options(o) => assert_eq!(o.strike, 150.0),
@@ -311,12 +383,19 @@ async fn test_get_pos_by_pk_options_found_and_not_found() {
 
     // Not found (different strike)
     let pk_not_found = CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
-        expiry: "20250119".to_string(), strike: 999.0,
-        multiplier: "100".to_string(), option_type: OptionType::Call,
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
+        expiry: "20250119".to_string(),
+        strike: 999.0,
+        multiplier: "100".to_string(),
+        option_type: OptionType::Call,
     });
-    let result = crud.get_pos_by_pk(pk_not_found).await.expect("get_pos_by_pk failed");
+    let result = crud
+        .get_pos_by_pk(pk_not_found)
+        .await
+        .expect("get_pos_by_pk failed");
     assert!(result.is_none(), "nonexistent strike → None");
 
     crud.delete(&pk_found).await.expect("delete failed");
@@ -346,14 +425,24 @@ async fn test_get_all_pos_grouped_stock_aggregation() {
     }
 
     let test_cases: Vec<(&str, &[(&str, f64)], f64)> = vec![
-        ("two strategies same stock", &[("noise", 100.0), ("manual", 100.0)], 200.0),
-        ("three strategies same stock", &[("noise", 50.0), ("manual", 75.0), ("unknown", 25.0)], 150.0),
+        (
+            "two strategies same stock",
+            &[("noise", 100.0), ("manual", 100.0)],
+            200.0,
+        ),
+        (
+            "three strategies same stock",
+            &[("noise", 50.0), ("manual", 75.0), ("unknown", 25.0)],
+            150.0,
+        ),
     ];
 
     for (name, positions, expected_qty) in test_cases {
         // Clean slate for our test stock
-        let _ = sqlx::query("DELETE FROM trading.current_stock_positions WHERE stock = 'GROUPTEST'")
-            .execute(&pool).await;
+        let _ =
+            sqlx::query("DELETE FROM trading.current_stock_positions WHERE stock = 'GROUPTEST'")
+                .execute(&pool)
+                .await;
 
         for (strat, qty) in positions {
             // Ensure strategy exists
@@ -365,25 +454,40 @@ async fn test_get_all_pos_grouped_stock_aggregation() {
                 .await;
 
             let fk = CurrentStockPositionsFullKeys {
-                stock: "GROUPTEST".to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: strat.to_string(),
-                quantity: *qty, avg_price: 150.0, last_updated: Utc::now(),
+                stock: "GROUPTEST".to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: strat.to_string(),
+                quantity: *qty,
+                avg_price: 150.0,
+                last_updated: Utc::now(),
             };
             crud.create(&CPFK::Stock(fk)).await.expect("create failed");
         }
 
-        let grouped = crud.get_all_pos_grouped().await.expect("get_all_pos_grouped failed");
-        let our = grouped.iter().find(|p| matches!(p, CPFK::Stock(s) if s.stock == "GROUPTEST"));
+        let grouped = crud
+            .get_all_pos_grouped()
+            .await
+            .expect("get_all_pos_grouped failed");
+        let our = grouped
+            .iter()
+            .find(|p| matches!(p, CPFK::Stock(s) if s.stock == "GROUPTEST"));
         assert!(our.is_some(), "case '{}': should find GROUPTEST", name);
         match our.unwrap() {
-            CPFK::Stock(s) => assert!((s.quantity - expected_qty).abs() < 1e-6,
-                "case '{}': expected aggregated qty {}, got {}", name, expected_qty, s.quantity),
+            CPFK::Stock(s) => assert!(
+                (s.quantity - expected_qty).abs() < 1e-6,
+                "case '{}': expected aggregated qty {}, got {}",
+                name,
+                expected_qty,
+                s.quantity
+            ),
             _ => panic!("expected Stock variant"),
         }
     }
 
     let _ = sqlx::query("DELETE FROM trading.current_stock_positions WHERE stock = 'GROUPTEST'")
-        .execute(&pool).await;
+        .execute(&pool)
+        .await;
     del_strat!(&pool);
 }
 
@@ -408,32 +512,54 @@ async fn test_get_all_pos_grouped_options_aggregation() {
     // Same option contract, two strategies
     for strat in ["noise", "manual"] {
         let fk = CurrentOptionPositionsFullKeys {
-            stock: "OPTGRP".to_string(), primary_exchange: "NASDAQ".to_string(),
-            currency: "USD".to_string(), strategy: strat.to_string(),
-            expiry: "20250119".to_string(), strike: 150.0,
-            multiplier: "100".to_string(), option_type: OptionType::Call,
-            quantity: 5.0, avg_price: 3.50, last_updated: Utc::now(),
+            stock: "OPTGRP".to_string(),
+            primary_exchange: "NASDAQ".to_string(),
+            currency: "USD".to_string(),
+            strategy: strat.to_string(),
+            expiry: "20250119".to_string(),
+            strike: 150.0,
+            multiplier: "100".to_string(),
+            option_type: OptionType::Call,
+            quantity: 5.0,
+            avg_price: 3.50,
+            last_updated: Utc::now(),
         };
-        crud.create(&CPFK::Options(fk)).await.expect("create failed");
+        crud.create(&CPFK::Options(fk))
+            .await
+            .expect("create failed");
     }
 
-    let grouped = crud.get_all_pos_grouped().await.expect("get_all_pos_grouped failed");
-    let our = grouped.iter().find(|p| matches!(p, CPFK::Options(o) if o.stock == "OPTGRP"));
+    let grouped = crud
+        .get_all_pos_grouped()
+        .await
+        .expect("get_all_pos_grouped failed");
+    let our = grouped
+        .iter()
+        .find(|p| matches!(p, CPFK::Options(o) if o.stock == "OPTGRP"));
     assert!(our.is_some(), "should find OPTGRP");
     match our.unwrap() {
-        CPFK::Options(o) => assert!((o.quantity - 10.0).abs() < 1e-6,
-            "aggregated option qty should be 10, got {}", o.quantity),
+        CPFK::Options(o) => assert!(
+            (o.quantity - 10.0).abs() < 1e-6,
+            "aggregated option qty should be 10, got {}",
+            o.quantity
+        ),
         _ => panic!("expected Options variant"),
     }
 
     // Cleanup
     for strat in ["noise", "manual"] {
-        let _ = crud.delete(&CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
-            stock: "OPTGRP".to_string(), primary_exchange: "NASDAQ".to_string(),
-            currency: "USD".to_string(), strategy: strat.to_string(),
-            expiry: "20250119".to_string(), strike: 150.0,
-            multiplier: "100".to_string(), option_type: OptionType::Call,
-        })).await;
+        let _ = crud
+            .delete(&CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
+                stock: "OPTGRP".to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: strat.to_string(),
+                expiry: "20250119".to_string(),
+                strike: 150.0,
+                multiplier: "100".to_string(),
+                option_type: OptionType::Call,
+            }))
+            .await;
     }
     del_strat!(&pool);
 }
@@ -449,8 +575,10 @@ async fn test_update_positions_additive_stock_comprehensive() {
     let crud = CurrentPositionsCRUD::stock(pool.clone());
 
     let pk = CurrentStockPositionsPrimaryKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
     };
 
     let cases = vec![
@@ -520,10 +648,14 @@ async fn test_update_positions_additive_options_comprehensive() {
     let crud = CurrentPositionsCRUD::option(pool.clone());
 
     let pk = CurrentOptionPositionsPrimaryKeys {
-        stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-        currency: "USD".to_string(), strategy: "noise".to_string(),
-        expiry: "20250119".to_string(), strike: 150.0,
-        multiplier: "100".to_string(), option_type: OptionType::Call,
+        stock: "AAPL".to_string(),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        strategy: "noise".to_string(),
+        expiry: "20250119".to_string(),
+        strike: 150.0,
+        multiplier: "100".to_string(),
+        option_type: OptionType::Call,
     };
 
     let cases = vec![
@@ -579,33 +711,50 @@ async fn test_update_positions_additive_mismatched_variants() {
         (
             "Stock pk + Options uk",
             CPInterfacePK::Stock(CurrentStockPositionsPrimaryKeys {
-                stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
+                stock: "AAPL".to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
             }),
             CPInterfaceUK::Options(CurrentOptionPositionsUpdateKeys {
-                quantity: Some(100.0), avg_price: Some(150.0), last_updated: None,
+                quantity: Some(100.0),
+                avg_price: Some(150.0),
+                last_updated: None,
             }),
         ),
         (
             "Options pk + Stock uk",
             CPInterfacePK::Options(CurrentOptionPositionsPrimaryKeys {
-                stock: "AAPL".to_string(), primary_exchange: "NASDAQ".to_string(),
-                currency: "USD".to_string(), strategy: "noise".to_string(),
-                expiry: "20250119".to_string(), strike: 150.0,
-                multiplier: "100".to_string(), option_type: OptionType::Call,
+                stock: "AAPL".to_string(),
+                primary_exchange: "NASDAQ".to_string(),
+                currency: "USD".to_string(),
+                strategy: "noise".to_string(),
+                expiry: "20250119".to_string(),
+                strike: 150.0,
+                multiplier: "100".to_string(),
+                option_type: OptionType::Call,
             }),
             CPInterfaceUK::Stock(CurrentStockPositionsUpdateKeys {
-                quantity: Some(100.0), avg_price: Some(150.0), last_updated: None,
+                quantity: Some(100.0),
+                avg_price: Some(150.0),
+                last_updated: None,
             }),
         ),
     ];
 
     for (name, pk, uk) in mismatched_cases {
         let result = crud.update_positions_additive(pk, uk).await;
-        assert!(result.is_err(), "case '{}': mismatched variants should return Err", name);
         assert!(
-            result.unwrap_err().contains("Invalid key variant combination"),
-            "case '{}': should mention Invalid key variant combination", name
+            result.is_err(),
+            "case '{}': mismatched variants should return Err",
+            name
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Invalid key variant combination"),
+            "case '{}': should mention Invalid key variant combination",
+            name
         );
     }
     del_strat!(&pool);

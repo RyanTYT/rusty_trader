@@ -15,9 +15,9 @@ use std::sync::Arc;
 use rayon::scope;
 use serde::Serialize;
 
-use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::methods::in_memory::replay::InMemoryReplay;
 use crate::backtester::output::results::BacktestResults;
+use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 
 /// One sweep result: the params that produced it + the computed metrics.
@@ -134,8 +134,14 @@ pub fn run_one_backtest(
     let light = crate::backtester::setup::context::build_light_context(pool, config);
     // Set the bar cache, warm up, trim to post-warm-up, run_with_bars, clear
     // — all in one helper (shared with the single route).
-    let (equity, state) = InMemoryReplay.run_with_warm_up(strategy, bars, config, handle, &light)?;
-    let results = BacktestResults::compute_in_memory(&equity, &state, config.starting_capital_sgd, config.stock_bar_interval);
+    let (equity, state) =
+        InMemoryReplay.run_with_warm_up(strategy, bars, config, handle, &light)?;
+    let results = BacktestResults::compute_in_memory(
+        &equity,
+        &state,
+        config.starting_capital_sgd,
+        config.stock_bar_interval,
+    );
     Ok(SweepResult {
         params: params.clone(),
         results,

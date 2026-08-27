@@ -70,7 +70,9 @@ async fn test_server_init_boots() {
             .expect("init_app failed");
 
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             // Verify the server is listening on the ephemeral port
@@ -131,7 +133,9 @@ async fn test_server_check_health() {
             .await
             .expect("init_app failed");
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -196,7 +200,9 @@ async fn test_server_get_current_price() {
             .await
             .expect("init_app failed");
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -260,7 +266,9 @@ async fn test_server_get_exchange_rate() {
             .await
             .expect("init_app failed");
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -321,7 +329,9 @@ async fn test_server_get_strategy_value() {
             .await
             .expect("init_app failed");
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -382,7 +392,9 @@ async fn test_server_get_possible_stock_contracts() {
             .await
             .expect("init_app failed");
             let app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();
@@ -445,7 +457,9 @@ async fn test_server_invalid_query_params() {
             .await
             .expect("init_app failed");
             let mut app_state = Arc::new(app_state);
-            let _ = app_state_sender.send(Some(Arc::downgrade(&app_state))).await;
+            let _ = app_state_sender
+                .send(Some(Arc::downgrade(&app_state)))
+                .await;
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let client = reqwest::Client::new();

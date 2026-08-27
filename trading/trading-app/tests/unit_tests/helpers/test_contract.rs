@@ -13,12 +13,15 @@ use std::hash::{Hash, Hasher};
 
 use ibapi::prelude::{Contract, SecurityType};
 
-use trading_app::test_internals::{build_contract_from_stock, get_local_symbol, HashContract};
+use trading_app::test_internals::{HashContract, build_contract_from_stock, get_local_symbol};
 
 /// Helper: compute the hash of a HashContract.
 fn hash_of(c: &Contract) -> u64 {
     let mut h = DefaultHasher::new();
-    HashContract { contract: c.clone() }.hash(&mut h);
+    HashContract {
+        contract: c.clone(),
+    }
+    .hash(&mut h);
     h.finish()
 }
 
@@ -63,7 +66,10 @@ fn hash_contract_different_symbol_hashes_differ() {
         currency: "USD".into(),
         ..Default::default()
     };
-    let b = Contract { symbol: "MSFT".into(), ..a.clone() };
+    let b = Contract {
+        symbol: "MSFT".into(),
+        ..a.clone()
+    };
     assert_ne!(hash_of(&a), hash_of(&b));
 }
 
@@ -75,7 +81,10 @@ fn hash_contract_different_currency_hashes_differ() {
         currency: "USD".into(),
         ..Default::default()
     };
-    let b = Contract { currency: "SGD".into(), ..a.clone() };
+    let b = Contract {
+        currency: "SGD".into(),
+        ..a.clone()
+    };
     assert_ne!(hash_of(&a), hash_of(&b));
 }
 
@@ -91,8 +100,14 @@ fn hash_contract_option_strike_included() {
         multiplier: "100".into(),
         ..Default::default()
     };
-    let a = Contract { strike: 150.0, ..base.clone() };
-    let b = Contract { strike: 160.0, ..base.clone() };
+    let a = Contract {
+        strike: 150.0,
+        ..base.clone()
+    };
+    let b = Contract {
+        strike: 160.0,
+        ..base.clone()
+    };
     assert_ne!(hash_of(&a), hash_of(&b));
 }
 
@@ -107,8 +122,14 @@ fn hash_contract_option_right_included() {
         multiplier: "100".into(),
         ..Default::default()
     };
-    let a = Contract { right: "C".into(), ..base.clone() };
-    let b = Contract { right: "P".into(), ..base.clone() };
+    let a = Contract {
+        right: "C".into(),
+        ..base.clone()
+    };
+    let b = Contract {
+        right: "P".into(),
+        ..base.clone()
+    };
     assert_ne!(hash_of(&a), hash_of(&b));
 }
 
@@ -203,7 +224,11 @@ fn get_local_symbol_unknown_falls_through() {
 
 #[test]
 fn build_contract_stock_no_prefix() {
-    let c = build_contract_from_stock(&"AAPL".to_string(), &"NASDAQ".to_string(), &"USD".to_string());
+    let c = build_contract_from_stock(
+        &"AAPL".to_string(),
+        &"NASDAQ".to_string(),
+        &"USD".to_string(),
+    );
     assert_eq!(c.symbol.to_string(), "AAPL");
     assert_eq!(c.security_type, SecurityType::Stock);
     assert_eq!(c.currency.to_string(), "USD");
@@ -212,7 +237,11 @@ fn build_contract_stock_no_prefix() {
 
 #[test]
 fn build_contract_cfd_prefix() {
-    let c = build_contract_from_stock(&"CFD:XAUUSD".to_string(), &"".to_string(), &"USD".to_string());
+    let c = build_contract_from_stock(
+        &"CFD:XAUUSD".to_string(),
+        &"".to_string(),
+        &"USD".to_string(),
+    );
     assert_eq!(c.symbol.to_string(), "XAUUSD");
     assert_eq!(c.security_type, SecurityType::CFD);
     assert_eq!(c.exchange.to_string(), "SMART");
@@ -221,7 +250,11 @@ fn build_contract_cfd_prefix() {
 
 #[test]
 fn build_contract_fx_prefix() {
-    let c = build_contract_from_stock(&"FX:EUR/USD".to_string(), &"".to_string(), &"USD".to_string());
+    let c = build_contract_from_stock(
+        &"FX:EUR/USD".to_string(),
+        &"".to_string(),
+        &"USD".to_string(),
+    );
     assert_eq!(c.security_type, SecurityType::ForexPair);
     assert_eq!(c.exchange.to_string(), "IDEALPRO");
     assert_eq!(c.symbol.to_string(), "EUR");

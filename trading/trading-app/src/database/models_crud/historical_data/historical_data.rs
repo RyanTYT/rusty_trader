@@ -585,8 +585,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
     ) -> Result<AggregatedBars, String> {
         #[cfg(feature = "backtest")]
         {
-            if let Some(cache) = crate::backtester::methods::in_memory::bar_cache::current()
-            {
+            if let Some(cache) = crate::backtester::methods::in_memory::bar_cache::current() {
                 if let Some(bars) = cache.get_bars_before(&pk, now, limit as usize) {
                     return Ok(AggregatedBars {
                         full: bars,

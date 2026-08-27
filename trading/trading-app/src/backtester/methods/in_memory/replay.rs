@@ -25,16 +25,16 @@ use crate::market_data::consolidator::Consolidator;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::{StrategyEnum, StrategyExecutor};
 
+use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
+use crate::backtester::output::equity::EquityCurve;
 use crate::backtester::setup::clock::BacktestClock;
 use crate::backtester::setup::config::BacktestConfig;
 use crate::backtester::setup::context::LightContext;
-use crate::backtester::output::equity::EquityCurve;
-use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 
 use crate::backtester::methods::in_memory::bar_cache;
 use crate::backtester::methods::in_memory::reconcile::handle_bar_update_outcome_in_memory;
-use crate::backtester::methods::in_memory::state::InMemoryState;
 use crate::backtester::methods::in_memory::state;
+use crate::backtester::methods::in_memory::state::InMemoryState;
 
 /// Lighter context for the in-memory run — only the pieces the bar loop
 /// needs (no broker/order_engine/order_store, which are unused in-memory +

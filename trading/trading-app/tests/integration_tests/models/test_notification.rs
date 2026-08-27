@@ -18,7 +18,9 @@ fn make_fk(title: &str) -> NotificationFullKeys {
 }
 
 fn make_pk(title: &str) -> NotificationPrimaryKeys {
-    NotificationPrimaryKeys { title: title.to_string() }
+    NotificationPrimaryKeys {
+        title: title.to_string(),
+    }
 }
 
 fn uk(body: Option<String>, alert_type: Option<String>) -> NotificationUpdateKeys {
@@ -35,7 +37,11 @@ async fn test_create_read_delete() {
     let pk = make_pk(&fk.title);
     crud.create(&fk).await.expect("create failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.title, fk.title);
     assert_eq!(data.body, "test body");
 
@@ -53,8 +59,20 @@ async fn test_update() {
     let pk = make_pk(&fk.title);
     crud.create(&fk).await.expect("create failed");
 
-    crud.update(&pk, &uk(Some("updated body".to_string()), Some("WARNING".to_string()))).await.expect("update failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.update(
+        &pk,
+        &uk(
+            Some("updated body".to_string()),
+            Some("WARNING".to_string()),
+        ),
+    )
+    .await
+    .expect("update failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.body, "updated body");
     assert_eq!(data.alert_type, "WARNING");
 
@@ -75,7 +93,8 @@ async fn test_read_all() {
     crud.create(&fk_b).await.expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.title == "ntf_ra_a" || p.title == "ntf_ra_b")
         .collect();
     assert_eq!(ours.len(), 2);
@@ -93,14 +112,26 @@ async fn test_create_or_ignore() {
     let fk = make_fk("ntf_coi");
     let pk = make_pk(&fk.title);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.body, "test body");
 
     let mut fk2 = fk.clone();
     fk2.body = "999".to_string();
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.body, "test body", "conflict path should NOT update");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -116,8 +147,17 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(&fk.title);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some("test body".to_string()), Some("INFO".to_string()))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(
+        &pk,
+        &uk(Some("test body".to_string()), Some("INFO".to_string())),
+    )
+    .await
+    .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.body, "test body");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -133,8 +173,20 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(&fk.title);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some("updated body".to_string()), Some("WARNING".to_string()))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(
+        &pk,
+        &uk(
+            Some("updated body".to_string()),
+            Some("WARNING".to_string()),
+        ),
+    )
+    .await
+    .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.body, "updated body");
     assert_eq!(data.alert_type, "WARNING");
 

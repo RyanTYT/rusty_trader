@@ -12,8 +12,8 @@
 //! - proptest invariants (vs naive implementations)
 
 use proptest::prelude::*;
-use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use std::collections::VecDeque;
 use trading_app::strategy::helpers::rolling_fn::{
     EwmMean, RollingMax, RollingMin, RollingRankPct, RollingRoc, RollingStd, RollingSum,
@@ -415,7 +415,10 @@ fn rolling_sum_f64_decimal_parity() {
         let fb = b
             .push_dec(Decimal::from_f64(v).unwrap())
             .map(|d| d.to_f64().unwrap());
-        assert!((fa.unwrap_or(0.0) - fb.unwrap_or(0.0)).abs() < 1e-6, "mismatch at v={v}");
+        assert!(
+            (fa.unwrap_or(0.0) - fb.unwrap_or(0.0)).abs() < 1e-6,
+            "mismatch at v={v}"
+        );
     }
 }
 

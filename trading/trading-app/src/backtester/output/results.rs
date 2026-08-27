@@ -22,8 +22,8 @@ use crate::database::models_crud::transactions::transactions::{
     TransactionsCRUD, TransactionsFullKeys,
 };
 
-use crate::backtester::output::equity::{EquityCurve, EquitySnapshot};
 use crate::backtester::methods::in_memory::state::InMemoryState;
+use crate::backtester::output::equity::{EquityCurve, EquitySnapshot};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BacktestResults {
@@ -81,7 +81,13 @@ impl BacktestResults {
             .collect();
         let num_trades = tuples.len();
         let per_trade_pnl = realized_per_trade_pnl(&tuples);
-        Ok(Self::build(equity, starting_capital, num_trades, per_trade_pnl, bar_interval))
+        Ok(Self::build(
+            equity,
+            starting_capital,
+            num_trades,
+            per_trade_pnl,
+            bar_interval,
+        ))
     }
 
     /// Compute from the in-memory state (the fast mode — no DB I/O; reads
@@ -111,7 +117,13 @@ impl BacktestResults {
             .collect();
         let num_trades = tuples.len();
         let per_trade_pnl = realized_per_trade_pnl(&tuples);
-        Self::build(equity, starting_capital, num_trades, per_trade_pnl, bar_interval)
+        Self::build(
+            equity,
+            starting_capital,
+            num_trades,
+            per_trade_pnl,
+            bar_interval,
+        )
     }
 
     /// Common metrics builder — shared by `compute` (DB) + `compute_in_memory`.
@@ -186,8 +198,7 @@ impl BacktestResults {
     }
 
     pub fn write_json(&self, path: &str) -> Result<(), String> {
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
         std::fs::write(Path::new(path), json).map_err(|e| format!("write {path}: {e}"))?;
         tracing::info!("Backtest results written to {path}");
         Ok(())
@@ -220,18 +231,19 @@ fn sharpe_sortino(snapshots: &[EquitySnapshot]) -> (f64, f64) {
         .map(|w| {
             let prev = w[0].equity;
             let cur = w[1].equity;
-            if prev > 0.0 {
-                (cur - prev) / prev
-            } else {
-                0.0
-            }
+            if prev > 0.0 { (cur - prev) / prev } else { 0.0 }
         })
         .collect();
     let n = returns.len() as f64;
     let mean = returns.iter().sum::<f64>() / n;
     let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
     let std = var.sqrt();
-    let downside_var: f64 = returns.iter().filter(|r| **r < 0.0).map(|r| r.powi(2)).sum::<f64>() / n;
+    let downside_var: f64 = returns
+        .iter()
+        .filter(|r| **r < 0.0)
+        .map(|r| r.powi(2))
+        .sum::<f64>()
+        / n;
     let downside_std = downside_var.sqrt();
     let sharpe = if std > 0.0 { mean / std } else { 0.0 };
     let sortino = if downside_std > 0.0 {

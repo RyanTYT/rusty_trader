@@ -86,7 +86,10 @@ fn historical_data_get_price_forex_ask_close_preferred() {
         ask_low: None,
         ask_close: Some(1.11),
     });
-    assert!((fx.get_price() - 1.11).abs() < 1e-9, "ask_close should be preferred");
+    assert!(
+        (fx.get_price() - 1.11).abs() < 1e-9,
+        "ask_close should be preferred"
+    );
 }
 
 #[test]
@@ -104,7 +107,10 @@ fn historical_data_get_price_forex_falls_back_to_bid_close() {
         ask_low: None,
         ask_close: None,
     });
-    assert!((fx.get_price() - 1.10).abs() < 1e-9, "should fall back to bid_close");
+    assert!(
+        (fx.get_price() - 1.10).abs() < 1e-9,
+        "should fall back to bid_close"
+    );
 }
 
 #[test]
@@ -121,7 +127,11 @@ fn historical_data_get_price_forex_returns_neg1_when_both_none() {
         ask_low: None,
         ask_close: None,
     });
-    assert_eq!(fx.get_price(), -1.0, "should return -1.0 sentinel when both None");
+    assert_eq!(
+        fx.get_price(),
+        -1.0,
+        "should return -1.0 sentinel when both None"
+    );
 }
 
 // ============================ HistoricalStockData construction (smoke) ============================

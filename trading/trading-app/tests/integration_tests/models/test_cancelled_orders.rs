@@ -8,38 +8,59 @@ use trading_app::database::models::{
     CancelledOrdersFullKeys, CancelledOrdersPrimaryKeys, CancelledOrdersUpdateKeys,
 };
 
-use crate::init_strat;
 use crate::del_strat;
+use crate::init_strat;
 use crate::models::init::{TEST_MUTEX, setup_test_db};
 
 const STRATEGY: &str = "noise";
 
 fn make_fk(perm_id: i32, order_id: i32) -> CancelledOrdersFullKeys {
     CancelledOrdersFullKeys {
-        time: Utc::now(), order_perm_id: perm_id, order_id,
-        strategy: STRATEGY.to_string(), stock: format!("CNL_{perm_id}"),
-        primary_exchange: "NASDAQ".to_string(), currency: "USD".to_string(),
-        quantity: 10.0, executions: vec![], filled: 0.0,
+        time: Utc::now(),
+        order_perm_id: perm_id,
+        order_id,
+        strategy: STRATEGY.to_string(),
+        stock: format!("CNL_{perm_id}"),
+        primary_exchange: "NASDAQ".to_string(),
+        currency: "USD".to_string(),
+        quantity: 10.0,
+        executions: vec![],
+        filled: 0.0,
         reason: "test cancel".to_string(),
     }
 }
 
 fn make_pk(time: chrono::DateTime<Utc>, perm_id: i32, order_id: i32) -> CancelledOrdersPrimaryKeys {
-    CancelledOrdersPrimaryKeys { time, order_perm_id: perm_id, order_id }
+    CancelledOrdersPrimaryKeys {
+        time,
+        order_perm_id: perm_id,
+        order_id,
+    }
 }
 
 fn uk(filled: Option<f64>, reason: Option<String>) -> CancelledOrdersUpdateKeys {
     CancelledOrdersUpdateKeys {
-        strategy: None, stock: None, primary_exchange: None, currency: None,
-        quantity: None, executions: None, filled, reason,
+        strategy: None,
+        stock: None,
+        primary_exchange: None,
+        currency: None,
+        quantity: None,
+        executions: None,
+        filled,
+        reason,
     }
 }
 
 fn full_uk(filled: Option<f64>, reason: Option<String>) -> CancelledOrdersUpdateKeys {
     CancelledOrdersUpdateKeys {
-        strategy: Some("noise".to_string()), stock: Some("QQQ".to_string()), 
-        primary_exchange: Some("NASDAQ".to_string()), currency: Some("USD".to_string()),
-        quantity: Some(0.0), executions: None, filled, reason,
+        strategy: Some("noise".to_string()),
+        stock: Some("QQQ".to_string()),
+        primary_exchange: Some("NASDAQ".to_string()),
+        currency: Some("USD".to_string()),
+        quantity: Some(0.0),
+        executions: None,
+        filled,
+        reason,
     }
 }
 
@@ -54,7 +75,11 @@ async fn test_create_read_delete() {
     let pk = make_pk(fk.time, 70001, 70002);
     crud.create(&fk).await.expect("create failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.order_perm_id, 70001);
     assert_eq!(data.reason, "test cancel");
 
@@ -74,8 +99,14 @@ async fn test_update() {
     let pk = make_pk(fk.time, 70003, 70004);
     crud.create(&fk).await.expect("create failed");
 
-    crud.update(&pk, &uk(Some(5.0), Some("updated reason".to_string()))).await.expect("update failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.update(&pk, &uk(Some(5.0), Some("updated reason".to_string())))
+        .await
+        .expect("update failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.filled, 5.0);
     assert_eq!(data.reason, "updated reason");
 
@@ -98,7 +129,8 @@ async fn test_read_all() {
     crud.create(&fk_b).await.expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.order_perm_id == 70005 || p.order_perm_id == 70007)
         .collect();
     assert_eq!(ours.len(), 2);
@@ -118,15 +150,30 @@ async fn test_create_or_ignore() {
     let fk = make_fk(70009, 70010);
     let pk = make_pk(fk.time, 70009, 70010);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.reason, "test cancel");
 
     let mut fk2 = fk.clone();
     fk2.reason = "999".to_string();
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.reason, "test cancel", "conflict path should NOT update");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
+    assert_eq!(
+        data.reason, "test cancel",
+        "conflict path should NOT update"
+    );
 
     crud.delete(&pk).await.expect("delete failed");
     del_strat!(&pool);
@@ -143,8 +190,14 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(fk.time, 70011, 70012);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &full_uk(Some(0.0), Some("test cancel".to_string()))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &full_uk(Some(0.0), Some("test cancel".to_string())))
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.reason, "test cancel");
 
     crud.delete(&pk).await.expect("delete failed");
@@ -162,8 +215,17 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(fk.time, 70013, 70014);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &&full_uk(Some(5.0), Some("updated reason".to_string()))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(
+        &pk,
+        &&full_uk(Some(5.0), Some("updated reason".to_string())),
+    )
+    .await
+    .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.filled, 5.0);
     assert_eq!(data.reason, "updated reason");
 

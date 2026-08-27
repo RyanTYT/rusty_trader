@@ -75,7 +75,9 @@ fn store_and_load_orders_roundtrip() {
 #[test]
 fn load_missing_key_returns_none() {
     let (_path, store) = fresh_store();
-    let result = store.load_orders("nonexistent").expect("load_orders failed");
+    let result = store
+        .load_orders("nonexistent")
+        .expect("load_orders failed");
     assert!(result.is_none(), "missing key should return None");
 }
 
@@ -113,7 +115,9 @@ fn delete_orders_removes_key() {
 #[test]
 fn delete_nonexistent_key_returns_false() {
     let (_path, store) = fresh_store();
-    let deleted = store.delete_orders("nonexistent").expect("delete_orders failed");
+    let deleted = store
+        .delete_orders("nonexistent")
+        .expect("delete_orders failed");
     assert!(!deleted, "deleting nonexistent key should return false");
 }
 

@@ -9,10 +9,10 @@ use crate::database::models::{Status, StrategyFullKeys};
 use crate::database::models_crud::strategy::StrategyCRUD;
 use crate::strategy::strategy::StrategyExecutor;
 
-use crate::backtester::setup::context::BacktestContext;
-use crate::backtester::output::equity::EquityCurve;
 use crate::backtester::methods::BacktestMethod;
 use crate::backtester::methods::load_bars;
+use crate::backtester::output::equity::EquityCurve;
+use crate::backtester::setup::context::BacktestContext;
 
 /// The DB-backed backtest method: replay historical bars through the real prod
 /// strategy + reconciliation. Unit struct — no state; all state is in the

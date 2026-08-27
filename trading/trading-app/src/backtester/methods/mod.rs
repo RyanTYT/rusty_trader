@@ -21,8 +21,8 @@ use crate::database::models::HistoricalStockDataFullKeys;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::helpers::contract::get_local_symbol;
 
-use crate::backtester::setup::context::BacktestContext;
 use crate::backtester::output::equity::EquityCurve;
+use crate::backtester::setup::context::BacktestContext;
 
 /// Trait for backtest methods — each method implements a different replay
 /// strategy (historical bar replay, walk-forward, parameter sweep, etc.).
@@ -64,23 +64,21 @@ pub async fn load_bars(
 
     use crate::backtester::setup::config::BacktestPeriod;
     let rows: Vec<BarRow> = match &config.period {
-        BacktestPeriod::TimeRange { start, end } => {
-            sqlx::query_as(
-                r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
+        BacktestPeriod::TimeRange { start, end } => sqlx::query_as(
+            r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
                    FROM market_data.historical_data
                    WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
                      AND time >= $4 AND time <= $5
                    ORDER BY time ASC"#,
-            )
-            .bind(stock.clone())
-            .bind(pe.clone())
-            .bind(currency.clone())
-            .bind(*start)
-            .bind(*end)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("load_bars (TimeRange): {e:?}"))?
-        }
+        )
+        .bind(stock.clone())
+        .bind(pe.clone())
+        .bind(currency.clone())
+        .bind(*start)
+        .bind(*end)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load_bars (TimeRange): {e:?}"))?,
         BacktestPeriod::NumBars(n) => {
             // Last N bars in the DB (DESC) — reverse to chronological (ASC).
             let mut rows: Vec<BarRow> = sqlx::query_as(

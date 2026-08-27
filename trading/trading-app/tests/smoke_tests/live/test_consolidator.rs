@@ -16,19 +16,17 @@ use std::time::Duration;
 
 use ibapi::contracts::Contract;
 use ibapi::prelude::SecurityType;
+use trading_app::arc_drop_async;
 use trading_app::database::models_crud::historical_data::historical_data::{
     HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
 };
-use trading_app::arc_drop_async;
 use trading_app::market_data::consolidator::Consolidator;
 use trading_app::market_data::handler::MarketDataHandler;
 use trading_app::market_data::traits::current_price::PriceSupplier;
 use trading_app::market_data::traits::strategy_value::GetStrategyValue;
 use trading_app::schedule::contract_scheduler::IbkrContractScheduler;
 
-use crate::live::init::{
-    ensure_strategy_row, ibkr_account, with_live_ibkr,
-};
+use crate::live::init::{ensure_strategy_row, ibkr_account, with_live_ibkr};
 
 fn build_consolidator(pool: sqlx::PgPool, client: Arc<ibapi::Client>) -> Arc<Consolidator> {
     let market_data_handler = MarketDataHandler::new(pool.clone());
@@ -328,7 +326,7 @@ async fn test_consolidator_get_current_price_stock() {
                 );
             }
         }
-            
+
         arc_drop_async!(consolidator);
     })
     .await

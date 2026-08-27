@@ -175,8 +175,7 @@ impl OrderEngine {
         pool: PgPool,
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
-        #[cfg(feature = "backtest")]
-        submitter: &dyn crate::backtester::execution::OrderSubmitter,
+        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         orders: impl IntoIterator<Item = OrderIBKR>,
     ) {
@@ -202,8 +201,7 @@ impl OrderEngine {
         &self,
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
-        #[cfg(feature = "backtest")]
-        submitter: &dyn crate::backtester::execution::OrderSubmitter,
+        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
         #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
         #[cfg(feature = "backtest")]
         price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
@@ -537,8 +535,7 @@ impl OrderEngine {
         asset_type: &AssetType,
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
-        #[cfg(feature = "backtest")]
-        submitter: &dyn crate::backtester::execution::OrderSubmitter,
+        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         local_open_orders: Vec<LocalOpenOrder>,
         order_store: &OrderStore,
@@ -655,8 +652,7 @@ impl OrderEngine {
         pool: PgPool,
 
         #[cfg(not(feature = "backtest"))] weak_client: Weak<Client>,
-        #[cfg(feature = "backtest")]
-        submitter: &dyn crate::backtester::execution::OrderSubmitter,
+        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         mut orders: VecDeque<OrderIBKR>,
         order_store: &OrderStore,

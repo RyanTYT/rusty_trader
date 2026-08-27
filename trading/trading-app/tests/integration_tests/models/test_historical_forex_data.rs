@@ -14,20 +14,36 @@ const _PAIR: &str = "EUR/USD";
 
 fn make_fk(pair: &str) -> HistoricalForexDataFullKeys {
     HistoricalForexDataFullKeys {
-        pair: pair.to_string(), time: Utc::now(),
-        bid_open: Some(1.0850), bid_high: Some(1.0870), bid_low: Some(1.0840), bid_close: Some(1.0860),
-        ask_open: Some(1.0852), ask_high: Some(1.0872), ask_low: Some(1.0842), ask_close: Some(1.0862),
+        pair: pair.to_string(),
+        time: Utc::now(),
+        bid_open: Some(1.0850),
+        bid_high: Some(1.0870),
+        bid_low: Some(1.0840),
+        bid_close: Some(1.0860),
+        ask_open: Some(1.0852),
+        ask_high: Some(1.0872),
+        ask_low: Some(1.0842),
+        ask_close: Some(1.0862),
     }
 }
 
 fn make_pk(pair: &str, time: chrono::DateTime<Utc>) -> HistoricalForexDataPrimaryKeys {
-    HistoricalForexDataPrimaryKeys { pair: pair.to_string(), time }
+    HistoricalForexDataPrimaryKeys {
+        pair: pair.to_string(),
+        time,
+    }
 }
 
 fn uk(bid_close: Option<f64>, ask_close: Option<f64>) -> HistoricalForexDataUpdateKeys {
     HistoricalForexDataUpdateKeys {
-        bid_open: None, bid_high: None, bid_low: None, bid_close,
-        ask_open: None, ask_high: None, ask_low: None, ask_close,
+        bid_open: None,
+        bid_high: None,
+        bid_low: None,
+        bid_close,
+        ask_open: None,
+        ask_high: None,
+        ask_low: None,
+        ask_close,
     }
 }
 
@@ -41,7 +57,11 @@ async fn test_create_read_delete() {
     let pk = make_pk(&fk.pair, fk.time);
     crud.create(&fk).await.expect("create failed");
 
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.pair, fk.pair);
     assert_eq!(data.bid_close, Some(1.0860));
 
@@ -59,8 +79,14 @@ async fn test_update() {
     let pk = make_pk(&fk.pair, fk.time);
     crud.create(&fk).await.expect("create failed");
 
-    crud.update(&pk, &uk(Some(1.0870), Some(1.0872))).await.expect("update failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.update(&pk, &uk(Some(1.0870), Some(1.0872)))
+        .await
+        .expect("update failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.bid_close, Some(1.0870));
     assert_eq!(data.ask_close, Some(1.0872));
 
@@ -81,7 +107,8 @@ async fn test_read_all() {
     crud.create(&fk_b).await.expect("create B failed");
 
     let all = crud.read_all().await.expect("read_all failed");
-    let ours: Vec<_> = all.iter()
+    let ours: Vec<_> = all
+        .iter()
         .filter(|p| p.pair == fk_a.pair || p.pair == fk_b.pair)
         .collect();
     assert_eq!(ours.len(), 2);
@@ -99,15 +126,31 @@ async fn test_create_or_ignore() {
     let fk = make_fk("EUR/USD_coi");
     let pk = make_pk(&fk.pair, fk.time);
 
-    crud.create_or_ignore(&fk).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_ignore(&fk)
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.bid_close, Some(1.0860));
 
     let mut fk2 = fk.clone();
     fk2.bid_close = Some(999.0);
-    crud.create_or_ignore(&fk2).await.expect("conflict path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
-    assert_eq!(data.bid_close, Some(1.0860), "conflict path should NOT update");
+    crud.create_or_ignore(&fk2)
+        .await
+        .expect("conflict path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
+    assert_eq!(
+        data.bid_close,
+        Some(1.0860),
+        "conflict path should NOT update"
+    );
 
     crud.delete(&pk).await.expect("delete failed");
 }
@@ -122,8 +165,14 @@ async fn test_create_or_update_insert_path() {
     let pk = make_pk(&fk.pair, fk.time);
     assert!(crud.read(&pk).await.expect("read failed").is_none());
 
-    crud.create_or_update(&pk, &uk(Some(1.0860), Some(1.0862))).await.expect("insert path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(1.0860), Some(1.0862)))
+        .await
+        .expect("insert path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.bid_close, Some(1.0860));
 
     crud.delete(&pk).await.expect("delete failed");
@@ -139,8 +188,14 @@ async fn test_create_or_update_update_path() {
     let pk = make_pk(&fk.pair, fk.time);
     crud.create(&fk).await.expect("pre-insert failed");
 
-    crud.create_or_update(&pk, &uk(Some(1.0870), Some(1.0872))).await.expect("update path failed");
-    let data = crud.read(&pk).await.expect("read failed").expect("expected row");
+    crud.create_or_update(&pk, &uk(Some(1.0870), Some(1.0872)))
+        .await
+        .expect("update path failed");
+    let data = crud
+        .read(&pk)
+        .await
+        .expect("read failed")
+        .expect("expected row");
     assert_eq!(data.bid_close, Some(1.0870));
     assert_eq!(data.ask_close, Some(1.0872));
 

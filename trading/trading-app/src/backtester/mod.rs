@@ -31,14 +31,14 @@ pub mod output;
 pub mod setup;
 pub mod sweep;
 
-pub use setup::clock::BacktestClock;
-pub use setup::config::{BacktestConfig, BacktestMode, BacktestPeriod};
-pub use setup::context::{BacktestContext, LightContext, build_light_context};
-pub use output::equity::EquityCurve;
-pub use output::results::BacktestResults;
 pub use execution::{BacktestBroker, CommissionModel, OrderSubmitter};
 pub use methods::{BacktestMethod, HistoricalReplay, InMemoryReplay};
 pub use oracle::BacktestPriceSupplier;
+pub use output::equity::EquityCurve;
+pub use output::results::BacktestResults;
+pub use setup::clock::BacktestClock;
+pub use setup::config::{BacktestConfig, BacktestMode, BacktestPeriod};
+pub use setup::context::{BacktestContext, LightContext, build_light_context};
 
 use std::sync::Arc;
 
@@ -59,7 +59,9 @@ pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), St
         .filter_map(|e| {
             let path = e.path();
             if path.extension().is_some_and(|ext| ext == "json") {
-                path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
             } else {
                 None
             }
@@ -83,11 +85,8 @@ async fn run_sweep_route(
     sweep_names: Vec<String>,
 ) -> Result<(), String> {
     // Discovery: construct_strategies filters to recognised strategies.
-    let strategies = crate::strategy::construct_strategies(
-        sweep_names,
-        pool.clone(),
-        handle.clone(),
-    );
+    let strategies =
+        crate::strategy::construct_strategies(sweep_names, pool.clone(), handle.clone());
     if strategies.is_empty() {
         return Err("No recognised strategies found in *.json sweep files".into());
     }
@@ -189,19 +188,26 @@ async fn run_single_route(
                 })
                 .await
                 .map_err(|e| format!("replayer join: {e:?}"))??;
-                BacktestResults::compute_in_memory(&equity, &state, starting_capital, config.stock_bar_interval)
+                BacktestResults::compute_in_memory(
+                    &equity,
+                    &state,
+                    starting_capital,
+                    config.stock_bar_interval,
+                )
             }
             BacktestMode::Db => {
-                let ctx = BacktestContext::build(
-                    config.clone(),
-                    pool.clone(),
-                    handle.clone(),
-                    strategy,
-                );
+                let ctx =
+                    BacktestContext::build(config.clone(), pool.clone(), handle.clone(), strategy);
                 let equity = tokio::task::spawn_blocking(move || HistoricalReplay.run(ctx))
                     .await
                     .map_err(|e| format!("replayer join: {e:?}"))??;
-                BacktestResults::compute(&pool, &equity, starting_capital, config.stock_bar_interval).await?
+                BacktestResults::compute(
+                    &pool,
+                    &equity,
+                    starting_capital,
+                    config.stock_bar_interval,
+                )
+                .await?
             }
         };
 
