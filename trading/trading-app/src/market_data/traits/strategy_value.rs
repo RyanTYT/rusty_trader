@@ -311,7 +311,7 @@ impl Consolidator {
             let price = call_price(contract.clone())? ;
             let mkt_value = price * pos.quantity;
 
-            println!("Market value: {mkt_value}, price: {price}, qty: {}", pos.quantity);
+            // println!("Market value: {mkt_value}, price: {price}, qty: {}", pos.quantity);
             if key.currency == "SGD" {
                 sgd_value += mkt_value;
             } else {
@@ -332,7 +332,7 @@ impl Consolidator {
                     exchange_rates.insert(hash_contract, r);
                     r
                 };
-                println!("Currency Rate: {rate}");
+                // println!("Currency Rate: {rate}");
                 sgd_value += rate * mkt_value;
             }
         }
