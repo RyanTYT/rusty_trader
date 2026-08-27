@@ -23,6 +23,10 @@ pub fn proportional_integer_reduce(
     );
     let eps = 1e-12_f64;
 
+    if target_exposure < 0.0 || target_exposure.is_nan() {
+        return (vec![0_i64; quantities.len()], 0.0);
+    }
+
     let curr_exposure = quantities
         .iter()
         .zip(prices.iter())
