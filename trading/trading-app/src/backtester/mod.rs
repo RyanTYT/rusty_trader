@@ -189,7 +189,7 @@ async fn run_single_route(
                 })
                 .await
                 .map_err(|e| format!("replayer join: {e:?}"))??;
-                BacktestResults::compute_in_memory(&equity, &state, starting_capital)
+                BacktestResults::compute_in_memory(&equity, &state, starting_capital, config.stock_bar_interval)
             }
             BacktestMode::Db => {
                 let ctx = BacktestContext::build(
@@ -201,7 +201,7 @@ async fn run_single_route(
                 let equity = tokio::task::spawn_blocking(move || HistoricalReplay.run(ctx))
                     .await
                     .map_err(|e| format!("replayer join: {e:?}"))??;
-                BacktestResults::compute(&pool, &equity, starting_capital).await?
+                BacktestResults::compute(&pool, &equity, starting_capital, config.stock_bar_interval).await?
             }
         };
 
