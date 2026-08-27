@@ -524,9 +524,9 @@ impl Noise {
         let allowable_positions = allowable_positions_tuple.0.first().unwrap();
         let qty = {
             if *allowable_positions != ideal_qty {
-                tracing::warn!(
-                    "Maximum allowable position for QQQ for Noise is: {allowable_positions:?}"
-                );
+                // tracing::warn!(
+                //     "Maximum allowable position for QQQ for Noise is: {allowable_positions:?}"
+                // );
                 *allowable_positions
             } else {
                 ideal_qty
