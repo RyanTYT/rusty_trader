@@ -4,6 +4,8 @@
 //! logic the broker uses), + updates `InMemoryState` (current positions,
 //! transactions, CASH:SGD) entirely in-memory. No DB, no `block_on`, no broker.
 
+use std::collections::HashMap;
+
 use ibapi::contracts::Contract;
 use ibapi::orders::Order;
 use ibapi::prelude::SecurityType;
@@ -60,14 +62,32 @@ pub fn handle_bar_update_outcome_in_memory(
                 return Ok(());
             }
             // Snapshot the targets (avoid holding the write lock across the fill).
-            let targets: Vec<(PositionKey, InMemoryPosition)> = {
+            let mut targets_map: HashMap<PositionKey, InMemoryPosition> = {
                 let guard = state
                     .target_positions
                     .read()
                     .expect("InMemoryState target_positions poisoned");
-                guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                guard.clone()
+                // guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
             };
-            for (key, target_pos) in targets {
+            {
+                let guard = state
+                    .current_positions
+                    .read()
+                    .expect("InMemoryState current_positions poisoned");
+                guard.iter().for_each(|(k, _v)| {
+                    if !targets_map.contains_key(k) {
+                        targets_map.insert(
+                            k.clone(),
+                            InMemoryPosition {
+                                quantity: 0.0,
+                                avg_price: 0.0,
+                            },
+                        );
+                    }
+                });
+            };
+            for (key, target_pos) in targets_map.iter() {
                 let target_qty = target_pos.quantity;
                 let current_qty = state.current_qty(&key);
                 let delta = target_qty - current_qty;
