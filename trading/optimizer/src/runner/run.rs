@@ -136,6 +136,13 @@ pub async fn run_optimization(
         .cloned()
         .ok_or("optimization produced no results")?;
 
+    for ev in &eval_results {
+        if let Some(h) = history.iter_mut().find(|h| h.params == ev.params) {
+            h.neighborhood = ev.neighborhood.clone();
+            h.score = ev.score;
+        }
+    }
+
     // 6. Out-of-sample validation (if Holdout).
     let out_of_sample = match &cfg.validation {
         ValidationScheme::None => None,
