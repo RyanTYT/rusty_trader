@@ -526,6 +526,10 @@ impl Noise {
             &vec![bar.get_high_price()],
             curr_available_funds,
         );
+        tracing::info!(
+            "Bar: {}, Strat value: {curr_available_funds:?}",
+            bar.get_time()
+        );
         let allowable_positions = allowable_positions_tuple.0.first().unwrap();
         let qty = {
             if *allowable_positions != ideal_qty {
