@@ -29,8 +29,8 @@ use std::collections::HashMap;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use crate::functions::optimizer::{EvalResult, Optimizer};
 use crate::config::param_spec::{Distribution, ParamSpec};
+use crate::functions::optimizer::{EvalResult, Optimizer};
 
 /// The TPE optimizer.
 pub struct TpeOptimizer {
@@ -88,10 +88,7 @@ impl Optimizer for TpeOptimizer {
                 })
                 .collect::<Vec<_>>();
             let mut sorted = candidates;
-            sorted.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             sorted.into_iter().take(n).map(|(p, _)| p).collect()
         };
         self.n_served += n;
@@ -100,13 +97,11 @@ impl Optimizer for TpeOptimizer {
 }
 
 /// Split the history into good (top γ quantile) + bad (the rest), by score.
-fn split_good_bad(
-    history: &[EvalResult],
-    gamma: f64,
-) -> (Vec<&EvalResult>, Vec<&EvalResult>) {
+fn split_good_bad(history: &[EvalResult], gamma: f64) -> (Vec<&EvalResult>, Vec<&EvalResult>) {
     let mut sorted: Vec<&EvalResult> = history.iter().collect();
     sorted.sort_by(|a, b| {
-        b.score.partial_cmp(&a.score)
+        b.score
+            .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let n_good = ((sorted.len() as f64) * gamma).ceil() as usize;
@@ -196,7 +191,10 @@ fn expected_improvement(
                 let (min, max) = dist.range();
                 let bw_g = kde_bandwidth(&good_vals, (min, max));
                 let bw_b = kde_bandwidth(&bad_vals, (min, max));
-                (kde_density(&good_vals, x, bw_g), kde_density(&bad_vals, x, bw_b))
+                (
+                    kde_density(&good_vals, x, bw_g),
+                    kde_density(&bad_vals, x, bw_b),
+                )
             }
             Distribution::Discrete(bins) => {
                 let h_g = histogram(bins, &good_vals);
@@ -272,6 +270,12 @@ fn smoothed_prob(counts: &[f64], n_bins: usize) -> Vec<Option<f64>> {
     let total: f64 = counts.iter().sum::<f64>() + n_bins as f64; // +1 per bin
     counts
         .iter()
-        .map(|&c| if total > 0.0 { Some((c + 1.0) / total) } else { None })
+        .map(|&c| {
+            if total > 0.0 {
+                Some((c + 1.0) / total)
+            } else {
+                None
+            }
+        })
         .collect()
 }

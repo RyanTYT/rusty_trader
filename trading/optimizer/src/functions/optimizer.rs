@@ -129,10 +129,7 @@ pub(crate) fn sample_params(specs: &[ParamSpec], rng: &mut StdRng) -> HashMap<St
 /// resolves `build_upon` + casts per combo (so the grid respects the
 /// short/long-window build-upon + the int rounding).
 fn generate_grid(specs: &[ParamSpec], n_steps: usize) -> Vec<HashMap<String, f64>> {
-    let value_lists: Vec<Vec<f64>> = specs
-        .iter()
-        .map(|s| s.grid_values(n_steps))
-        .collect();
+    let value_lists: Vec<Vec<f64>> = specs.iter().map(|s| s.grid_values(n_steps)).collect();
 
     let mut grid: Vec<HashMap<String, f64>> = vec![HashMap::new()];
     for (spec, values) in specs.iter().zip(value_lists.iter()) {

@@ -19,8 +19,8 @@
 //! The "human params tend to win" belief is encoded as the default scales for
 //! the [`SpecialParam`] categories (round, natural scales).
 
-use rand::rngs::StdRng;
 use rand::Rng;
+use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 
 /// The value type of a parameter. The sampler rounds to the nearest integer
@@ -297,17 +297,11 @@ impl ParamSpec {
 
     /// Convenience: a special-param (uses the default human-like scales for
     /// the category). `value_type` is usually I32/U32 (bar/second counts).
-    pub fn special(
-        name: impl Into<String>,
-        value_type: ValueType,
-        special: SpecialParam,
-    ) -> Self {
+    pub fn special(name: impl Into<String>, value_type: ValueType, special: SpecialParam) -> Self {
         Self {
             name: name.into(),
             value_type,
-            distribution: Distribution::Discrete(
-                special.default_scales().unwrap_or(&[]).to_vec(),
-            ),
+            distribution: Distribution::Discrete(special.default_scales().unwrap_or(&[]).to_vec()),
             special,
             build_upon: None,
         }
