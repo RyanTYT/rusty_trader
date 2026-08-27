@@ -33,6 +33,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use optimizer::{
+    config::opt_config::OptConfig,
     config::param_spec::ParamSpec,
     config::validation::{Holdout, ValidationScheme, WalkForward},
     functions::objective::{Dispersion, RobustSharpe},
@@ -40,7 +41,7 @@ use optimizer::{
     functions::robustness::RobustnessEvaluator,
     functions::tpe::TpeOptimizer,
     report::RobustnessReport,
-    runner::run::{OptConfig, OptResult, WalkForwardResult, run_optimization, run_walk_forward},
+    runner::run::{OptResult, WalkForwardResult, run_optimization, run_walk_forward},
 };
 use trading_app::backtester::oracle::data_loader::{
     load_market_data, refresh_continuous_aggregate,
@@ -99,7 +100,7 @@ struct StrategyConfig {
 struct OptimiserFile {
     config: OptimiserConfig,
     #[serde(flatten)]
-    strategies: HashMap<String, StrategyConfig>,
+    strategies: std::collections::HashMap<String, StrategyConfig>,
 }
 
 #[tokio::main]
@@ -286,9 +287,10 @@ async fn main() -> Result<(), String> {
         match &validation {
             ValidationScheme::WalkForward(_) => {
                 let factory: Box<dyn Fn() -> Box<dyn Optimizer> + Send + Sync> = {
+                    let optimizer_kind_str = optimizer_kind.clone();
                     let specs = specs.clone();
                     Box::new(move || -> Box<dyn Optimizer> {
-                        match optimizer_kind.as_str() {
+                        match optimizer_kind_str.as_str() {
                             "grid" => Box::new(GridOptimizer::new(&specs, grid_steps)),
                             "random" => Box::new(RandomOptimizer::new(&specs, n_evaluations, seed)),
                             "tpe" => Box::new(TpeOptimizer::new(&specs, n_evaluations, seed)),
