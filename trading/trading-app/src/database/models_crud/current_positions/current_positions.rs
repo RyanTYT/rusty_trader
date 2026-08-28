@@ -50,6 +50,13 @@ impl CurrentPositionsFullKeys {
             Self::Options(opt) => opt.quantity,
         }
     }
+
+    pub fn get_currency(&self) -> String {
+        match self {
+            Self::Stock(fk) => fk.currency.clone(),
+            Self::Options(fk) => fk.currency.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

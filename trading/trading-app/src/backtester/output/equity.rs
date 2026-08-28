@@ -94,6 +94,7 @@ pub async fn compute_snapshot(
         if qty.abs() < 1e-9 {
             continue;
         }
+        let currency = pos.get_currency().into();
         let pcontract = get_contract_from(&LocalContractTypes::CurrentPosFk(pos));
         let price = prices
             .get_current_price(pcontract, false, &[])
@@ -104,7 +105,7 @@ pub async fn compute_snapshot(
             let fx_exchange = prices
                 .get_current_price(
                     Contract {
-                        symbol: key.currency.into(),
+                        symbol: currency,
                         exchange: "IDEALPRO".into(),
                         primary_exchange: "".into(),
                         currency: "SGD".into(),
