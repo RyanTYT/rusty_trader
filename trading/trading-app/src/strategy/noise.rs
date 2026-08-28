@@ -89,7 +89,7 @@ impl NoiseRefinements {
             realized_vol: true,
             ewma_vol: false,
             smooth_diurnal: true,
-            dynamic_vol_threshold: true,
+            dynamic_vol_threshold: false,
         }
     }
 }
