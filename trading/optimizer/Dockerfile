@@ -73,7 +73,7 @@ COPY trading/optimizer/src ./optimizer/src
 # Touch the optimizer bin to force a rebuild of the application code, then
 # build the real binary and stage it for the runtime stage.
 RUN cd optimizer && \
-    touch src/bin/optimize.rs && \
+    touch ../trading-app/src/lib.rs src/bin/optimize.rs && \
     cargo build --release --bin optimize && \
     cp target/release/optimize /bin/optimize
 
