@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use ibapi::contracts::Contract;
+use ibapi::contracts::SecurityType::ForexPair;
 use ibapi::prelude::SecurityType;
 use sqlx::PgPool;
 
@@ -100,7 +101,21 @@ pub async fn compute_snapshot(
         if stock.starts_with("CASH:") {
             cash += qty * price;
         } else {
-            positions_value += qty * price;
+            let fx_exchange = prices
+                .get_current_price(
+                    Contract {
+                        symbol: key.currency.into(),
+                        exchange: "IDEALPRO".into(),
+                        primary_exchange: "".into(),
+                        currency: "SGD".into(),
+                        security_type: ForexPair,
+                        ..Default::default()
+                    },
+                    false,
+                    &[],
+                )
+                .unwrap_or(1.2713);
+            positions_value += qty * price * fx_exchange;
         }
     }
     let equity = cash + positions_value;
@@ -145,7 +160,21 @@ pub fn compute_snapshot_from_positions(
         if key.stock.starts_with("CASH:") {
             cash += pos.quantity * price;
         } else {
-            positions_value += pos.quantity * price;
+            let fx_exchange = prices
+                .get_current_price(
+                    Contract {
+                        symbol: key.currency.into(),
+                        exchange: "IDEALPRO".into(),
+                        primary_exchange: "".into(),
+                        currency: "SGD".into(),
+                        security_type: ForexPair,
+                        ..Default::default()
+                    },
+                    false,
+                    &[],
+                )
+                .unwrap_or(1.2713);
+            positions_value += pos.quantity * price * fx_exchange;
         }
     }
     let equity = cash + positions_value;
