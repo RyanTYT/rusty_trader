@@ -318,7 +318,7 @@ async fn main() -> Result<(), String> {
                 };
                 let result = run_optimization(pool.clone(), optimizer, opt_cfg, &handle).await?;
                 report_holdout(&result);
-                let report = RobustnessReport::from_holdout(&result.all);
+                let report = RobustnessReport::from_holdout(&result);
                 let html = report.to_html(&format!("Holdout robustness report — {name}"));
                 std::fs::write(&report_path, html).map_err(|e| format!("write report: {e}"))?;
                 println!("[{name}] Robustness report written to: {report_path}");

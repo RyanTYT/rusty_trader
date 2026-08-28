@@ -9,6 +9,10 @@
 //!   candidate (mean / std / MAD / min / max of the neighborhood Sharpes).
 //!   A stable candidate is a plateau (low std); an overfit candidate is a
 //!   spike (high std).
+//! - **The equity curves** — the best candidate's IS equity vs the OOS
+//!   equity (holdout), or the compounded aggregated OOS equity across all
+//!   walk-forward windows. Plus an optional overlay of the Pareto-front
+//!   candidates' IS equity curves (colored by total return).
 //! - **The walk-forward tracking** — the per-window IS/OOS Sharpe + the
 //!   ratio. A real edge has a stable ratio across windows; an overfit edge
 //!   degrades.
@@ -18,12 +22,13 @@
 
 use std::collections::HashMap;
 
+use chrono::DateTime;
 use serde::Serialize;
 
 use trading_app::backtester::BacktestResults;
 
 use crate::functions::optimizer::EvalResult;
-use crate::runner::run::WalkForwardResult;
+use crate::runner::run::{OptResult, WalkForwardResult};
 
 // ─── Report data ─────────────────────────────────────────────────────────
 
@@ -57,40 +62,141 @@ pub struct WalkForwardPoint {
     pub ratio: f64,
 }
 
+/// One equity-curve series for the report charts. `points` is `(time, equity)`
+/// where time is RFC3339. `color_hint` (CSS color) overrides the palette —
+/// used by the Pareto overlay to color by total return.
+#[derive(Debug, Clone, Serialize)]
+pub struct EquityCurveSeries {
+    pub label: String,
+    pub points: Vec<(String, f64)>,
+    pub color_hint: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RobustnessReport {
     pub pareto_front: Vec<ParetoPoint>,
     pub stability: Vec<StabilityPoint>,
     pub walk_forward_tracking: Option<Vec<WalkForwardPoint>>,
+    /// The main equity chart: best IS + OOS (holdout), or the compounded
+    /// aggregated OOS (walk-forward).
+    pub equity_curves: Vec<EquityCurveSeries>,
+    /// The Pareto-front candidates' IS equity curves (holdout only — each
+    /// candidate shares the same IS period, so overlaying on one time axis is
+    /// meaningful). Colored by total return. Empty for walk-forward.
+    pub pareto_equity_curves: Vec<EquityCurveSeries>,
 }
 
 // ─── Computation ─────────────────────────────────────────────────────────
 
 impl RobustnessReport {
     /// Build the report from a holdout `OptResult` (the `all` candidates +
-    /// the top-K with neighborhoods).
-    pub fn from_holdout(all: &[EvalResult]) -> Self {
-        let refs: Vec<&EvalResult> = all.iter().collect();
-        let pareto_front = compute_pareto_front(&refs);
+    /// the best + the out-of-sample validation).
+    pub fn from_holdout(result: &OptResult) -> Self {
+        let refs: Vec<&EvalResult> = result.all.iter().collect();
+        let pareto_refs = pareto_front_refs(&refs);
+        let pareto_front = pareto_refs
+            .iter()
+            .map(|e| ParetoPoint {
+                params: e.params.clone(),
+                sharpe: e.results.sharpe,
+                total_return_pct: e.results.total_return_pct,
+                max_drawdown_pct: e.results.max_drawdown_pct,
+                sortino: e.results.sortino,
+                score: e.score,
+            })
+            .collect();
         let stability = compute_stability(&refs);
+
+        // Main equity chart: best IS + OOS.
+        let mut equity_curves = Vec::with_capacity(2);
+        equity_curves.push(EquityCurveSeries {
+            label: "IS (best)".to_string(),
+            points: result
+                .best
+                .results
+                .equity_curve
+                .iter()
+                .map(|p| (p.time.clone(), p.equity))
+                .collect(),
+            color_hint: None,
+        });
+        if let Some(oos) = &result.out_of_sample {
+            equity_curves.push(EquityCurveSeries {
+                label: "OOS".to_string(),
+                points: oos
+                    .equity_curve
+                    .iter()
+                    .map(|p| (p.time.clone(), p.equity))
+                    .collect(),
+                color_hint: None,
+            });
+        }
+
+        // Pareto overlay: each non-dominated candidate's IS equity curve,
+        // colored by total return (red = high, blue = low).
+        let returns: Vec<f64> = pareto_refs
+            .iter()
+            .map(|e| e.results.total_return_pct)
+            .collect();
+        let (rmin, rmax): (f64, f64) = returns.iter().fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(mn, mx): (f64, f64), &r| (mn.min(r), mx.max(r)),
+        );
+        let pareto_equity_curves = pareto_refs
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let r = e.results.total_return_pct;
+                let norm = if (rmax - rmin).abs() < 1e-9 {
+                    0.5
+                } else {
+                    (r - rmin) / (rmax - rmin)
+                };
+                // hue 0 = red (high return), 240 = blue (low return).
+                let hue = (1.0 - norm) * 240.0;
+                EquityCurveSeries {
+                    label: format!("P{i} ret {r:.1}%"),
+                    points: e
+                        .results
+                        .equity_curve
+                        .iter()
+                        .map(|p| (p.time.clone(), p.equity))
+                        .collect(),
+                    color_hint: Some(format!("hsl({hue:.0}, 70%, 50%)")),
+                }
+            })
+            .collect();
+
         Self {
             pareto_front,
             stability,
             walk_forward_tracking: None,
+            equity_curves,
+            pareto_equity_curves,
         }
     }
 
     /// Build the report from a `WalkForwardResult` (the per-window bests +
-    /// the tracking).
+    /// the tracking + the aggregated OOS).
     pub fn from_walk_forward(wf: &WalkForwardResult) -> Self {
         let candidates: Vec<&EvalResult> = wf.per_window.iter().map(|w| &w.best).collect();
         let pareto_front = compute_pareto_front(&candidates);
         let stability = compute_stability(&candidates);
         let walk_forward_tracking = Some(compute_walk_forward_tracking(wf));
+        let equity_curves = vec![EquityCurveSeries {
+            label: "Aggregated OOS".to_string(),
+            points: build_aggregated_oos_curve(wf),
+            color_hint: None,
+        }];
         Self {
             pareto_front,
             stability,
             walk_forward_tracking,
+            equity_curves,
+            // Skip the Pareto overlay for walk-forward — the per-window bests
+            // have different IS periods, so overlaying their IS equity curves
+            // on one time axis would tile discontinuously.
+            pareto_equity_curves: Vec::new(),
         }
     }
 
@@ -155,6 +261,34 @@ impl RobustnessReport {
             html.push_str(&params_table("stability", &rows));
         }
 
+        // Equity curves (main chart).
+        if !self.equity_curves.is_empty() {
+            html.push_str("<h2>Equity curves</h2>");
+            html.push_str("<p>Best candidate's in-sample equity vs the out-of-sample equity (holdout), or the compounded aggregated OOS equity across all walk-forward windows (scale-invariant per-bar returns chained off the starting capital).</p>");
+            html.push_str(&svg_equity(
+                &self.equity_curves,
+                "Time",
+                "Equity",
+                900,
+                400,
+                0.9,
+            ));
+        }
+
+        // Pareto overlay (IS equity curves).
+        if !self.pareto_equity_curves.is_empty() {
+            html.push_str("<h2>Pareto front — IS equity curves</h2>");
+            html.push_str("<p>Each line is one non-dominated candidate's in-sample equity curve. Color = total return (red = high, blue = low).</p>");
+            html.push_str(&svg_equity(
+                &self.pareto_equity_curves,
+                "Time",
+                "Equity",
+                900,
+                400,
+                0.5,
+            ));
+        }
+
         // Walk-forward tracking.
         if let Some(tracking) = &self.walk_forward_tracking {
             html.push_str("<h2>Walk-forward tracking (IS vs OOS Sharpe per window)</h2>");
@@ -205,44 +339,44 @@ impl RobustnessReport {
     }
 }
 
+/// The non-dominated candidates (Sharpe max, return max, drawdown min). A
+/// candidate A dominates B if A is ≥ B on all + > B on at least one. Returns
+/// references so callers can pull both the scalar metrics (ParetoPoint) AND
+/// the equity curve (Pareto overlay) from the same front.
+fn pareto_front_refs<'a>(candidates: &[&'a EvalResult]) -> Vec<&'a EvalResult> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| {
+            !candidates.iter().enumerate().any(|(j, b)| {
+                *i != j
+                    && b.results.sharpe >= a.results.sharpe
+                    && b.results.total_return_pct >= a.results.total_return_pct
+                    && b.results.max_drawdown_pct <= a.results.max_drawdown_pct
+                    && (b.results.sharpe > a.results.sharpe
+                        || b.results.total_return_pct > a.results.total_return_pct
+                        || b.results.max_drawdown_pct < a.results.max_drawdown_pct)
+            })
+        })
+        .map(|(_, e)| *e)
+        .collect()
+}
+
 /// Compute the Pareto front: the non-dominated candidates (Sharpe max, return
 /// max, drawdown min). A candidate A dominates B if A is ≥ B on all + > B on
 /// at least one.
 fn compute_pareto_front(candidates: &[&EvalResult]) -> Vec<ParetoPoint> {
-    let pts: Vec<(f64, f64, f64, f64, f64, &HashMap<String, f64>)> = candidates
+    pareto_front_refs(candidates)
         .iter()
-        .map(|e| {
-            (
-                e.results.sharpe,
-                e.results.total_return_pct,
-                e.results.max_drawdown_pct,
-                e.results.sortino,
-                e.score,
-                &e.params,
-            )
+        .map(|e| ParetoPoint {
+            params: e.params.clone(),
+            sharpe: e.results.sharpe,
+            total_return_pct: e.results.total_return_pct,
+            max_drawdown_pct: e.results.max_drawdown_pct,
+            sortino: e.results.sortino,
+            score: e.score,
         })
-        .collect();
-    let mut front = Vec::new();
-    for (i, a) in pts.iter().enumerate() {
-        let dominated = pts.iter().enumerate().any(|(j, b)| {
-            i != j
-                && b.0 >= a.0 // sharpe
-                && b.1 >= a.1 // return
-                && b.2 <= a.2 // drawdown (min)
-                && (b.0 > a.0 || b.1 > a.1 || b.2 < a.2)
-        });
-        if !dominated {
-            front.push(ParetoPoint {
-                params: a.5.clone(),
-                sharpe: a.0,
-                total_return_pct: a.1,
-                max_drawdown_pct: a.2,
-                sortino: a.3,
-                score: a.4,
-            });
-        }
-    }
-    front
+        .collect()
 }
 
 /// Compute the stability: the neighborhood metrics per candidate (only those
@@ -298,6 +432,38 @@ fn compute_walk_forward_tracking(wf: &WalkForwardResult) -> Vec<WalkForwardPoint
         .collect()
 }
 
+/// Reconstruct the compounded aggregated OOS equity curve from the per-window
+/// OOS equity curves. Mirrors `run::compute_aggregated_oos`: per-bar returns
+/// (scale-invariant) are chained off `aggregated_oos.starting_capital`. The
+/// curve is seeded with the first window's first OOS timestamp so the plot
+/// starts at the beginning of the OOS span.
+fn build_aggregated_oos_curve(wf: &WalkForwardResult) -> Vec<(String, f64)> {
+    let mut curve = Vec::new();
+    let mut equity = wf.aggregated_oos.starting_capital;
+    let mut seeded = false;
+    for w in &wf.per_window {
+        let Some(oos) = &w.oos else {
+            continue;
+        };
+        if oos.equity_curve.is_empty() {
+            continue;
+        }
+        if !seeded {
+            curve.push((oos.equity_curve[0].time.clone(), equity));
+            seeded = true;
+        }
+        for pair in oos.equity_curve.windows(2) {
+            let prev = pair[0].equity;
+            let cur = pair[1].equity;
+            if prev.abs() > 1e-9 {
+                equity *= 1.0 + (cur - prev) / prev;
+            }
+            curve.push((pair[1].time.clone(), equity));
+        }
+    }
+    curve
+}
+
 /// Median absolute deviation (MAD).
 fn median_abs_dev(values: &[f64]) -> f64 {
     if values.is_empty() {
@@ -331,6 +497,14 @@ fn scale(val: f64, min: f64, max: f64, range: f64) -> f64 {
     } else {
         (val - min) / (max - min) * range
     }
+}
+
+/// Parse an RFC3339 time string to Unix milliseconds (for axis scaling).
+/// Returns `None` on parse failure (the point is then skipped).
+fn time_to_millis(s: &str) -> Option<f64> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis() as f64)
 }
 
 fn svg_scatter(
@@ -406,7 +580,7 @@ fn svg_bars(bars: &[(String, f64)], y_label: &str, w: u32, h: u32) -> String {
     let pw = w - 2 * margin;
     let ph = h - 2 * margin;
     let ymax = bars.iter().map(|b| b.1).fold(0.0_f64, f64::max).max(0.001);
-    let bar_w = (pw as f64 / bars.len() as f64) * 0.8;
+    let bar_w = (pw as f64 / bars.len().max(1) as f64) * 0.8;
     let mut svg = format!("<svg width='{w}' height='{h}' xmlns='http://www.w3.org/2000/svg'>");
     svg.push_str(&format!(
         "<line x1='{margin}' y1='{}' x2='{}' y2='{}' stroke='#333'/>",
@@ -421,7 +595,7 @@ fn svg_bars(bars: &[(String, f64)], y_label: &str, w: u32, h: u32) -> String {
     ));
     for (i, (label, val)) in bars.iter().enumerate() {
         let bh = scale(*val, 0.0, ymax, ph as f64);
-        let x = margin as f64 + (i as f64 + 0.1) * (pw as f64 / bars.len() as f64);
+        let x = margin as f64 + (i as f64 + 0.1) * (pw as f64 / bars.len().max(1) as f64);
         let y = (h - margin) as f64 - bh;
         svg.push_str(&format!(
             "<rect x='{:.1}' y='{:.1}' width='{:.1}' height='{:.1}' fill='steelblue'/>",
@@ -510,6 +684,147 @@ fn svg_lines(
             w - margin + 25,
             30 + li * 15,
         ));
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+/// A multi-series equity-curve chart. X = real RFC3339 time (parsed to millis
+/// for scaling, formatted as YYYY-MM-DD on the ticks). Y = equity. One
+/// polyline per series; `color_hint` (per series) overrides the palette.
+/// `opacity` is applied to the polylines (use < 1.0 to faint the Pareto
+/// overlay). The legend auto-hides when there are > 6 series (e.g. a large
+/// Pareto front) to avoid overflowing the plot.
+fn svg_equity(
+    series: &[EquityCurveSeries],
+    x_label: &str,
+    y_label: &str,
+    w: u32,
+    h: u32,
+    opacity: f64,
+) -> String {
+    if series.is_empty() {
+        return "<p>(no equity curve data)</p>".to_string();
+    }
+    let pts: Vec<(f64, f64)> = series
+        .iter()
+        .flat_map(|s| {
+            s.points
+                .iter()
+                .filter_map(|(t, e)| time_to_millis(t).map(|ts| (ts, *e)))
+        })
+        .collect();
+    if pts.is_empty() {
+        return "<p>(no equity curve data)</p>".to_string();
+    }
+    let (xmin, xmax) = pts
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| {
+            (mn.min(p.0), mx.max(p.0))
+        });
+    let (ymin, ymax) = pts
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| {
+            (mn.min(p.1), mx.max(p.1))
+        });
+    let margin = 70;
+    let pw = w - 2 * margin;
+    let ph = h - 2 * margin;
+    let colors = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    ];
+    let show_legend = series.len() <= 6;
+
+    let mut svg = format!("<svg width='{w}' height='{h}' xmlns='http://www.w3.org/2000/svg'>");
+    // Axes.
+    svg.push_str(&format!(
+        "<line x1='{margin}' y1='{}' x2='{}' y2='{}' stroke='#333'/>",
+        h - margin,
+        w - margin,
+        h - margin,
+    ));
+    svg.push_str(&format!(
+        "<line x1='{margin}' y1='{margin}' x2='{margin}' y2='{}' stroke='#333'/>",
+        h - margin,
+    ));
+    // X-axis ticks (6, formatted YYYY-MM-DD).
+    for i in 0..=5 {
+        let t = xmin + (xmax - xmin) * (i as f64 / 5.0);
+        let sx = margin as f64 + scale(t, xmin, xmax, pw as f64);
+        svg.push_str(&format!(
+            "<line x1='{sx:.1}' y1='{}' x2='{sx:.1}' y2='{}' stroke='#ccc'/>",
+            h - margin,
+            h - margin + 5,
+        ));
+        let lbl = DateTime::from_timestamp_millis(t as i64)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        svg.push_str(&format!(
+            "<text x='{sx:.1}' y='{}' text-anchor='middle' font-size='10'>{lbl}</text>",
+            h - margin + 18,
+        ));
+    }
+    // Y-axis ticks (5).
+    for i in 0..=5 {
+        let v = ymin + (ymax - ymin) * (i as f64 / 5.0);
+        let sy = (h - margin) as f64 - scale(v, ymin, ymax, ph as f64);
+        svg.push_str(&format!(
+            "<line x1='{margin}' y1='{sy:.1}' x2='{}' y2='{sy:.1}' stroke='#ccc'/>",
+            margin - 5,
+        ));
+        svg.push_str(&format!(
+            "<text x='{}' y='{:.1}' text-anchor='end' font-size='10'>{v:.0}</text>",
+            margin - 8,
+            sy + 3.0,
+        ));
+    }
+    // Axis labels.
+    svg.push_str(&format!(
+        "<text x='{}' y='{}' text-anchor='middle'>{x_label}</text>",
+        w / 2,
+        h - 5,
+    ));
+    svg.push_str(&format!(
+        "<text x='15' y='{}' transform='rotate(-90 15 {})' text-anchor='middle'>{y_label}</text>",
+        h / 2,
+        h / 2,
+    ));
+    // Series polylines.
+    for (si, s) in series.iter().enumerate() {
+        let color = s
+            .color_hint
+            .clone()
+            .unwrap_or_else(|| colors[si % colors.len()].to_string());
+        let pts_str: String = s
+            .points
+            .iter()
+            .filter_map(|(t, e)| {
+                time_to_millis(t).map(|ts| {
+                    let sx = margin as f64 + scale(ts, xmin, xmax, pw as f64);
+                    let sy = (h - margin) as f64 - scale(*e, ymin, ymax, ph as f64);
+                    format!("{sx:.1},{sy:.1}")
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        svg.push_str(&format!(
+            "<polyline points='{pts_str}' fill='none' stroke='{color}' stroke-width='2' opacity='{opacity}'/>",
+        ));
+        if show_legend {
+            svg.push_str(&format!(
+                "<line x1='{}' y1='{}' x2='{}' y2='{}' stroke='{color}' stroke-width='2'/>",
+                w - margin,
+                25 + si * 15,
+                w - margin + 20,
+                25 + si * 15,
+            ));
+            svg.push_str(&format!(
+                "<text x='{}' y='{}' font-size='12'>{}</text>",
+                w - margin + 25,
+                30 + si * 15,
+                s.label,
+            ));
+        }
     }
     svg.push_str("</svg>");
     svg
