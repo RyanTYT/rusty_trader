@@ -87,7 +87,7 @@ impl NoiseRefinements {
     pub fn all_on() -> Self {
         Self {
             realized_vol: true,
-            ewma_vol: true,
+            ewma_vol: false,
             smooth_diurnal: true,
             dynamic_vol_threshold: true,
         }
