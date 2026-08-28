@@ -578,10 +578,8 @@ impl Noise {
         let last_time = New_York
             .with_ymd_and_hms(bar_time.year(), bar_time.month(), bar_time.day(), 15, 45, 0)
             .unwrap();
-        if ((bar_close < upper_noise
-            || Decimal::from_f64(bar_close)
-                .expect("Expected bar_close conversion to Decimal to be ok")
-                <= vwap)
+        if ((bar_close < lower_noise
+            )
             && bar_time.minute() % act_interval == 0)
             || bar_time >= last_time
         {
