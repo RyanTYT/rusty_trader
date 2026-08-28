@@ -27,7 +27,24 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV SQLX_OFFLINE=true
 
-# Copy trading-app (the lib dep) + its local deps + .sqlx cache + migrations.
+# ── Dep-caching layer ───────────────────────────────────────────────────────
+# Copy ONLY manifests + the stable local path-dep crates (with their real
+# src) + the .sqlx offline cache + migrations. Then stub a dummy entry point
+# for trading-app's lib AND the optimizer's bin so cargo can compile ALL
+# third-party deps (tokio, sqlx, ibapi, arc-swap, rayon, …) + the path-dep
+# crates WITHOUT the real trading-app/optimizer source.
+#
+# trading-app is consumed as a path-dep LIB by the optimizer, so only its
+# lib target is built here — its [[bin]] backtest is NOT built (and its
+# src/bin/backtest.rs need not exist). An empty lib.rs compiles under any
+# feature set; the `backtest` feature still pulls in arc-swap/atomic_float/
+# rayon as optional deps, so they get cached too.
+#
+# This layer is a Docker layer-cache hit as long as Cargo.toml/Cargo.lock and
+# the path-dep crates are unchanged → deps don't recompile on every source
+# change. (Note: this helps cold builds and Cargo.toml changes; for the hot
+# strategy-iteration loop you still recompile trading-app + optimizer from
+# scratch each build unless target/ persists across builds — see notes.)
 COPY trading/trading-app/Cargo.toml trading/trading-app/Cargo.lock ./trading-app/
 COPY trading/trading-app/crud_insertable ./trading-app/crud_insertable
 COPY trading/trading-app/crud_insertable_macro ./trading-app/crud_insertable_macro
@@ -35,16 +52,30 @@ COPY trading/trading-app/crud_models ./trading-app/crud_models
 COPY trading/trading-app/spmc-ring ./trading-app/spmc-ring
 COPY trading/trading-app/.sqlx ./trading-app/.sqlx
 COPY trading/trading-app/migrations ./trading-app/migrations
-COPY trading/trading-app/src ./trading-app/src
-
-# Copy the optimizer crate.
 COPY trading/optimizer/Cargo.toml ./optimizer/Cargo.toml
 COPY trading/optimizer/Cargo.lock ./optimizer/Cargo.lock
+
+# Stub dummy sources (empty trading-app lib + no-op optimizer bin), build to
+# compile deps, then remove the stubs so the real source can be copied in.
+RUN mkdir -p trading-app/src optimizer/src/bin && \
+    echo "" > trading-app/src/lib.rs && \
+    echo "fn main() {}" > optimizer/src/bin/optimize.rs && \
+    cd optimizer && cargo build --release --bin optimize && \
+    rm -rf trading-app/src optimizer/src
+
+# ── Real source ─────────────────────────────────────────────────────────────
+# Now copy the real trading-app + optimizer source. cargo sees all deps are
+# already compiled (fingerprints match) → only trading-app + optimizer
+# recompile from real source.
+COPY trading/trading-app/src ./trading-app/src
 COPY trading/optimizer/src ./optimizer/src
 
-# Build (trading-app is built with --features backtest via the path dep).
-RUN cd optimizer && cargo build --release --bin optimize \
-    && cp target/release/optimize /bin/optimize
+# Touch the optimizer bin to force a rebuild of the application code, then
+# build the real binary and stage it for the runtime stage.
+RUN cd optimizer && \
+    touch src/bin/optimize.rs && \
+    cargo build --release --bin optimize && \
+    cp target/release/optimize /bin/optimize
 
 ################################################################################
 # Runtime stage — IBC + Xvfb (same as Dockerfile.backtest, since the optimizer
