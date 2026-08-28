@@ -86,9 +86,9 @@ pub struct NoiseRefinements {
 impl NoiseRefinements {
     pub fn all_on() -> Self {
         Self {
-            realized_vol: true,
+            realized_vol: false,
             ewma_vol: false,
-            smooth_diurnal: true,
+            smooth_diurnal: false,
             dynamic_vol_threshold: false,
         }
     }
