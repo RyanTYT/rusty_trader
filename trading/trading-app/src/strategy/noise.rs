@@ -363,11 +363,7 @@ impl StrategyExecutor for Noise {
         res
     }
 
-    async fn warm_up_data(
-        &mut self,
-        consolidator: &Arc<Consolidator>,
-        #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
-    ) -> Result<(), String> {
+    async fn warm_up_data(&mut self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
         let avg_move_lookback = {
             #[cfg(feature = "backtest")]
             {
@@ -422,8 +418,6 @@ impl StrategyExecutor for Noise {
                 }),
                 5,
                 (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
-                #[cfg(feature = "backtest")]
-                None,
             )
             .await
             .map_err(|e| format!("{}", e))?;
