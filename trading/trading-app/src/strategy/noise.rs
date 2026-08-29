@@ -418,6 +418,7 @@ impl StrategyExecutor for Noise {
                 }),
                 5,
                 (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
+                None,
             )
             .await
             .map_err(|e| format!("{}", e))?;

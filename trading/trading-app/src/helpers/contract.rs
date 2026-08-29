@@ -145,7 +145,7 @@ pub enum LocalContractTypes {
     OpenOrders(OpenOrdersFullKeys),
 }
 
-pub(crate) fn build_contract_from_stock(
+pub fn build_contract_from_stock(
     stock: &String,
     primary_exchange: &String,
     currency: &String,
