@@ -91,7 +91,8 @@ async fn run_sweep_route(
         return Err("No recognised strategies found in *.json sweep files".into());
     }
     // Load the bars once (shared across all strategies' sweeps via Arc).
-    let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+    let raw_bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+    let bars = crate::backtester::methods::transpose(raw_bars);
     let bars_arc = Arc::new(bars);
     for strategy in strategies {
         let name = strategy.get_name();
@@ -172,7 +173,7 @@ async fn run_single_route(
         let results = match mode {
             BacktestMode::InMemory => {
                 let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
-                let bars_arc = Arc::new(bars);
+                let bars_arc = Arc::new(crate::backtester::methods::transpose(bars));
                 let config_clone = config.clone();
                 let pool_clone = pool.clone();
                 let handle_clone = handle.clone();

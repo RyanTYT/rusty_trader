@@ -9,8 +9,8 @@ use crate::database::models::{Status, StrategyFullKeys};
 use crate::database::models_crud::strategy::StrategyCRUD;
 use crate::strategy::strategy::StrategyExecutor;
 
-use crate::backtester::methods::BacktestMethod;
 use crate::backtester::methods::load_bars;
+use crate::backtester::methods::{BacktestMethod, transpose};
 use crate::backtester::output::equity::EquityCurve;
 use crate::backtester::setup::context::BacktestContext;
 
@@ -40,22 +40,15 @@ impl BacktestMethod for HistoricalReplay {
         });
 
         // 2. Load the bar stream (shared with InMemoryReplay).
-        let bars = ctx.handle.block_on(load_bars(&ctx.config, &ctx.pool))?;
-        tracing::info!(
-            "Backtest: {} bars (period: {:?})",
-            bars.len(),
-            ctx.config.period
-        );
+        let bars_raw = ctx.handle.block_on(load_bars(&ctx.config, &ctx.pool))?;
+        let bars = transpose(bars_raw);
 
         // 2.5. Warm up the strategy's data. The strategy is pure (uses `self.data`
         //      via the rolling fns) — `warm_up_data` builds it. In Db mode there's
         //      no bar cache, so `read_last_n` hits the DB (one-time, not per-bar).
-        if let Some(first_bar) = bars.first() {
-            let bar_time = first_bar.get_time();
-            ctx.handle
-                .block_on(strategy.warm_up_data(&ctx.consolidator, bar_time))
-                .map_err(|e| format!("warm_up_data: {e}"))?;
-        }
+        ctx.handle
+            .block_on(strategy.warm_up_data(&ctx.consolidator))
+            .map_err(|e| format!("warm_up_data: {e}"))?;
 
         // 3. Replay.
         let contract = ctx
@@ -65,30 +58,38 @@ impl BacktestMethod for HistoricalReplay {
             .cloned()
             .expect("BacktestConfig.subscribed_contracts must be non-empty");
         let mut equity = EquityCurve::new();
-        for bar in bars {
-            let time = bar.get_time();
-            ctx.clock.set(time);
-            let close = bar.get_price();
-            ctx.prices.publish_close(&contract, close);
-            ctx.broker.set_current_bar(bar.clone());
+        for bars_in_time in bars {
+            let mut this_time = None;
+            for opt_bar in bars_in_time {
+                let bar = match opt_bar {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-            // --- REAL prod on_bar_update (the strategy signal logic) ---
-            let outcome = strategy
-                .on_bar_update(&contract, &bar, &ctx.consolidator)
-                .unwrap_or_else(|e| {
-                    tracing::error!("on_bar_update error: {e:?}");
-                    crate::strategy::strategy::BarUpdateOutcome::NoAction
-                });
+                let time = bar.get_time();
+                this_time = Some(time);
+                ctx.clock.set(time);
+                let close = bar.get_price();
+                ctx.prices.publish_close(&contract, close);
+                ctx.broker.set_current_bar(bar.clone());
 
-            // --- REAL prod handle_bar_update_outcome (the reconciliation) ---
-            ctx.order_engine.handle_bar_update_outcome(
-                &*ctx.broker,
-                &*ctx.prices,
-                outcome,
-                &ctx.strategy_details,
-                &ctx.order_store,
-            );
+                // --- REAL prod on_bar_update (the strategy signal logic) ---
+                let outcome = strategy
+                    .on_bar_update(&contract, &bar, &ctx.consolidator)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("on_bar_update error: {e:?}");
+                        crate::strategy::strategy::BarUpdateOutcome::NoAction
+                    });
 
+                // --- REAL prod handle_bar_update_outcome (the reconciliation) ---
+                ctx.order_engine.handle_bar_update_outcome(
+                    &*ctx.broker,
+                    &*ctx.prices,
+                    outcome,
+                    &ctx.strategy_details,
+                    &ctx.order_store,
+                );
+            }
             // 4. Equity snapshot.
             let snap = ctx
                 .handle
@@ -96,12 +97,13 @@ impl BacktestMethod for HistoricalReplay {
                     &ctx.pool,
                     &*ctx.prices,
                     &strat_name,
-                    time,
+                    this_time.unwrap(),
                     &contract,
-                    close,
+                    0.0,
                 ));
             equity.push(snap);
         }
+
         Ok(equity)
     }
 }

@@ -43,12 +43,20 @@ pub fn parse_sweep_file(path: &Path) -> Vec<HashMap<String, f64>> {
 /// Run N in-memory backtests in parallel (rayon scope, core-sized pool). Each
 /// backtest's result streams to an I/O thread via a channel (JSONL output for
 /// live updates). Blocks until all backtests finish + the I/O thread drains.
+///
+/// Bars should be in a 2D shape of e.g.
+///
+/// Subscribed to AAPL, QQQ
+///
+/// [[AAPL_0, QQQ_0], [AAPL_1, QQQ_1], ...]
+///
+/// for cache friendliness
 pub fn run_backtest_sweep(
     name: &str,
     pool: sqlx::PgPool,
     config: &BacktestConfig,
     param_grid: &[HashMap<String, f64>],
-    bars: Arc<Vec<HistoricalDataFullKeys>>,
+    bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
     handle: &tokio::runtime::Handle,
 ) -> Result<(), String> {
     let (tx, rx) = std::sync::mpsc::channel::<SweepResult>();
@@ -114,12 +122,21 @@ pub fn run_backtest_sweep(
 /// `pub` so the `optimizer` crate (the research/optimization layer) can call
 /// it directly — the optimizer builds a param grid, runs each via this, +
 /// scores the results.
+///
+/// Bars should be in a 2D shape of e.g.
+///
+/// Subscribed to AAPL, QQQ
+///
+/// [[AAPL_0, QQQ_0], [AAPL_1, QQQ_1], ...]
+///
+/// for cache friendliness
+///
 pub fn run_one_backtest(
     name: &str,
     pool: &sqlx::PgPool,
     config: &BacktestConfig,
     params: &HashMap<String, f64>,
-    bars: Arc<Vec<HistoricalDataFullKeys>>,
+    bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
     handle: &tokio::runtime::Handle,
 ) -> Result<SweepResult, String> {
     let strategy = crate::strategy::construct_strategy(

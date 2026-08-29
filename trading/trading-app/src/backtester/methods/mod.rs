@@ -11,6 +11,8 @@
 pub mod historical;
 pub mod in_memory;
 
+use std::collections::{BTreeSet, HashMap};
+
 pub use historical::HistoricalReplay;
 pub use in_memory::replay::InMemoryReplay;
 
@@ -40,80 +42,130 @@ pub trait BacktestMethod {
 pub async fn load_bars(
     config: &crate::backtester::setup::config::BacktestConfig,
     pool: &sqlx::PgPool,
-) -> Result<Vec<HistoricalDataFullKeys>, String> {
-    let c = config
-        .subscribed_contracts
-        .first()
-        .expect("subscribed_contracts non-empty");
-    let stock = get_local_symbol(c);
-    let pe = c.primary_exchange.to_string();
-    let currency = c.currency.to_string();
+) -> Result<Vec<Vec<HistoricalDataFullKeys>>, String> {
+    let data_fut = config.subscribed_contracts.iter().map(|c| {
+        let pool_clone = pool.clone();
+        async move {
+            let stock = get_local_symbol(c);
+            let pe = c.primary_exchange.to_string();
+            let currency = c.currency.to_string();
 
-    #[derive(FromRow)]
-    struct BarRow {
-        stock: String,
-        primary_exchange: String,
-        currency: String,
-        time: DateTime<Utc>,
-        open: f64,
-        high: f64,
-        low: f64,
-        close: f64,
-        volume: rust_decimal::Decimal,
+            #[derive(FromRow)]
+            struct BarRow {
+                stock: String,
+                primary_exchange: String,
+                currency: String,
+                time: DateTime<Utc>,
+                open: f64,
+                high: f64,
+                low: f64,
+                close: f64,
+                volume: rust_decimal::Decimal,
+            }
+
+            use crate::backtester::setup::config::BacktestPeriod;
+            let rows: Vec<BarRow> = match &config.period {
+                BacktestPeriod::TimeRange { start, end } => sqlx::query_as(
+                    r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
+                       FROM market_data.historical_data
+                       WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                         AND time >= $4 AND time <= $5
+                       ORDER BY time ASC"#,
+                )
+                .bind(stock.clone())
+                .bind(pe.clone())
+                .bind(currency.clone())
+                .bind(*start)
+                .bind(*end)
+                .fetch_all(&pool_clone)
+                .await
+                .map_err(|e| format!("load_bars (TimeRange): {e:?}"))?,
+                BacktestPeriod::NumBars(n) => {
+                    // Last N bars in the DB (DESC) — reverse to chronological (ASC).
+                    let mut rows: Vec<BarRow> = sqlx::query_as(
+                    r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
+                       FROM market_data.historical_data
+                       WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                       ORDER BY time DESC
+                       LIMIT $4"#,
+                )
+                .bind(stock.clone())
+                .bind(pe.clone())
+                .bind(currency.clone())
+                .bind(*n as i64)
+                .fetch_all(&pool_clone)
+                .await
+                .map_err(|e| format!("load_bars (NumBars): {e:?}"))?;
+                    rows.reverse();
+                    rows
+                }
+            };
+
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    HistoricalDataFullKeys::Stock(HistoricalStockDataFullKeys {
+                        stock: r.stock,
+                        primary_exchange: r.primary_exchange,
+                        currency: r.currency,
+                        time: r.time,
+                        open: r.open,
+                        high: r.high,
+                        low: r.low,
+                        close: r.close,
+                        volume: r.volume,
+                    })
+                })
+                .collect::<Vec<HistoricalDataFullKeys>>())
+        }
+    });
+
+    let results = futures::future::join_all(data_fut).await;
+    let data = results.into_iter().collect::<Result<Vec<_>, String>>()?;
+
+    Ok(data)
+}
+
+pub fn transpose(
+    matrix: Vec<Vec<HistoricalDataFullKeys>>,
+) -> Vec<Vec<Option<HistoricalDataFullKeys>>> {
+    if matrix.is_empty() || matrix[0].is_empty() {
+        return vec![];
     }
 
-    use crate::backtester::setup::config::BacktestPeriod;
-    let rows: Vec<BarRow> = match &config.period {
-        BacktestPeriod::TimeRange { start, end } => sqlx::query_as(
-            r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
-                   FROM market_data.historical_data
-                   WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
-                     AND time >= $4 AND time <= $5
-                   ORDER BY time ASC"#,
-        )
-        .bind(stock.clone())
-        .bind(pe.clone())
-        .bind(currency.clone())
-        .bind(*start)
-        .bind(*end)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("load_bars (TimeRange): {e:?}"))?,
-        BacktestPeriod::NumBars(n) => {
-            // Last N bars in the DB (DESC) — reverse to chronological (ASC).
-            let mut rows: Vec<BarRow> = sqlx::query_as(
-                r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
-                   FROM market_data.historical_data
-                   WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
-                   ORDER BY time DESC
-                   LIMIT $4"#,
-            )
-            .bind(stock.clone())
-            .bind(pe.clone())
-            .bind(currency.clone())
-            .bind(*n as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("load_bars (NumBars): {e:?}"))?;
-            rows.reverse();
-            rows
-        }
-    };
+    let rows = matrix.len();
+    let cols = matrix[0].len();
 
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            HistoricalDataFullKeys::Stock(HistoricalStockDataFullKeys {
-                stock: r.stock,
-                primary_exchange: r.primary_exchange,
-                currency: r.currency,
-                time: r.time,
-                open: r.open,
-                high: r.high,
-                low: r.low,
-                close: r.close,
-                volume: r.volume,
+    let mut unique_times: BTreeSet<DateTime<Utc>> = BTreeSet::new();
+    for bars in &matrix {
+        for bar in bars {
+            unique_times.insert(bar.get_time());
+        }
+    }
+
+    // Create a new matrix with swapped dimensions (cols x rows)
+    let mut result: Vec<Vec<Option<HistoricalDataFullKeys>>> =
+        vec![vec![None; rows]; unique_times.len()];
+
+    let mut indices = vec![0; rows];
+    for (res_idx, time) in unique_times.into_iter().enumerate() {
+        indices = indices
+            .into_iter()
+            .enumerate()
+            .map(|(stock_idx, idx)| {
+                if idx as usize > matrix[stock_idx].len() - 1 {
+                    return idx;
+                }
+                let bar = matrix[stock_idx][idx as usize].clone();
+                if bar.get_time() == time {
+                    result[res_idx][stock_idx] = Some(bar);
+                    idx + 1
+                } else {
+                    idx
+                }
             })
-        })
-        .collect())
+            .collect()
+    }
+
+    result
 }
