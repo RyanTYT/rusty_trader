@@ -95,11 +95,7 @@ impl StrategyExecutor for Manual {
         ]
     }
 
-    async fn warm_up_data(
-        &mut self,
-        _consolidator: &Arc<Consolidator>,
-        #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
-    ) -> Result<(), String> {
+    async fn warm_up_data(&mut self, _consolidator: &Arc<Consolidator>) -> Result<(), String> {
         Ok(())
     }
 }
