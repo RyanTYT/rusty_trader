@@ -1906,6 +1906,7 @@ dependencies = [
  "chrono",
  "ibapi",
  "num_cpus",
+ "ordered-float",
  "rand 0.9.5",
  "rayon",
  "serde",

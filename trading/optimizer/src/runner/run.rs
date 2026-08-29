@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use sqlx::PgPool;
 use tokio::runtime::Handle;
 
-use trading_app::backtester::methods::load_bars;
+use trading_app::backtester::methods::{load_bars, transpose};
 use trading_app::backtester::sweep::{SweepResult, run_one_backtest};
 use trading_app::backtester::{BacktestConfig, BacktestPeriod, BacktestResults};
 
@@ -56,9 +56,7 @@ pub async fn run_optimization(
     handle: &Handle,
 ) -> Result<OptResult, String> {
     // 1. Load bars (in-sample) — Arc so the parallel sweep shares them.
-    let raw_bars = load_bars(&cfg.base_config, &pool).await?;
-    // 1.1 Transpose bars in 2D
-    let bars = transpose(raw_bars);
+    let bars = Arc::new(transpose(load_bars(&cfg.base_config, &pool).await?));
 
     // 2. Sequential loop: pull batches, run in parallel, score by phase-1.
     let mut history: Vec<EvalResult> = Vec::new();
@@ -151,7 +149,7 @@ pub async fn run_optimization(
         ValidationScheme::Holdout(h) => {
             let mut oos_config = cfg.base_config.clone();
             oos_config.period = h.out_sample.clone();
-            let oos_bars = Arc::new(load_bars(&oos_config, &pool).await?);
+            let oos_bars = Arc::new(transpose(load_bars(&oos_config, &pool).await?));
             let mut oos_results_res = None;
             rayon::scope(|s| {
                 s.spawn(|_| {

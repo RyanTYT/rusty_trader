@@ -58,6 +58,29 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for HistoricalDataFullKeys {
     }
 }
 
+macro_rules! delegate_price {
+    ($( [$fn_name:ident, $field:ident, $ask_field:ident, $bid_field:ident ]),+ $(,)?) => {
+        $(
+            pub fn $fn_name(&self) -> f64 {
+                match self {
+                    Self::Stock(v) => v.$field,
+                    Self::Options(v) => v.$field,
+                    Self::Forex(v) => v.$ask_field.unwrap_or(v.$bid_field.unwrap_or(-1.0)),
+                    Self::DailyStock(v) => v.$field.to_f64().expect("Expected conversion to f64"),
+                }
+            }
+        )+
+    };
+}
+impl HistoricalDataFullKeys {
+    delegate_price!(
+        [get_price, close, ask_close, bid_close],
+        [get_open_price, open, ask_open, bid_open],
+        [get_high_price, high, ask_high, bid_high],
+        [get_low_price, low, ask_low, bid_low],
+    );
+}
+
 impl HistoricalDataFullKeys {
     pub fn get_time(&self) -> DateTime<Utc> {
         match self {
@@ -65,33 +88,6 @@ impl HistoricalDataFullKeys {
             Self::Forex(v) => v.time,
             Self::Options(v) => v.time,
             Self::DailyStock(v) => v.day,
-        }
-    }
-
-    pub fn get_price(&self) -> f64 {
-        match self {
-            Self::Stock(v) => v.close,
-            Self::Forex(v) => v.ask_close.unwrap_or(v.bid_close.unwrap_or(-1.0)),
-            Self::Options(v) => v.close,
-            Self::DailyStock(v) => v.close.to_f64().expect("Expected conversion to f64"),
-        }
-    }
-
-    pub fn get_open_price(&self) -> f64 {
-        match self {
-            Self::Stock(v) => v.open,
-            Self::Forex(v) => v.ask_open.unwrap_or(v.bid_open.unwrap_or(-1.0)),
-            Self::Options(v) => v.open,
-            Self::DailyStock(v) => v.open.to_f64().expect("Expected conversion to f64"),
-        }
-    }
-
-    pub fn get_high_price(&self) -> f64 {
-        match self {
-            Self::Stock(v) => v.high,
-            Self::Forex(v) => v.ask_high.unwrap_or(v.bid_high.unwrap_or(-1.0)),
-            Self::Options(v) => v.high,
-            Self::DailyStock(v) => v.high.to_f64().expect("Expected conversion to f64"),
         }
     }
 

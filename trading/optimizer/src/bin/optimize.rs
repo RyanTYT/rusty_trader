@@ -29,6 +29,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -47,10 +48,13 @@ use optimizer::{
     report::RobustnessReport,
     runner::run::{OptResult, WalkForwardResult, run_optimization, run_walk_forward},
 };
-use trading_app::backtester::{BacktestConfig, BacktestMode, BacktestPeriod};
 use trading_app::{
     backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate},
     database::models::AssetType,
+};
+use trading_app::{
+    backtester::{BacktestConfig, BacktestMode, BacktestPeriod},
+    helpers::contract::build_contract_from_stock,
 };
 
 /// The `config` section of `optimiser_params.json`. `start` + `end` are
@@ -89,21 +93,73 @@ struct WalkForwardJson {
     out_sample_days: i64,
 }
 
-#[derive(Hash, Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "asset_type", rename_all = "lowercase")]
 enum JsonContract {
     Stock(StockContract),
     Option(OptionContract),
 }
 
-#[derive(Hash, Debug, Serialize, Deserialize)]
+impl Hash for JsonContract {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Stock(v) => {
+                v.stock.hash(state);
+                v.primary_exchange.hash(state);
+                v.currency.hash(state);
+            }
+            Self::Option(v) => {
+                v.stock.hash(state);
+                v.primary_exchange.hash(state);
+                v.currency.hash(state);
+            }
+        };
+        match self {
+            Self::Stock(_) => "stock".to_string().hash(state),
+            Self::Option(contract) => {
+                "option".to_string().hash(state);
+                contract.option_type.hash(state);
+                contract.expiry.hash(state);
+                ordered_float::OrderedFloat(contract.strike).hash(state);
+                contract.multiplier.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq for JsonContract {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stock(v), Self::Stock(v_other)) => {
+                v.primary_exchange.as_str().trim() == v_other.primary_exchange.as_str().trim()
+                    && v.stock == v_other.stock
+                    && v.currency == v_other.currency
+            }
+            (Self::Option(v), Self::Option(v_other)) => {
+                v.primary_exchange.as_str().trim() == v_other.primary_exchange.as_str().trim()
+                    && v.stock == v_other.stock
+                    && v.currency == v_other.currency
+                    && v.option_type == v_other.option_type
+                    && v.expiry == v_other.expiry
+                    && ordered_float::OrderedFloat(v.strike)
+                        == ordered_float::OrderedFloat(v_other.strike)
+                    && v.multiplier == v_other.multiplier
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for JsonContract {}
+
+#[derive(Debug, Deserialize, Clone)]
 struct StockContract {
     pub stock: String,
     pub primary_exchange: String,
     pub currency: String,
 }
 
-#[derive(Hash, Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct OptionContract {
     pub stock: String,
     pub primary_exchange: String,
@@ -140,19 +196,18 @@ struct OptimiserFile {
 fn parse_into_contract(contract_data: &JsonContract) -> Contract {
     match contract_data {
         JsonContract::Stock(stock_contract) => build_contract_from_stock(
-            stock_contract.stock,
-            stock_contract.primary_exchange,
-            stock_contract.currency,
+            &stock_contract.stock,
+            &stock_contract.primary_exchange,
+            &stock_contract.currency,
         ),
         JsonContract::Option(option_contract) => Contract::option(
-            stock_contract.stock,
-            stock_contract.expiry,
-            stock_contract.strike,
-            stock_contract.right,
-        )
-        .primary_exchange(stock_contract.primary_exchange)
-        .in_currency(stock_contract.currency)
-        .build(),
+            &option_contract.stock,
+            &option_contract.expiry,
+            option_contract.strike,
+            &option_contract.option_type,
+        ),
+        // .primary_exchange(option_contract.primary_exchange)
+        // .in_currency(option_contract.currency)
     }
     // let asset_type = AssetType::from_string(
     //     contract_data
@@ -284,7 +339,7 @@ async fn main() -> Result<(), String> {
     // 2. Build the base backtest config (full period; split later).
     let mut all_contracts = HashSet::new();
     for strategy_config in file.strategies.values() {
-        for contract in strategy_config.contracts {
+        for contract in strategy_config.contracts.clone() {
             all_contracts.insert(contract);
         }
     }
@@ -305,7 +360,7 @@ async fn main() -> Result<(), String> {
     let bars_per_contract = trading_app::backtester::methods::load_bars(&base_config, &pool)
         .await
         .map_err(|e| format!("load_bars check: {e}"))?;
-    let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty);
+    let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
     if has_empty_bars {
         tracing::info!(
             "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
