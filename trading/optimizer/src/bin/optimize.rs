@@ -360,21 +360,8 @@ async fn main() -> Result<(), String> {
     let bars_per_contract = trading_app::backtester::methods::load_bars(&base_config, &pool)
         .await
         .map_err(|e| format!("load_bars check: {e}"))?;
-    println!(
-        "Bars len: {:?} ({:?})",
-        bars_per_contract.len(),
-        bars_per_contract
-            .iter()
-            .map(|bars| if bars.is_empty() {
-                "empty".to_string()
-            } else {
-                "non-empty".to_string()
-            })
-            .collect::<Vec<String>>()
-            .join(", ")
-    );
     let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
-    if has_empty_bars {
+    if !has_empty_bars {
         tracing::info!(
             "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
             start,
