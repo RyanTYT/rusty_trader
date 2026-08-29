@@ -64,7 +64,7 @@ impl InMemoryReplay {
     pub fn run_with_warm_up(
         &self,
         strategy: StrategyEnum,
-        bars: Arc<Vec<HistoricalDataFullKeys>>,
+        bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
         config: &BacktestConfig,
         handle: &tokio::runtime::Handle,
         light: &LightContext,
@@ -77,20 +77,23 @@ impl InMemoryReplay {
         // Warm up the strategy's data (pure — reads the lookback from the
         // cache, builds the rolling fns). block_on on the caller's thread.
         let mut strategy = strategy;
-        if let Some(first_bar) = bars.first() {
-            let bar_time = first_bar.get_time();
-            handle
-                .block_on(strategy.warm_up_data(&light.consolidator, bar_time))
-                .map_err(|e| format!("warm_up_data: {e}"))?;
-        }
+        handle
+            .block_on(strategy.warm_up_data(&light.consolidator))
+            .map_err(|e| format!("warm_up_data: {e}"))?;
 
         // Trim the bars to post-warm-up. The bars are sorted ascending, so
         // the warm-up window (bars <= max_end_time) is a short prefix —
         // linear-scan from the front (cache-friendly) + take the suffix as a
         // slice (no clone, no data leakage — the rolling fns saw the prefix).
-        let trimmed: &[HistoricalDataFullKeys] = match cache.max_end_time() {
+        let trimmed: &[Vec<Option<HistoricalDataFullKeys>>] = match cache.max_end_time() {
             Some(t) => {
-                let split = bars.iter().position(|b| b.get_time() > t).unwrap_or(0);
+                let split = bars
+                    .iter()
+                    .position(|bar| {
+                        bar.iter()
+                            .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > t))
+                    })
+                    .unwrap_or(0);
                 &bars[split..]
             }
             None => &bars[..],
@@ -115,7 +118,7 @@ impl InMemoryReplay {
     pub fn run_with_bars(
         &self,
         ctx: InMemoryRunContext,
-        bars: &[HistoricalDataFullKeys],
+        bars: &[Vec<Option<HistoricalDataFullKeys>>],
     ) -> Result<(EquityCurve, Arc<InMemoryState>), String> {
         // 1. Create + seed the in-memory state (CASH:SGD = starting capital).
         let strat_name = ctx.strategy.get_name();
@@ -138,32 +141,40 @@ impl InMemoryReplay {
             .expect("BacktestConfig.subscribed_contracts must be non-empty");
         let mut equity = EquityCurve::new();
         let mut order_id: i32 = 0;
-        for bar in bars {
-            let time = bar.get_time();
-            ctx.clock.set(time);
-            let close = bar.get_price();
-            ctx.prices.publish_close(&contract, close);
+        for contracts in bars {
+            let mut this_time = None;
+            for opt_bar in contracts {
+                let bar = match opt_bar {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let time = bar.get_time();
+                this_time = Some(time);
+                ctx.clock.set(time);
+                let close = bar.get_price();
+                ctx.prices.publish_close(&contract, close);
 
-            // --- REAL prod on_bar_update (cfg-gated branches write to
-            //     InMemoryState instead of the DB) ---
-            let outcome = strategy
-                .on_bar_update(&contract, bar, ctx.consolidator)
-                .unwrap_or_else(|e| {
-                    tracing::error!("on_bar_update error: {e:?}");
-                    crate::strategy::strategy::BarUpdateOutcome::NoAction
-                });
+                // --- REAL prod on_bar_update (cfg-gated branches write to
+                //     InMemoryState instead of the DB) ---
+                let outcome = strategy
+                    .on_bar_update(&contract, bar, ctx.consolidator)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("on_bar_update error: {e:?}");
+                        crate::strategy::strategy::BarUpdateOutcome::NoAction
+                    });
 
-            // --- NEW in-memory reconcile (no DB, no broker) ---
-            if let Err(e) = handle_bar_update_outcome_in_memory(
-                ctx.config,
-                ctx.prices as &dyn PriceSupplier,
-                &state,
-                &outcome,
-                &contract,
-                bar,
-                &mut order_id,
-            ) {
-                tracing::error!("InMemory reconcile error: {e:?}");
+                // --- NEW in-memory reconcile (no DB, no broker) ---
+                if let Err(e) = handle_bar_update_outcome_in_memory(
+                    ctx.config,
+                    ctx.prices as &dyn PriceSupplier,
+                    &state,
+                    &outcome,
+                    &contract,
+                    bar,
+                    &mut order_id,
+                ) {
+                    tracing::error!("InMemory reconcile error: {e:?}");
+                }
             }
 
             // 4. Equity snapshot (read directly from the InMemoryState — no
@@ -172,8 +183,8 @@ impl InMemoryReplay {
             let snap = crate::backtester::output::equity::compute_snapshot_from_positions(
                 positions,
                 ctx.prices as &dyn PriceSupplier,
-                time,
-                close,
+                this_time.unwrap(),
+                0.0,
             );
             equity.push(snap);
         }

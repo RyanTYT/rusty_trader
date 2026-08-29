@@ -33,14 +33,14 @@ use crate::database::models_crud::historical_data::historical_data::{
 /// (per-backtest, via interior mutability) — the backtester reads it to trim
 /// the replay stream to post-warm-up.
 pub struct BarCache {
-    bars: Arc<Vec<HistoricalDataFullKeys>>,
+    bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
     max_end_time: RefCell<Option<DateTime<Utc>>>,
 }
 
 impl BarCache {
     /// Build from the full pre-populated bar set (shared via `Arc`). Each
     /// backtest clones the `Arc` (cheap) + gets a fresh `max_end_time`.
-    pub fn new(bars: Arc<Vec<HistoricalDataFullKeys>>) -> Self {
+    pub fn new(bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>) -> Self {
         Self {
             bars,
             max_end_time: RefCell::new(None),
@@ -67,11 +67,16 @@ impl BarCache {
         let matching: Vec<&HistoricalDataFullKeys> = self
             .bars
             .iter()
-            .filter(|b| bar_matches_pk(b, pk))
-            .filter(|b| match bar_time {
-                Some(t) => b.get_time() < t,
-                None => true,
+            .filter_map(|bar| {
+                bar.iter().find(|raw_b| {
+                    raw_b.as_ref().is_some_and(|b| {
+                        bar_matches_pk(&b, pk)
+                            && (bar_time
+                                .is_none_or(|latest_bar_time| b.get_time() < latest_bar_time))
+                    })
+                })
             })
+            .filter_map(|opt_v| opt_v.as_ref())
             .collect();
         if matching.is_empty() {
             return None;
