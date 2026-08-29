@@ -105,6 +105,19 @@ impl AssetType {
             }
         }
     }
+
+    pub fn from_string(asset_type: &str) -> Self {
+        match asset_type {
+            "stock" => Self::Stock,
+            "future" => Self::Future,
+            "option" => Self::Option,
+            "forexPair" => Self::ForexPair,
+            "cfd" => Self::CFD,
+            "cash" => Self::CASH,
+            "unknown" => Self::Unknown,
+            _ => panic!("Can't parse AssetType from string"),
+        }
+    }
 }
 
 impl Display for AssetType {

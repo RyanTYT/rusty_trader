@@ -15,6 +15,7 @@ sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "migrate"] 
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+ibapi = { git = "https://github.com/RyanTYT/rust-ibapi-fork.git", branch = "ibapi-rtyt", default-features = false, features = ["sync"] }
 
 [[bin]]
 name = "optimize"

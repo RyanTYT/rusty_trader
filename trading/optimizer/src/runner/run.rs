@@ -56,7 +56,9 @@ pub async fn run_optimization(
     handle: &Handle,
 ) -> Result<OptResult, String> {
     // 1. Load bars (in-sample) — Arc so the parallel sweep shares them.
-    let bars = Arc::new(load_bars(&cfg.base_config, &pool).await?);
+    let raw_bars = load_bars(&cfg.base_config, &pool).await?;
+    // 1.1 Transpose bars in 2D
+    let bars = transpose(raw_bars);
 
     // 2. Sequential loop: pull batches, run in parallel, score by phase-1.
     let mut history: Vec<EvalResult> = Vec::new();
