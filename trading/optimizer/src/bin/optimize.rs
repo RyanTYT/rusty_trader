@@ -180,6 +180,7 @@ struct OptionContract {
 /// be swept freely).
 #[derive(Deserialize)]
 struct StrategyConfig {
+    activated: bool,
     contracts: Vec<JsonContract>,
     params: Vec<ParamSpec>,
 }
@@ -339,8 +340,10 @@ async fn main() -> Result<(), String> {
     // 2. Build the base backtest config (full period; split later).
     let mut all_contracts = HashSet::new();
     for strategy_config in file.strategies.values() {
-        for contract in strategy_config.contracts.clone() {
-            all_contracts.insert(contract);
+        if strategy_config.activated {
+            for contract in strategy_config.contracts.clone() {
+                all_contracts.insert(contract);
+            }
         }
     }
     let base_config = BacktestConfig::new(capital)
@@ -434,6 +437,9 @@ async fn main() -> Result<(), String> {
 
     // 6. For each strategy config in the JSON, build the OptConfig + run.
     for (name, strategy_config) in &file.strategies {
+        if !strategy_config.activated {
+            continue;
+        }
         let specs = strategy_config.params.clone();
         tracing::info!("Loaded {} param specs for '{name}'", specs.len());
 
