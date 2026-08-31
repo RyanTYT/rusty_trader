@@ -178,7 +178,7 @@ struct OptionContract {
 /// (the fixed lookbacks) — all tunable params are now here, swept uniformly
 /// (the pure-strategy architecture has no precomputed cache, so lookbacks can
 /// be swept freely).
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct StrategyConfig {
     activated: bool,
     contracts: Vec<JsonContract>,
@@ -440,6 +440,7 @@ async fn main() -> Result<(), String> {
         if !strategy_config.activated {
             continue;
         }
+        println!("{name}: {:?}", strategy_config);
         let specs = strategy_config.params.clone();
         tracing::info!("Loaded {} param specs for '{name}'", specs.len());
 
