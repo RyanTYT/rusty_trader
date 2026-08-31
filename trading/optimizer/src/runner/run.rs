@@ -26,6 +26,7 @@ use tokio::runtime::Handle;
 use trading_app::backtester::methods::{load_bars, transpose};
 use trading_app::backtester::sweep::{SweepResult, run_one_backtest};
 use trading_app::backtester::{BacktestConfig, BacktestPeriod, BacktestResults};
+use trading_app::strategy::strategy::StrategyExecutor;
 
 use crate::config::opt_config::OptConfig;
 use crate::config::param_spec::ParamSpec;
@@ -55,8 +56,28 @@ pub async fn run_optimization(
     cfg: OptConfig,
     handle: &Handle,
 ) -> Result<OptResult, String> {
-    // 1. Load bars (in-sample) — Arc so the parallel sweep shares them.
-    let bars = Arc::new(transpose(load_bars(&cfg.base_config, &pool).await?));
+    // 1. Load bars (in-sample) — Arc so the parallel sweep shares them. Use
+    // the MAX warmup_bars_required() across the param space: construct the
+    // strategy with each param at its spec's max, then read
+    // warmup_bars_required(). Every candidate's warmup is then served by the
+    // shared prefix (the warmup reads the last N before bar_time regardless
+    // of N vs prefix count).
+    let max_params: std::collections::HashMap<String, f64> = cfg
+        .specs
+        .iter()
+        .map(|s| (s.name.clone(), s.range().1))
+        .collect();
+    let max_strategy = trading_app::strategy::construct_strategy(
+        &cfg.strategy_name,
+        pool.clone(),
+        handle.clone(),
+        Some(max_params),
+    )
+    .ok_or_else(|| format!("Unknown strategy '{}' for warmup sizing", cfg.strategy_name))?;
+    let warmup_bars = max_strategy.warmup_bars_required();
+    let bars = Arc::new(transpose(
+        load_bars(&cfg.base_config, &pool, warmup_bars).await?,
+    ));
 
     // 2. Sequential loop: pull batches, run in parallel, score by phase-1.
     let mut history: Vec<EvalResult> = Vec::new();
@@ -136,34 +157,34 @@ pub async fn run_optimization(
         .cloned()
         .ok_or("optimization produced no results")?;
 
-    for ev in &eval_results {
-        if let Some(h) = history.iter_mut().find(|h| h.params == ev.params) {
-            h.neighborhood = ev.neighborhood.clone();
-            h.score = ev.score;
-        }
-    }
-
     // 6. Out-of-sample validation (if Holdout).
     let out_of_sample = match &cfg.validation {
         ValidationScheme::None => None,
         ValidationScheme::Holdout(h) => {
             let mut oos_config = cfg.base_config.clone();
             oos_config.period = h.out_sample.clone();
-            let oos_bars = Arc::new(transpose(load_bars(&oos_config, &pool).await?));
-            let mut oos_results_res = None;
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    oos_results_res = Some(run_one_backtest(
-                        &cfg.strategy_name,
-                        &pool,
-                        &oos_config,
-                        &best.params,
-                        oos_bars,
-                        handle,
-                    ))
-                });
-            });
-            let oos_results = oos_results_res.unwrap()?;
+            // OOS: load with the best params' EXACT warmup need (the cache
+            // is loaded once for the best params, not shared across
+            // candidates) — so the warmup prefix matches the read limit
+            // exactly → clean OOS (the walk-forward 0-trade fix).
+            let best_strategy = trading_app::strategy::construct_strategy(
+                &cfg.strategy_name,
+                pool.clone(),
+                handle.clone(),
+                Some(best.params.clone()),
+            )
+            .ok_or_else(|| format!("Unknown strategy '{}' for OOS warmup", cfg.strategy_name))?;
+            let oos_bars = Arc::new(transpose(
+                load_bars(&oos_config, &pool, best_strategy.warmup_bars_required()).await?,
+            ));
+            let oos_results = run_one_backtest(
+                &cfg.strategy_name,
+                &pool,
+                &oos_config,
+                &best.params,
+                oos_bars,
+                handle,
+            )?;
             Some(oos_results.results)
         }
         // Walk-forward is handled by `run_walk_forward` (which calls
