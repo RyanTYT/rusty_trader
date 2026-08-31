@@ -133,17 +133,26 @@ impl InMemoryReplay {
         state::set(state.clone());
 
         // 3. Replay.
-        let contract: Contract = ctx
-            .config
-            .subscribed_contracts
-            .first()
-            .cloned()
-            .expect("BacktestConfig.subscribed_contracts must be non-empty");
+        // let contract: Contract = ctx
+        //     .config
+        //     .subscribed_contracts
+        //     .first()
+        //     .cloned()
+        //     .expect("BacktestConfig.subscribed_contracts must be non-empty");
         let mut equity = EquityCurve::new();
         let mut order_id: i32 = 0;
         for contracts in bars {
             let mut this_time = None;
-            for opt_bar in contracts {
+            for idx in 0..contracts.len() {
+                let opt_bar = contracts
+                    .get(idx)
+                    .expect("Expected idx from contracts to be within bounds");
+                let contract = ctx
+                    .config
+                    .subscribed_contracts
+                    .get(idx)
+                    .expect("Expected contract aligned with opt_bar in replay");
+                // for opt_bar in contracts {
                 let bar = match opt_bar {
                     Some(v) => v,
                     None => continue,
