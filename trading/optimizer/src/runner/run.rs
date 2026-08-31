@@ -177,14 +177,20 @@ pub async fn run_optimization(
             let oos_bars = Arc::new(transpose(
                 load_bars(&oos_config, &pool, best_strategy.warmup_bars_required()).await?,
             ));
-            let oos_results = run_one_backtest(
-                &cfg.strategy_name,
-                &pool,
-                &oos_config,
-                &best.params,
-                oos_bars,
-                handle,
-            )?;
+            let mut oos_results_res = None;
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    oos_results_res = Some(run_one_backtest(
+                        &cfg.strategy_name,
+                        &pool,
+                        &oos_config,
+                        &best.params,
+                        oos_bars,
+                        handle,
+                    ))
+                });
+            });
+            let oos_results = oos_results_res.unwrap()?;
             Some(oos_results.results)
         }
         // Walk-forward is handled by `run_walk_forward` (which calls
