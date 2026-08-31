@@ -27,9 +27,14 @@
 //! loader the backtester uses (`load_market_data`) — so the DB is guaranteed
 //! to have the bars for the full period before the optimization runs.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    sync::Arc,
+};
 
 use chrono::{DateTime, Utc};
+use ibapi::contracts::Contract;
 use serde::Deserialize;
 
 use optimizer::{
@@ -43,10 +48,14 @@ use optimizer::{
     report::RobustnessReport,
     runner::run::{OptResult, WalkForwardResult, run_optimization, run_walk_forward},
 };
-use trading_app::backtester::oracle::data_loader::{
-    load_market_data, refresh_continuous_aggregate,
+use trading_app::{
+    backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate},
+    database::models::AssetType,
 };
-use trading_app::backtester::{BacktestConfig, BacktestMode, BacktestPeriod};
+use trading_app::{
+    backtester::{BacktestConfig, BacktestMode, BacktestPeriod},
+    helpers::contract::build_contract_from_stock,
+};
 
 /// The `config` section of `optimiser_params.json`. `start` + `end` are
 /// required (RFC3339); the rest have defaults.
@@ -58,9 +67,10 @@ struct OptimiserConfig {
     grid_steps: Option<usize>,
     top_k: Option<usize>,
     starting_capital_sgd: Option<f64>,
-    stock: Option<String>,
-    primary_exchange: Option<String>,
-    currency: Option<String>,
+
+    // stock: Option<String>,
+    // primary_exchange: Option<String>,
+    // currency: Option<String>,
     /// "grid" (default), "random", or "tpe".
     optimizer: Option<String>,
     /// The batch size per iteration (default 8 — the core count).
@@ -83,6 +93,85 @@ struct WalkForwardJson {
     out_sample_days: i64,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "asset_type", rename_all = "lowercase")]
+enum JsonContract {
+    Stock(StockContract),
+    Option(OptionContract),
+}
+
+impl Hash for JsonContract {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Stock(v) => {
+                v.stock.hash(state);
+                v.primary_exchange.hash(state);
+                v.currency.hash(state);
+            }
+            Self::Option(v) => {
+                v.stock.hash(state);
+                v.primary_exchange.hash(state);
+                v.currency.hash(state);
+            }
+        };
+        match self {
+            Self::Stock(_) => "stock".to_string().hash(state),
+            Self::Option(contract) => {
+                "option".to_string().hash(state);
+                contract.option_type.hash(state);
+                contract.expiry.hash(state);
+                ordered_float::OrderedFloat(contract.strike).hash(state);
+                contract.multiplier.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq for JsonContract {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stock(v), Self::Stock(v_other)) => {
+                v.primary_exchange.as_str().trim() == v_other.primary_exchange.as_str().trim()
+                    && v.stock == v_other.stock
+                    && v.currency == v_other.currency
+            }
+            (Self::Option(v), Self::Option(v_other)) => {
+                v.primary_exchange.as_str().trim() == v_other.primary_exchange.as_str().trim()
+                    && v.stock == v_other.stock
+                    && v.currency == v_other.currency
+                    && v.option_type == v_other.option_type
+                    && v.expiry == v_other.expiry
+                    && ordered_float::OrderedFloat(v.strike)
+                        == ordered_float::OrderedFloat(v_other.strike)
+                    && v.multiplier == v_other.multiplier
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for JsonContract {}
+
+#[derive(Debug, Deserialize, Clone)]
+struct StockContract {
+    pub stock: String,
+    pub primary_exchange: String,
+    pub currency: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct OptionContract {
+    pub stock: String,
+    pub primary_exchange: String,
+    pub currency: String,
+
+    // Additional fields for Option
+    pub expiry: String,
+    pub strike: f64,
+    pub multiplier: u32,
+    pub option_type: String, // Or create an enum for "call" | "put"
+}
+
 /// The per-strategy config: the tunable params (the search space — each is a
 /// `ParamSpec` with `value_type`, `distribution`, `special`, `build_upon`).
 /// Replaces the old `strategy_params` (the `[min, max]` grid) + `cache_params`
@@ -91,6 +180,8 @@ struct WalkForwardJson {
 /// be swept freely).
 #[derive(Deserialize)]
 struct StrategyConfig {
+    activated: bool,
+    contracts: Vec<JsonContract>,
     params: Vec<ParamSpec>,
 }
 
@@ -100,7 +191,76 @@ struct StrategyConfig {
 struct OptimiserFile {
     config: OptimiserConfig,
     #[serde(flatten)]
-    strategies: HashMap<String, StrategyConfig>,
+    strategies: std::collections::HashMap<String, StrategyConfig>,
+}
+
+fn parse_into_contract(contract_data: &JsonContract) -> Contract {
+    match contract_data {
+        JsonContract::Stock(stock_contract) => build_contract_from_stock(
+            &stock_contract.stock,
+            &stock_contract.primary_exchange,
+            &stock_contract.currency,
+        ),
+        JsonContract::Option(option_contract) => Contract::option(
+            &option_contract.stock,
+            &option_contract.expiry,
+            option_contract.strike,
+            &option_contract.option_type,
+        ),
+        // .primary_exchange(option_contract.primary_exchange)
+        // .in_currency(option_contract.currency)
+    }
+    // let asset_type = AssetType::from_string(
+    //     contract_data
+    //         .get("asset_type")
+    //         .expect("User must define asset type of contract"),
+    // );
+    // let stock = contract_data
+    //     .get("stock")
+    //     .expect("User must define stock of contract");
+    // let primary_exchange = contract_data
+    //     .get("primary_exchange")
+    //     .expect("User must define primary_exchange of contract");
+    // let currency = contract_data
+    //     .get("currency")
+    //     .expect("User must define currency of contract");
+    // match asset_type {
+    //     AssetType::Option => {
+    //         let expiration = contract_data
+    //             .get("expiry")
+    //             .expect("User must define expiry of option contract");
+    //         let strike = contract_data
+    //             .get("strike")
+    //             .expect("User must define strike of option contract");
+    //         let right = contract_data
+    //             .get("right")
+    //             .expect("User must define right of option contract");
+    //         Contract::option(stock, expiration, strike, right)
+    //     }
+    //     AssetType::Stock => Contract::stock(stock)
+    //         .primary(primary_exchange)
+    //         .in_currency(currency)
+    //         .build(),
+    //     AssetType::ForexPair => Contract {
+    //         symbol: stock.into(),
+    //         security_type: ibapi::prelude::SecurityType::ForexPair,
+    //         exchange: "IDEALPRO".into(),
+    //         currency: currency.into(),
+    //         ..Default::default()
+    //     },
+    //     AssetType::Future => {
+    //         let exchange = contract_data
+    //             .get("exchange")
+    //             .expect("User must define exchange of contract");
+    //         Contract::continuous_futures(stock)
+    //             .on_exchange(exchange)
+    //             .in_currency(currency)
+    //             .build()
+    //     }
+    //     _ => {
+    //         panic!("Define in local contract style!!!");
+    //     }
+    // }
 }
 
 #[tokio::main]
@@ -145,53 +305,66 @@ async fn main() -> Result<(), String> {
         .with_timezone(&Utc);
 
     // Env overrides JSON (for quick experiments); else JSON; else defaults.
-    let oos_fraction = env_or("BACKTEST_OOS_FRACTION", cfg_section.oos_fraction, 0.3);
-    let grid_steps = env_or("BACKTEST_GRID_STEPS", cfg_section.grid_steps, 5);
-    let top_k = env_or("BACKTEST_TOP_K", cfg_section.top_k, 10);
-    let capital = env_or(
-        "BACKTEST_CAPITAL",
-        cfg_section.starting_capital_sgd,
-        100_000.0,
-    );
-    let stock = std::env::var("BACKTEST_STOCK")
-        .ok()
-        .or(cfg_section.stock)
-        .unwrap_or_else(|| "QQQ".to_string());
-    let pe = std::env::var("BACKTEST_PRIMARY_EXCHANGE")
-        .ok()
-        .or(cfg_section.primary_exchange)
-        .unwrap_or_else(|| "NASDAQ".to_string());
-    let currency = std::env::var("BACKTEST_CURRENCY")
-        .ok()
-        .or(cfg_section.currency)
-        .unwrap_or_else(|| "USD".to_string());
-    let optimizer_kind = std::env::var("BACKTEST_OPTIMIZER")
-        .ok()
-        .or(cfg_section.optimizer)
-        .unwrap_or_else(|| "grid".to_string());
-    let batch_size = env_or(
-        "BACKTEST_BATCH_SIZE",
-        cfg_section.batch_size,
-        num_cpus::get(),
-    );
-    let n_evaluations = env_or("BACKTEST_N_EVALUATIONS", cfg_section.n_evaluations, 100);
-    let seed = env_or("BACKTEST_SEED", cfg_section.seed, 42u64);
+    let oos_fraction = cfg_section
+        .oos_fraction
+        .expect("User must define OOS fraction");
+    let grid_steps = cfg_section.grid_steps.expect("User must define grid steps");
+    let top_k = cfg_section.top_k.expect("User must define top k");
+    let capital = cfg_section
+        .starting_capital_sgd
+        .expect("User must define top k");
+    let optimizer_kind = cfg_section
+        .optimizer
+        .expect("User must define optimizer type: tpe/grid/...");
+    let batch_size = cfg_section.batch_size.expect("User must define batch size");
+    let n_evaluations = cfg_section
+        .n_evaluations
+        .expect("User must define N evalutations");
+    let seed = cfg_section
+        .seed
+        .expect("User must define backtesting seed value");
+
+    // let stock = std::env::var("BACKTEST_STOCK")
+    //     .ok()
+    //     .or(cfg_section.stock)
+    //     .unwrap_or_else(|| "QQQ".to_string());
+    // let pe = std::env::var("BACKTEST_PRIMARY_EXCHANGE")
+    //     .ok()
+    //     .or(cfg_section.primary_exchange)
+    //     .unwrap_or_else(|| "NASDAQ".to_string());
+    // let currency = std::env::var("BACKTEST_CURRENCY")
+    //     .ok()
+    //     .or(cfg_section.currency)
+    //     .unwrap_or_else(|| "USD".to_string());
 
     // 2. Build the base backtest config (full period; split later).
+    let mut all_contracts = HashSet::new();
+    for strategy_config in file.strategies.values() {
+        if strategy_config.activated {
+            for contract in strategy_config.contracts.clone() {
+                all_contracts.insert(contract);
+            }
+        }
+    }
     let base_config = BacktestConfig::new(capital)
         .mode(BacktestMode::InMemory)
         .period(BacktestPeriod::TimeRange { start, end })
-        .stock(stock, pe, currency);
+        .contracts(
+            all_contracts
+                .iter()
+                .map(|json_contract| parse_into_contract(json_contract))
+                .collect::<Vec<Contract>>(),
+        );
 
     // 3. Populate the DB for the full period — IF NECESSARY. If the bars are
     //    already loaded, skip the IBKR/Alpaca fetch + just refresh the
     //    continuous aggregate (daily_ohlcv / daily_volatility). This makes
     //    re-runs fast (no re-fetching) while ensuring the aggregates are fresh.
-    let bars_exist = !trading_app::backtester::methods::load_bars(&base_config, &pool, 0)
+    let bars_per_contract = trading_app::backtester::methods::load_bars(&base_config, &pool, 0)
         .await
-        .map_err(|e| format!("load_bars check: {e}"))?
-        .is_empty();
-    if bars_exist {
+        .map_err(|e| format!("load_bars check: {e}"))?;
+    let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
+    if !has_empty_bars {
         tracing::info!(
             "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
             start,
@@ -264,8 +437,22 @@ async fn main() -> Result<(), String> {
 
     // 6. For each strategy config in the JSON, build the OptConfig + run.
     for (name, strategy_config) in &file.strategies {
+        if !strategy_config.activated {
+            continue;
+        }
         let specs = strategy_config.params.clone();
         tracing::info!("Loaded {} param specs for '{name}'", specs.len());
+
+        let base_config = BacktestConfig::new(capital)
+            .mode(BacktestMode::InMemory)
+            .period(BacktestPeriod::TimeRange { start, end })
+            .contracts(
+                strategy_config
+                    .contracts
+                    .iter()
+                    .map(|contract| parse_into_contract(contract))
+                    .collect::<Vec<Contract>>(),
+            );
 
         let opt_cfg = OptConfig {
             base_config: BacktestConfig {
@@ -287,8 +474,8 @@ async fn main() -> Result<(), String> {
         match &validation {
             ValidationScheme::WalkForward(_) => {
                 let factory: Box<dyn Fn() -> Box<dyn Optimizer> + Send + Sync> = {
-                    let specs = specs.clone();
                     let optimizer_kind_str = optimizer_kind.clone();
+                    let specs = specs.clone();
                     Box::new(move || -> Box<dyn Optimizer> {
                         match optimizer_kind_str.as_str() {
                             "grid" => Box::new(GridOptimizer::new(&specs, grid_steps)),
