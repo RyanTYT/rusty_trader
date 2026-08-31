@@ -363,7 +363,36 @@ impl StrategyExecutor for Noise {
         res
     }
 
-    async fn warm_up_data(&mut self, consolidator: &Arc<Consolidator>) -> Result<(), String> {
+    fn warmup_bars_required(&self) -> usize {
+        let avg_move_lookback = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("avg_move_lookback", 15.0) as i64
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                15_i64
+            }
+        };
+        let vol_lookback = {
+            #[cfg(feature = "backtest")]
+            {
+                self.param("vol_lookback", 14.0) as i64
+            }
+            #[cfg(not(feature = "backtest"))]
+            {
+                14_i64
+            }
+        };
+        let num_days = avg_move_lookback.max(vol_lookback) as usize;
+        NUM_BARS_PER_DAY * (num_days + 2)
+    }
+
+    async fn warm_up_data(
+        &mut self,
+        consolidator: &Arc<Consolidator>,
+        #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, String> {
         let avg_move_lookback = {
             #[cfg(feature = "backtest")]
             {
@@ -418,7 +447,8 @@ impl StrategyExecutor for Noise {
                 }),
                 5,
                 (NUM_BARS_PER_DAY * num_days + NUM_BARS_PER_DAY * 2) as u32,
-                None,
+                #[cfg(feature = "backtest")]
+                Some(bar_time),
             )
             .await
             .map_err(|e| format!("{}", e))?;
@@ -452,12 +482,17 @@ impl StrategyExecutor for Noise {
             ewma_vol_realized: EwmMean::new(vol_lookback as usize),
             vol_history: VecDeque::with_capacity(VOL_HISTORY_CAP),
         };
+        let warmup_end = last_n_bars
+            .full
+            .last()
+            .map(|b| b.get_time())
+            .unwrap_or_else(Utc::now);
         for bar in last_n_bars.full.into_iter() {
             data.push(bar, &self.refinements);
         }
         self.data = Some(data);
 
-        Ok(())
+        Ok(warmup_end)
     }
 }
 

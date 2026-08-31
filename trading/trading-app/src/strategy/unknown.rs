@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
-#[cfg(feature = "backtest")]
 use chrono::{DateTime, Utc};
 use ibapi::{
     Client,
@@ -95,7 +94,15 @@ impl StrategyExecutor for Unknown {
         ]
     }
 
-    async fn warm_up_data(&mut self, _consolidator: &Arc<Consolidator>) -> Result<(), String> {
-        Ok(())
+    fn warmup_bars_required(&self) -> usize {
+        0
+    }
+
+    async fn warm_up_data(
+        &mut self,
+        _consolidator: &Arc<Consolidator>,
+        #[cfg(feature = "backtest")] _bar_time: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, String> {
+        Ok(Utc::now())
     }
 }
