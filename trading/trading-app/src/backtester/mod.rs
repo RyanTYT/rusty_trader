@@ -90,8 +90,16 @@ async fn run_sweep_route(
     if strategies.is_empty() {
         return Err("No recognised strategies found in *.json sweep files".into());
     }
-    // Load the bars once (shared across all strategies' sweeps via Arc).
-    let raw_bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+    // Load the bars once (shared across all strategies' sweeps via Arc). Use
+    // the MAX warmup_bars_required() across the to-be-swept strategies so
+    // every strategy's warmup is served by the shared prefix.
+    let warmup_bars = strategies
+        .iter()
+        .map(|s| s.warmup_bars_required())
+        .max()
+        .unwrap_or(0);
+    let raw_bars = crate::backtester::methods::load_bars(&config, &pool, warmup_bars)
+        .await?;
     let bars = crate::backtester::methods::transpose(raw_bars);
     let bars_arc = Arc::new(bars);
     for strategy in strategies {
@@ -172,7 +180,12 @@ async fn run_single_route(
         //    uses the full BacktestContext.
         let results = match mode {
             BacktestMode::InMemory => {
-                let bars = crate::backtester::methods::load_bars(&config, &pool).await?;
+                let bars = crate::backtester::methods::load_bars(
+                    &config,
+                    &pool,
+                    strategy.warmup_bars_required(),
+                )
+                .await?;
                 let bars_arc = Arc::new(crate::backtester::methods::transpose(bars));
                 let config_clone = config.clone();
                 let pool_clone = pool.clone();

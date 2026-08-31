@@ -29,6 +29,8 @@ use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::output::equity::EquityCurve;
 use crate::backtester::setup::clock::BacktestClock;
 use crate::backtester::setup::config::BacktestConfig;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestPeriod;
 use crate::backtester::setup::context::LightContext;
 
 use crate::backtester::methods::in_memory::bar_cache;
@@ -74,11 +76,27 @@ impl InMemoryReplay {
         let cache = Arc::new(bar_cache::BarCache::new(bars.clone()));
         bar_cache::set(cache.clone());
 
-        // Warm up the strategy's data (pure — reads the lookback from the
-        // cache, builds the rolling fns). block_on on the caller's thread.
+        // bar_time = the backtest window start. The warmup reads the N bars
+        // BEFORE this (read_last_n now=Some(bar_time)) + returns warmup_end
+        // (the bar just before the window). The replayer then plays bars
+        // AFTER warmup_end = the backtest window.
+        #[cfg(feature = "backtest")]
+        let bar_time = match &config.period {
+            BacktestPeriod::TimeRange { start, .. } => *start,
+            BacktestPeriod::NumBars(_) => {
+                return Err(
+                    "run_with_warm_up: NumBars period is not supported with warmup_bars (use TimeRange)"
+                        .to_string(),
+                );
+            }
+        };
+
         let mut strategy = strategy;
-        handle
-            .block_on(strategy.warm_up_data(&light.consolidator))
+        let warmup_end = handle
+            .block_on(strategy.warm_up_data(
+                &light.consolidator,
+                #[cfg(feature = "backtest")] bar_time,
+            ))
             .map_err(|e| format!("warm_up_data: {e}"))?;
 
         // Trim the bars to post-warm-up. The bars are sorted ascending, so
@@ -91,7 +109,7 @@ impl InMemoryReplay {
                     .iter()
                     .position(|bar| {
                         bar.iter()
-                            .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > t))
+                            .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > warmup_end))
                     })
                     .unwrap_or(0);
                 &bars[split..]

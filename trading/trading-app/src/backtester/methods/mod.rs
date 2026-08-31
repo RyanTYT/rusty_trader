@@ -42,9 +42,11 @@ pub trait BacktestMethod {
 pub async fn load_bars(
     config: &crate::backtester::setup::config::BacktestConfig,
     pool: &sqlx::PgPool,
+    warmup_bars: usize,
 ) -> Result<Vec<Vec<HistoricalDataFullKeys>>, String> {
     let data_fut = config.subscribed_contracts.iter().map(|c| {
         let pool_clone = pool.clone();
+        let warmup_bars = warmup_bars;
         async move {
             let stock = get_local_symbol(c);
             let pe = c.primary_exchange.to_string();
@@ -65,21 +67,52 @@ pub async fn load_bars(
 
             use crate::backtester::setup::config::BacktestPeriod;
             let rows: Vec<BarRow> = match &config.period {
-                BacktestPeriod::TimeRange { start, end } => sqlx::query_as(
-                    r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
-                       FROM market_data.historical_data
-                       WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
-                         AND time >= $4 AND time <= $5
-                       ORDER BY time ASC"#,
-                )
-                .bind(stock.clone())
-                .bind(pe.clone())
-                .bind(currency.clone())
-                .bind(*start)
-                .bind(*end)
-                .fetch_all(&pool_clone)
-                .await
-                .map_err(|e| format!("load_bars (TimeRange): {e:?}"))?,
+                BacktestPeriod::TimeRange { start, end } => {
+                    // Window bars (the backtest period).
+                    let mut rows: Vec<BarRow> = sqlx::query_as(
+                        r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
+                           FROM market_data.historical_data
+                           WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                             AND time >= $4 AND time <= $5
+                           ORDER BY time ASC"#,
+                    )
+                    .bind(stock.clone())
+                    .bind(pe.clone())
+                    .bind(currency.clone())
+                    .bind(*start)
+                    .bind(*end)
+                    .fetch_all(&pool_clone)
+                    .await
+                    .map_err(|e| format!("load_bars (TimeRange window): {e:?}"))?;
+
+                    // Warmup prefix: the `warmup_bars` bars BEFORE `start` —
+                    // loaded so the strategy's warm_up_data can read them from
+                    // the bar cache (now=Some(bar_time)) without eating into
+                    // the backtest window.
+                    if warmup_bars > 0 {
+                        let mut prefix: Vec<BarRow> = sqlx::query_as(
+                            r#"SELECT stock, primary_exchange, currency, time, open, high, low, close, volume
+                               FROM market_data.historical_data
+                               WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                                 AND time < $4
+                               ORDER BY time DESC
+                               LIMIT $5"#,
+                        )
+                        .bind(stock.clone())
+                        .bind(pe.clone())
+                        .bind(currency.clone())
+                        .bind(*start)
+                        .bind(warmup_bars as i64)
+                        .fetch_all(&pool_clone)
+                        .await
+                        .map_err(|e| format!("load_bars (TimeRange prefix): {e:?}"))?;
+                        prefix.reverse(); // DESC -> ASC (oldest-first, contiguous with the window)
+                        prefix.append(&mut rows); // prefix + window
+                        prefix
+                    } else {
+                        rows
+                    }
+                }
                 BacktestPeriod::NumBars(n) => {
                     // Last N bars in the DB (DESC) — reverse to chronological (ASC).
                     let mut rows: Vec<BarRow> = sqlx::query_as(

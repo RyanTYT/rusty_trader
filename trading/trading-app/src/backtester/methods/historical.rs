@@ -12,6 +12,8 @@ use crate::strategy::strategy::StrategyExecutor;
 use crate::backtester::methods::load_bars;
 use crate::backtester::methods::{BacktestMethod, transpose};
 use crate::backtester::output::equity::EquityCurve;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestPeriod;
 use crate::backtester::setup::context::BacktestContext;
 
 /// The DB-backed backtest method: replay historical bars through the real prod
@@ -39,18 +41,50 @@ impl BacktestMethod for HistoricalReplay {
             }
         });
 
-        // 2. Load the bar stream (shared with InMemoryReplay).
-        let bars_raw = ctx.handle.block_on(load_bars(&ctx.config, &ctx.pool))?;
-        let bars = transpose(bars_raw);
+        // 2. Load the bar stream (shared with InMemoryReplay) — include the
+        // strategy's warmup prefix so warm_up_data doesn't eat into the
+        // backtest window.
+        let bars_raw = ctx.handle.block_on(load_bars(
+            &ctx.config,
+            &ctx.pool,
+            strategy.warmup_bars_required(),
+        ))?;
+        let mut bars = transpose(bars_raw);
+
+        // bar_time = the backtest window start (TimeRange). The warmup reads
+        // the N bars BEFORE this + returns warmup_end (the bar just before
+        // the window).
+        #[cfg(feature = "backtest")]
+        let bar_time = match &ctx.config.period {
+            BacktestPeriod::TimeRange { start, .. } => *start,
+            BacktestPeriod::NumBars(_) => {
+                return Err(
+                    "HistoricalReplay: NumBars period is not supported with warmup_bars (use TimeRange)"
+                        .to_string(),
+                );
+            }
+        };
 
         // 2.5. Warm up the strategy's data. The strategy is pure (uses `self.data`
         //      via the rolling fns) — `warm_up_data` builds it. In Db mode there's
         //      no bar cache, so `read_last_n` hits the DB (one-time, not per-bar).
-        ctx.handle
-            .block_on(strategy.warm_up_data(&ctx.consolidator))
+        let warmup_end = ctx
+            .handle
+            .block_on(strategy.warm_up_data(
+                &ctx.consolidator,
+                #[cfg(feature = "backtest")] bar_time,
+            ))
             .map_err(|e| format!("warm_up_data: {e}"))?;
 
-        // 3. Replay.
+        // 3. Replay — trim to bars AFTER warmup_end (the backtest window).
+        let split = bars
+            .iter()
+            .position(|row| {
+                row.iter()
+                    .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > warmup_end))
+            })
+            .unwrap_or(0);
+        let trimmed = bars.split_off(split);
         let contract = ctx
             .config
             .subscribed_contracts
@@ -58,7 +92,7 @@ impl BacktestMethod for HistoricalReplay {
             .cloned()
             .expect("BacktestConfig.subscribed_contracts must be non-empty");
         let mut equity = EquityCurve::new();
-        for bars_in_time in bars {
+        for bars_in_time in trimmed {
             let mut this_time = None;
             for opt_bar in bars_in_time {
                 let bar = match opt_bar {
