@@ -311,6 +311,10 @@ impl Consolidator {
             let price = call_price(contract.clone())?;
             let mkt_value = price * pos.quantity;
 
+            tracing::info!(
+                "RS_VAL stock={} qty={:.2} price={:.4} mkt_value={:.2} currency={}",
+                key.stock, pos.quantity, price, mkt_value, key.currency
+            );
             // println!("Market value: {mkt_value}, price: {price}, qty: {}", pos.quantity);
             if key.currency == "SGD" {
                 sgd_value += mkt_value;
@@ -336,6 +340,7 @@ impl Consolidator {
                 sgd_value += rate * mkt_value;
             }
         }
+        tracing::info!("RS_VAL_TOTAL sgd_value={:.2}", sgd_value);
         Ok(sgd_value)
     }
 }
