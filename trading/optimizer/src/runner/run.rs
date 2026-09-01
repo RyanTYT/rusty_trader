@@ -181,7 +181,11 @@ pub async fn run_optimization(
             let best_spec = trading_app::strategy::StrategySpec {
                 active: true,
                 params: best.params.clone(),
-                contracts: Vec::new(),
+                contracts: cfg.base_config.subscribed_contracts.iter().map(|contract| ContractEntry {
+                    stock: get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string()
+                }).collect(),
                 benchmark: None,
             };
             let best_strategy = trading_app::strategy::construct_strategy(
