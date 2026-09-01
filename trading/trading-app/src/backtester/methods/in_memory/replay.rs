@@ -198,6 +198,7 @@ impl InMemoryReplay {
                     &outcome,
                     &contract,
                     bar,
+                    contracts,
                     &mut order_id,
                 ) {
                     tracing::error!("InMemory reconcile error: {e:?}");
