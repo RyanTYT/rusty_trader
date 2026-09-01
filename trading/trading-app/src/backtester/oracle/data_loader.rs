@@ -3,10 +3,10 @@
 //! Strategy:
 //! 1. Check existing DB data using `HistoricalDataCRUD` to determine missing ranges per contract.
 //! 2. For missing ranges:
-//!    a. Try IBKR: `with_gateway_retry` → `Client::connect` → `client.historical_data`
-//!       (paginated backwards, 1-month chunks, 1s sleep between calls).
+//!    a. Try IBKR: boot gateway once using `with_gateway_retry` -> `Client::connect` -> iterate
+//!       through contracts and fetch missing intervals via `client.historical_data`.
 //!       For Forex: fetch BOTH Bid + Ask.
-//!    b. Fall back to Alpaca REST if IBKR yields no data.
+//!    b. Fall back to Alpaca REST for any contract ranges IBKR yields no data for.
 //! 3. Refresh `daily_ohlcv` continuous aggregate.
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -18,6 +18,7 @@ use ibapi::market_data::historical::{BarSize, ToDuration, WhatToShow};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::AssetType;
@@ -49,58 +50,62 @@ pub async fn load_market_data(
         end
     );
 
-    for contract in contracts {
+    // 1. Identify missing ranges for all contracts upfront
+    let mut contract_missing_ranges: HashMap<usize, Vec<MissingRange>> = HashMap::new();
+    for (idx, contract) in contracts.iter().enumerate() {
         let asset_type = AssetType::from_str(&contract.security_type);
         let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
         let pk_wo_time = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
 
-        // Calculate missing ranges using DB queries via HistoricalDataCRUD
         let missing_ranges = determine_missing_ranges(&crud, &pk_wo_time, start, end).await?;
-
         if missing_ranges.is_empty() {
             tracing::info!(
                 "All market data for {} is already present in DB. Skipping fetch.",
                 contract.symbol
             );
-            continue;
+        } else {
+            contract_missing_ranges.insert(idx, missing_ranges);
         }
+    }
+
+    if contract_missing_ranges.is_empty() {
+        tracing::info!("All requested data is already loaded in the database.");
+        refresh_continuous_aggregate(pool, start, end).await;
+        return Ok(());
+    }
+
+    // 2. Try IBKR first for all contracts within a single gateway session
+    let ibkr_loaded_counts = try_ibkr(contracts, &contract_missing_ranges, start, end, pool).await;
+
+    // 3. Fall back to Alpaca for any missing ranges that IBKR failed to fill
+    for (idx, contract) in contracts.iter().enumerate() {
+        let missing_ranges = match contract_missing_ranges.get(&idx) {
+            Some(ranges) => ranges,
+            None => continue,
+        };
 
         for range in missing_ranges {
-            tracing::info!(
-                "Fetching missing range [{}, {}] for {}",
-                range.start,
-                range.end,
-                contract.symbol
-            );
+            let ibkr_fetched = ibkr_loaded_counts
+                .get(&(idx, range.start))
+                .copied()
+                .unwrap_or(0);
 
-            // 1. Try IBKR first for missing range
-            let ibkr_result = try_ibkr_range(contract, range.start, range.end, pool).await;
-            let loaded = match ibkr_result {
-                Ok(n) if n > 0 => {
-                    tracing::info!("✅ Data loaded via IBKR ({n} chunks/passes)");
-                    n
-                }
-                Ok(_) => {
-                    tracing::warn!("IBKR returned 0 bars — falling back to Alpaca");
-                    0
-                }
-                Err(e) => {
-                    tracing::warn!("IBKR data load failed: {e} — falling back to Alpaca");
-                    0
-                }
-            };
-
-            // 2. Alpaca fallback if IBKR yielded nothing
-            if loaded == 0 {
+            if ibkr_fetched == 0 {
+                tracing::warn!(
+                    "IBKR produced 0 bars for {} [{}, {}] — falling back to Alpaca",
+                    contract.symbol,
+                    range.start,
+                    range.end
+                );
                 try_alpaca_range(contract, range.start, range.end, pool).await?;
             }
         }
     }
 
-    // 3. Refresh continuous aggregate for the requested period.
+    // 4. Refresh continuous aggregate for the requested period.
     refresh_continuous_aggregate(pool, start, end).await;
 
-    // 4. Final verification
+    // 5. Final verification
     for contract in contracts {
         let asset_type = AssetType::from_str(&contract.security_type);
         let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
@@ -128,7 +133,6 @@ async fn determine_missing_ranges(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> Result<Vec<MissingRange>, String> {
-    // Read existing bars to inspect cached range boundaries
     let bars = crud
         .read_last_n(
             pk_wo_time.clone(),
@@ -144,7 +148,6 @@ async fn determine_missing_ranges(
         return Ok(vec![MissingRange { start, end }]);
     }
 
-    // Sort times to easily evaluate min/max boundaries available locally
     let mut times: Vec<DateTime<Utc>> = bars.full.iter().map(|b| b.get_time()).collect();
     times.sort_unstable();
 
@@ -153,7 +156,6 @@ async fn determine_missing_ranges(
 
     let mut ranges = Vec::new();
 
-    // Gap before existing DB window
     if start < earliest_db_time {
         ranges.push(MissingRange {
             start,
@@ -161,7 +163,6 @@ async fn determine_missing_ranges(
         });
     }
 
-    // Gap after existing DB window
     if end > latest_db_time {
         ranges.push(MissingRange {
             start: start.max(latest_db_time + chrono::Duration::seconds(1)),
@@ -174,20 +175,72 @@ async fn determine_missing_ranges(
 
 // ─── IBKR ──────────────────────────────────────────────────────────────────
 
-async fn try_ibkr_range(
-    contract: &Contract,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+/// Boots the IBKR Gateway ONCE and iterates through all missing ranges for all contracts.
+async fn try_ibkr(
+    contracts: &[Contract],
+    missing_map: &HashMap<usize, Vec<MissingRange>>,
+    _start: DateTime<Utc>,
+    _end: DateTime<Utc>,
     pool: &PgPool,
-) -> Result<usize, String> {
+) -> HashMap<(usize, DateTime<Utc>), usize> {
     let pool = pool.clone();
-    let contract = contract.clone();
-    with_gateway_retry("/tmp/ibc.log", 2, |_gateway| async move {
+    let contracts = contracts.to_vec();
+    let missing_map = missing_map.clone();
+
+    // with_gateway_retry is wrapped outside the entire population loop
+    let result = with_gateway_retry("/tmp/ibc.log", 2, |_gateway| async move {
         let client =
             Client::connect("localhost:4002", 0).map_err(|e| format!("connect to IBKR: {e}"))?;
-        paginate_historical_data(&client, &contract, start, end, &pool).await
+
+        let mut loaded_counts = HashMap::new();
+
+        for (contract_idx, contract) in contracts.iter().enumerate() {
+            if let Some(ranges) = missing_map.get(&contract_idx) {
+                for range in ranges {
+                    tracing::info!(
+                        "Fetching missing range [{}, {}] via IBKR for {}",
+                        range.start,
+                        range.end,
+                        contract.symbol
+                    );
+
+                    match paginate_historical_data(&client, contract, range.start, range.end, &pool)
+                        .await
+                    {
+                        Ok(n) => {
+                            tracing::info!(
+                                "✅ IBKR fetched {n} chunk(s) for {} [{}, {}]",
+                                contract.symbol,
+                                range.start,
+                                range.end
+                            );
+                            loaded_counts.insert((contract_idx, range.start), n);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "IBKR fetch error for {} [{}, {}]: {e}",
+                                contract.symbol,
+                                range.start,
+                                range.end
+                            );
+                            loaded_counts.insert((contract_idx, range.start), 0);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok::<HashMap<(usize, DateTime<Utc>), usize>, String>(loaded_counts)
     })
-    .await?
+    .await;
+
+    match result {
+        Ok(map) => map.expect("Expected result to be fine"),
+        Err(e) => {
+            tracing::warn!("IBKR gateway session failed: {e}");
+            HashMap::new()
+        }
+    }
 }
 
 /// Paginate `client.historical_data` backwards from `end` to `start`.
@@ -301,7 +354,6 @@ async fn paginate_single_direction(
             let fk = HistoricalDataFullKeys::from_contract_and_bar(contract, &what_to_show, bar);
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, bar_time);
 
-            // Double check individual bar presence via `read` prior to upserting if needed
             if crud.read(&pk).await.is_ok() {
                 continue;
             }
@@ -412,7 +464,6 @@ async fn try_alpaca_range(
 
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, time);
 
-            // Skip DB write if already stored
             if crud.read(&pk).await.is_ok() {
                 continue;
             }
@@ -475,4 +526,3 @@ pub async fn refresh_continuous_aggregate(
     }
     tracing::info!("Continuous aggregate refresh done.");
 }
-
