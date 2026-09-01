@@ -5,8 +5,7 @@
 //!
 //! # Flow
 //! 1. Load bars (in-sample) — wrapped in `Arc` so the parallel sweep shares
-//!    them (no full-data clone per backtest). No pre-computed cache (the
-//!    pure-strategy architecture warms up per-backtest from the bar cache).
+//!    them (no pre-computed cache (the pure-strategy architecture warms up per-backtest from the bar cache).
 //! 2. Sequential loop: `optimizer.next_batch(history, batch_size)` → run the
 //!    batch in parallel (rayon) → score each by phase-1 (own metric, no
 //!    neighborhood) → append to `history` → repeat until exhausted (`None`).
@@ -67,11 +66,17 @@ pub async fn run_optimization(
         .iter()
         .map(|s| (s.name.clone(), s.range().1))
         .collect();
+    let max_spec = trading_app::strategy::StrategySpec {
+        active: true,
+        params: max_params,
+        contracts: Vec::new(),
+        benchmark: None,
+    };
     let max_strategy = trading_app::strategy::construct_strategy(
         &cfg.strategy_name,
+        &max_spec,
         pool.clone(),
         handle.clone(),
-        Some(max_params),
     )
     .ok_or_else(|| format!("Unknown strategy '{}' for warmup sizing", cfg.strategy_name))?;
     let warmup_bars = max_strategy.warmup_bars_required();
@@ -167,30 +172,32 @@ pub async fn run_optimization(
             // is loaded once for the best params, not shared across
             // candidates) — so the warmup prefix matches the read limit
             // exactly → clean OOS (the walk-forward 0-trade fix).
+            let best_spec = trading_app::strategy::StrategySpec {
+                active: true,
+                params: best.params.clone(),
+                contracts: Vec::new(),
+                benchmark: None,
+            };
             let best_strategy = trading_app::strategy::construct_strategy(
                 &cfg.strategy_name,
+                &best_spec,
                 pool.clone(),
                 handle.clone(),
-                Some(best.params.clone()),
             )
             .ok_or_else(|| format!("Unknown strategy '{}' for OOS warmup", cfg.strategy_name))?;
-            let oos_bars = Arc::new(transpose(
-                load_bars(&oos_config, &pool, best_strategy.warmup_bars_required()).await?,
-            ));
-            let mut oos_results_res = None;
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    oos_results_res = Some(run_one_backtest(
-                        &cfg.strategy_name,
-                        &pool,
-                        &oos_config,
-                        &best.params,
-                        oos_bars,
-                        handle,
-                    ))
-                });
-            });
-            let oos_results = oos_results_res.unwrap()?;
+            let oos_bars = Arc::new(
+                transpose(
+                    load_bars(&oos_config, &pool, best_strategy.warmup_bars_required()).await?,
+                )
+            );
+            let oos_results = run_one_backtest(
+                &cfg.strategy_name,
+                &pool,
+                &oos_config,
+                &best.params,
+                oos_bars,
+                handle,
+            )?;
             Some(oos_results.results)
         }
         // Walk-forward is handled by `run_walk_forward` (which calls
