@@ -16,6 +16,7 @@
 //! 6. (If `Holdout`) validate the best on the out-of-sample period.
 
 use chrono::Duration;
+use trading_app::strategy::ContractEntry;
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -26,6 +27,7 @@ use trading_app::backtester::methods::{load_bars, transpose};
 use trading_app::backtester::sweep::{SweepResult, run_one_backtest};
 use trading_app::backtester::{BacktestConfig, BacktestPeriod, BacktestResults};
 use trading_app::strategy::strategy::StrategyExecutor;
+use trading_app::helpers::contract::get_local_symbol;
 
 use crate::config::opt_config::OptConfig;
 use crate::config::param_spec::ParamSpec;
@@ -69,7 +71,11 @@ pub async fn run_optimization(
     let max_spec = trading_app::strategy::StrategySpec {
         active: true,
         params: max_params,
-        contracts: Vec::new(),
+        contracts: cfg.base_config.subscribed_contracts.iter().map(|contract| ContractEntry {
+            stock: get_local_symbol(contract),
+            primary_exchange: contract.primary_exchange.to_string(),
+            currency: contract.currency.to_string()
+        }).collect(),
         benchmark: None,
     };
     let max_strategy = trading_app::strategy::construct_strategy(
