@@ -353,11 +353,6 @@ async fn paginate_single_direction(
 
             let fk = HistoricalDataFullKeys::from_contract_and_bar(contract, &what_to_show, bar);
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, bar_time);
-
-            if crud.read(&pk).await.is_ok() {
-                continue;
-            }
-
             let uk = HistoricalDataUpdateKeys::from_historical_bar(contract, &what_to_show, &fk);
 
             if let Err(e) = crud.create_or_update(&pk, &uk).await {
