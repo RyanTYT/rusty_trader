@@ -18,6 +18,42 @@ use crate::helpers::contract::get_local_symbol;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::BarUpdateOutcome;
 
+/// Resolve the bar for `target_contract` at the current timestamp. The
+/// `contracts` slice is the timestamp-row (all subscribed instruments' bars
+/// at the current time, aligned with `config.subscribed_contracts`).
+/// Falls back to `fallback` (the current instrument's bar) if the target
+/// isn't a subscribed contract or its bar is a gap (None) — preserves the
+/// old behavior in the edge case.
+///
+/// WHY: `fill_order_in_memory` derives `fill_price` from the bar's close
+/// (via `decide_fill`). Without this lookup, the reconcile would use the
+/// *current* instrument's bar for ALL target fills — so a multi-instrument
+/// ranking (e.g. the RS-pair entering long TSLA + short NVDA from CAT's
+/// `on_bar_update`) would settle BOTH legs at CAT's close, not their own,
+/// inflating `cash_sgd_delta` (the CASH:SGD position) catastrophically.
+fn lookup_bar<'a>(
+    config: &BacktestConfig,
+    contracts: &'a [Option<HistoricalDataFullKeys>],
+    target_contract: &Contract,
+    fallback: &'a HistoricalDataFullKeys,
+) -> &'a HistoricalDataFullKeys {
+    let target_hash = crate::helpers::contract::HashContract {
+        contract: target_contract.clone(),
+    };
+    for (i, c) in config.subscribed_contracts.iter().enumerate() {
+        if (crate::helpers::contract::HashContract {
+            contract: c.clone(),
+        }) == target_hash
+        {
+            if let Some(Some(bar)) = contracts.get(i) {
+                return bar;
+            }
+            break;
+        }
+    }
+    fallback
+}
+
 /// In-memory reconcile. Mirrors the prod `handle_bar_update_outcome`'s
 /// `EmitOrders` + `PendingDbQuery` arms but operates on `InMemoryState` with
 /// no DB I/O.
@@ -35,19 +71,21 @@ pub fn handle_bar_update_outcome_in_memory(
     outcome: &BarUpdateOutcome,
     _contract: &Contract,
     bar: &HistoricalDataFullKeys,
+    contracts: &[Option<HistoricalDataFullKeys>],
     order_id: &mut i32,
 ) -> Result<(), String> {
     match outcome {
         BarUpdateOutcome::EmitOrders(orders) => {
             // Fast path: the strategy pre-built the orders. Fill each one.
             for order_ibkr in orders {
+                let target_bar = lookup_bar(config, contracts, &order_ibkr.contract, bar);
                 fill_order_in_memory(
                     config,
                     prices,
                     state,
                     &order_ibkr.contract,
                     &order_ibkr.order,
-                    bar,
+                    target_bar,
                     order_id,
                 )?;
             }
@@ -120,7 +158,10 @@ pub fn handle_bar_update_outcome_in_memory(
                     &key.primary_exchange,
                     &key.currency,
                 );
-                fill_order_in_memory(config, prices, state, &contract, &order, bar, order_id)?;
+                let target_bar = lookup_bar(config, contracts, &contract, bar);
+                fill_order_in_memory(
+                    config, prices, state, &contract, &order, target_bar, order_id,
+                )?;
             }
             Ok(())
         }
