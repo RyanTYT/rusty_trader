@@ -109,8 +109,8 @@ async fn main() -> Result<(), String> {
     let params_file = std::path::Path::new("backtest.json");
     let content = std::fs::read_to_string(params_file)
         .map_err(|e| format!("read backtest.json: {e} — expected in the working dir"))?;
-    let file: BacktestFile = serde_json::from_str(&content)
-        .map_err(|e| format!("parse backtest.json: {e}"))?;
+    let file: BacktestFile =
+        serde_json::from_str(&content).map_err(|e| format!("parse backtest.json: {e}"))?;
 
     // 2. Build the period (TimeRange from start/end, or NumBars).
     let period = if let Some(n) = file.config.num_bars {
@@ -142,9 +142,8 @@ async fn main() -> Result<(), String> {
     let forex_bar_interval =
         chrono::Duration::seconds(file.config.forex_bar_interval_secs.unwrap_or(60));
     let slippage_bps = file.config.slippage_bps.unwrap_or(0.0);
-    let commission_model = CommissionModel::from_str(
-        file.config.commission_model.as_deref().unwrap_or("Tiered"),
-    )?;
+    let commission_model =
+        CommissionModel::from_str(file.config.commission_model.as_deref().unwrap_or("Tiered"))?;
     let output_path = file
         .config
         .output_path
@@ -180,19 +179,37 @@ async fn main() -> Result<(), String> {
         subscribed.len(),
     );
 
-    // 4. Build the BacktestConfig + run.
-    let config = BacktestConfig::new(capital)
-        .stock_bar_interval(stock_bar_interval)
-        .forex_bar_interval(forex_bar_interval)
-        .period(period)
-        .slippage_bps(slippage_bps)
-        .commission_model(commission_model)
-        .mode(mode)
-        .contracts(subscribed)
-        .output_path(output_path)
-        .strategies(file.strategies.clone());
+    for (strategy_name, strategy_config) in file.strategies.iter() {
+        let mut strategies = HashMap::new();
+        strategies.insert(strategy_name.clone(), strategy_config.clone());
+        // 4. Build the BacktestConfig + run.
+        let config = BacktestConfig::new(capital)
+            .stock_bar_interval(stock_bar_interval)
+            .forex_bar_interval(forex_bar_interval)
+            .period(period.clone())
+            .slippage_bps(slippage_bps)
+            .commission_model(commission_model)
+            .mode(mode)
+            .contracts(
+                strategy_config
+                    .contracts
+                    .iter()
+                    .map(|contract| {
+                        build_contract_from_stock(
+                            &contract.stock,
+                            &contract.primary_exchange,
+                            &contract.currency,
+                        )
+                    })
+                    .collect(),
+            )
+            .output_path(&output_path)
+            .strategies(strategies);
 
-    trading_app::backtester::run_backtest(pool, config).await
+        trading_app::backtester::run_backtest(pool.clone(), config).await?;
+    }
+
+    Ok(())
 }
 
 /// Append `entry` to `out` as a built `Contract`, skipping duplicates
