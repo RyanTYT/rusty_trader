@@ -46,6 +46,8 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use crate::backtester::methods::load_bars;
+use crate::backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate};
 use crate::strategy::strategy::StrategyExecutor;
 
 /// Entry point. Runs each active strategy in `config.strategies` (one
@@ -70,14 +72,25 @@ async fn run_single_route(
     // 1. Load market data for the union of all active strategies' contracts
     //    (only for TimeRange; NumBars assumes bars are in the DB).
     if let BacktestPeriod::TimeRange { start, end } = &config.period {
-        crate::backtester::oracle::data_loader::load_market_data(
-            &config.subscribed_contracts,
-            *start,
-            *end,
-            &pool,
-            &handle,
-        )
-        .await?;
+        let bars_per_contract = load_bars(&config, &pool, 0)
+            .await
+            .map_err(|e| format!("load_bars check: {e}"))?;
+        let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
+        if !has_empty_bars {
+            tracing::info!(
+                "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
+                *start,
+                *end
+            );
+            refresh_continuous_aggregate(&pool, *start, *end).await;
+        } else {
+            tracing::info!(
+                "Data not loaded for [{}, {}] — populating via IBKR/Alpaca (with_gateway_retry internally).",
+                *start,
+                *end
+            );
+            load_market_data(&config.subscribed_contracts, *start, *end, &pool, &handle).await?;
+        }
     }
 
     let starting_capital = config.starting_capital_sgd;
@@ -95,8 +108,9 @@ async fn run_single_route(
             continue;
         }
         let name_str = name.as_str();
-        let strategy = crate::strategy::construct_strategy(name_str, spec, pool.clone(), handle.clone())
-            .ok_or_else(|| format!("Unknown strategy '{name_str}'"))?;
+        let strategy =
+            crate::strategy::construct_strategy(name_str, spec, pool.clone(), handle.clone())
+                .ok_or_else(|| format!("Unknown strategy '{name_str}'"))?;
 
         // 2. Seed the initial capital (Db mode only). For InMemory mode the
         //    `InMemoryReplay` seeds the `InMemoryState` internally.
