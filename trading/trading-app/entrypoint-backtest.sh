@@ -59,4 +59,5 @@ echo "[backtest-entrypoint]   period: $BACKTEST_START → $BACKTEST_END"
 echo "[backtest-entrypoint]   stock:  $BACKTEST_STOCK"
 echo "[backtest-entrypoint] ==========================================="
 
+cd /data
 exec /bin/backtest
