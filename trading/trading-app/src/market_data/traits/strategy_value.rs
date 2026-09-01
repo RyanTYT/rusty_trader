@@ -65,8 +65,6 @@ impl Consolidator {
         });
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 
-        tracing::info!("Retrieved current positions for get_strategy_sgd_value");
-
         let mut sgd_value = 0.0;
         let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
 
@@ -146,8 +144,6 @@ impl Consolidator {
                 let mkt_value = call_price(contract, false, vec![], false)? * quantity;
                 sgd_value += mkt_value;
             }
-
-            tracing::info!("Got one additional sgd position");
         }
 
         Ok(sgd_value)
@@ -311,10 +307,6 @@ impl Consolidator {
             let price = call_price(contract.clone())?;
             let mkt_value = price * pos.quantity;
 
-            tracing::info!(
-                "RS_VAL stock={} qty={:.2} price={:.4} mkt_value={:.2} currency={}",
-                key.stock, pos.quantity, price, mkt_value, key.currency
-            );
             // println!("Market value: {mkt_value}, price: {price}, qty: {}", pos.quantity);
             if key.currency == "SGD" {
                 sgd_value += mkt_value;
@@ -340,7 +332,6 @@ impl Consolidator {
                 sgd_value += rate * mkt_value;
             }
         }
-        tracing::info!("RS_VAL_TOTAL sgd_value={:.2}", sgd_value);
         Ok(sgd_value)
     }
 }
