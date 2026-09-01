@@ -43,7 +43,7 @@ COPY .sqlx ./.sqlx
 COPY migrations ./migrations
 
 # Create a dummy src/ + bin/ to build dependencies only (cache layer)
-RUN mkdir -p src bin && \
+RUN mkdir -p src/bin && \
     echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs && \
     echo "fn main() {}" > src/bin/backtest.rs && \
     cargo build --release --bin $APP_NAME --features backtest && \
