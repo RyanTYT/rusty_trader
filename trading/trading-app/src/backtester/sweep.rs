@@ -15,6 +15,8 @@ use crate::backtester::methods::in_memory::replay::InMemoryReplay;
 use crate::backtester::output::results::BacktestResults;
 use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
+use crate::helpers::contract::get_local_symbol;
+use crate::strategy::ContractEntry;
 
 /// One sweep result: the params that produced it + the computed metrics.
 #[derive(Debug, Serialize)]
@@ -56,7 +58,15 @@ pub fn run_one_backtest(
     let spec = crate::strategy::StrategySpec {
         active: true,
         params: params.clone(),
-        contracts: Vec::new(),
+        contracts: config
+            .subscribed_contracts
+            .iter()
+            .map(|contract| ContractEntry {
+                stock: get_local_symbol(contract),
+                primary_exchange: contract.primary_exchange.to_string(),
+                currency: contract.currency.to_string(),
+            })
+            .collect(),
         benchmark: None,
     };
     let strategy = crate::strategy::construct_strategy(name, &spec, pool.clone(), handle.clone())
