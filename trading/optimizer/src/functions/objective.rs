@@ -82,6 +82,8 @@ impl Dispersion {
 pub struct RobustSharpe {
     pub alpha: f64,
     pub dispersion: Dispersion,
+    pub min_trades_per_month: f64,
+    pub trade_penalty: f64,
 }
 
 impl Default for RobustSharpe {
@@ -89,26 +91,48 @@ impl Default for RobustSharpe {
         Self {
             alpha: 1.0,
             dispersion: Dispersion::Mad,
+            min_trades_per_month: 0.0,
+            trade_penalty: 0.0,
         }
     }
 }
 
 impl RobustSharpe {
-    pub fn new(alpha: f64, dispersion: Dispersion) -> Self {
-        Self { alpha, dispersion }
+    pub fn new(
+        alpha: f64,
+        dispersion: Dispersion,
+        min_trades_per_month: f64,
+        trade_penalty: f64,
+    ) -> Self {
+        Self {
+            alpha,
+            dispersion,
+            min_trades_per_month,
+            trade_penalty,
+        }
     }
 }
 
 impl Objective for RobustSharpe {
     fn score(&self, results: &BacktestResults, neighborhood: &[BacktestResults]) -> f64 {
         let own_sharpe = results.sharpe;
-        if neighborhood.is_empty() {
+        let base = if neighborhood.is_empty() {
             return own_sharpe;
+        } else {
+            let mut sharpes: Vec<f64> = neighborhood.iter().map(|r| r.sharpe).collect();
+            sharpes.push(own_sharpe);
+            let mean = sharpes.iter().sum::<f64>() / sharpes.len() as f64;
+            let disp = self.dispersion.compute(&sharpes);
+            mean - self.alpha * disp
+        };
+
+        if self.trade_penalty > 0.0 && self.min_trades_per_month > 0.0 {
+            let num_months = (results.equity_curve.len() as f64 / results.bars_per_year * 12.0).max(1.0);
+            let trades_per_month = results.num_trades as f64 / num_months;
+            let shortfall = (self.min_trades_per_month - trades_per_month).max(0.0);
+            base - self.trade_penalty * shortfall
+        } else {
+            base
         }
-        let mut sharpes: Vec<f64> = neighborhood.iter().map(|r| r.sharpe).collect();
-        sharpes.push(own_sharpe); // include the candidate in its own neighborhood
-        let mean = sharpes.iter().sum::<f64>() / sharpes.len() as f64;
-        let disp = self.dispersion.compute(&sharpes);
-        mean - self.alpha * disp
     }
 }

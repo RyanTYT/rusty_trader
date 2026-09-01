@@ -432,7 +432,7 @@ async fn main() -> Result<(), String> {
     };
 
     // 5. The objective + robustness (GLOBAL).
-    let objective = Arc::new(RobustSharpe::new(1.0, Dispersion::Mad));
+    let objective = Arc::new(RobustSharpe::new(1.0, Dispersion::Mad, 5.0, 1.0));
     let robustness = RobustnessEvaluator::default();
 
     // 6. For each strategy config in the JSON, build the OptConfig + run.
