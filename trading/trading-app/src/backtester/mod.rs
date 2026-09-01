@@ -176,10 +176,10 @@ async fn run_single_route(
         // 4. Results.
         let output_path = format!("backtest_results_{name_str}.json");
         results.write_json(&output_path)?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&results).map_err(|e| format!("serialize: {e}"))?
-        );
+        // println!(
+        //     "{}",
+        //     serde_json::to_string_pretty(&results).map_err(|e| format!("serialize: {e}"))?
+        // );
     }
     Ok(())
 }
