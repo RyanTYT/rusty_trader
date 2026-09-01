@@ -1,17 +1,13 @@
 //! Data loader — populates `market_data.*` for the backtest period.
 //!
 //! Strategy:
-//! 1. Try IBKR: `with_gateway_retry` → `Client::connect` →
-//!    `client.historical_data` (paginated, 1-month chunks, 1s sleep between
-//!    calls for IBKR rate limits) → upsert via `HistoricalDataCRUD`.
-//!    For Forex: fetch BOTH Bid + Ask (two passes — mirrors prod).
-//! 2. If IBKR fails (no gateway / error / empty): Alpaca fallback via REST.
+//! 1. Check existing DB data using `HistoricalDataCRUD` to determine missing ranges per contract.
+//! 2. For missing ranges:
+//!    a. Try IBKR: `with_gateway_retry` → `Client::connect` → `client.historical_data`
+//!       (paginated backwards, 1-month chunks, 1s sleep between calls).
+//!       For Forex: fetch BOTH Bid + Ask.
+//!    b. Fall back to Alpaca REST if IBKR yields no data.
 //! 3. Refresh `daily_ohlcv` continuous aggregate.
-//!
-//! This mirrors the prod `Consolidator::populate_historical_data` as closely
-//! as possible — same bar construction, same upsert, same forex recursion,
-//! same "skip latest incomplete bar" logic — but calls `client.historical_data`
-//! directly (the prod version is cfg-gated out under `backtest`).
 
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::America::New_York;
@@ -31,7 +27,14 @@ use crate::database::models_crud::historical_data::historical_data::{
 };
 use crate::ibc::with_gateway_retry;
 
-/// Entry point. Tries IBKR first, Alpaca fallback. Refreshes caggs after.
+/// Defines a range of missing data that needs to be fetched.
+#[derive(Debug, Clone, Copy)]
+struct MissingRange {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+/// Entry point. Dynamically checks existing database bars and fetches only missing data.
 pub async fn load_market_data(
     contracts: &[Contract],
     start: DateTime<Utc>,
@@ -40,38 +43,64 @@ pub async fn load_market_data(
     _handle: &tokio::runtime::Handle,
 ) -> Result<(), String> {
     tracing::info!(
-        "Data loader: {} contracts, period [{}, {}]",
+        "Data loader: {} contracts, requested period [{}, {}]",
         contracts.len(),
         start,
         end
     );
 
-    // 1. Try IBKR
-    let ibkr_result = try_ibkr(contracts, start, end, pool).await;
-    let loaded = match ibkr_result {
-        Ok(n) if n > 0 => {
-            tracing::info!("✅ Data loaded via IBKR ({n} bars)");
-            n
-        }
-        Ok(_) => {
-            tracing::warn!("IBKR returned 0 bars — falling back to Alpaca");
-            0
-        }
-        Err(e) => {
-            tracing::warn!("IBKR data load failed: {e} — falling back to Alpaca");
-            0
-        }
-    };
+    for contract in contracts {
+        let asset_type = AssetType::from_str(&contract.security_type);
+        let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+        let pk_wo_time = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
 
-    // 2. Alpaca fallback if IBKR yielded nothing
-    if loaded == 0 {
-        try_alpaca(contracts, start, end, pool).await?;
+        // Calculate missing ranges using DB queries via HistoricalDataCRUD
+        let missing_ranges = determine_missing_ranges(&crud, &pk_wo_time, start, end).await?;
+
+        if missing_ranges.is_empty() {
+            tracing::info!(
+                "All market data for {} is already present in DB. Skipping fetch.",
+                contract.symbol
+            );
+            continue;
+        }
+
+        for range in missing_ranges {
+            tracing::info!(
+                "Fetching missing range [{}, {}] for {}",
+                range.start,
+                range.end,
+                contract.symbol
+            );
+
+            // 1. Try IBKR first for missing range
+            let ibkr_result = try_ibkr_range(contract, range.start, range.end, pool).await;
+            let loaded = match ibkr_result {
+                Ok(n) if n > 0 => {
+                    tracing::info!("✅ Data loaded via IBKR ({n} chunks/passes)");
+                    n
+                }
+                Ok(_) => {
+                    tracing::warn!("IBKR returned 0 bars — falling back to Alpaca");
+                    0
+                }
+                Err(e) => {
+                    tracing::warn!("IBKR data load failed: {e} — falling back to Alpaca");
+                    0
+                }
+            };
+
+            // 2. Alpaca fallback if IBKR yielded nothing
+            if loaded == 0 {
+                try_alpaca_range(contract, range.start, range.end, pool).await?;
+            }
+        }
     }
 
-    // 3. Refresh continuous aggregate for the backtest period.
+    // 3. Refresh continuous aggregate for the requested period.
     refresh_continuous_aggregate(pool, start, end).await;
 
-    // 4. Verify data exists
+    // 4. Final verification
     for contract in contracts {
         let asset_type = AssetType::from_str(&contract.security_type);
         let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
@@ -92,32 +121,76 @@ pub async fn load_market_data(
     Ok(())
 }
 
+/// Queries the database to identify gap ranges in `[start, end]`.
+async fn determine_missing_ranges(
+    crud: &HistoricalDataCRUD,
+    pk_wo_time: &HistoricalDataPrimaryKeysWoTime,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<MissingRange>, String> {
+    // Read existing bars to inspect cached range boundaries
+    let bars = crud
+        .read_last_n(
+            pk_wo_time.clone(),
+            5,
+            99999999,
+            #[cfg(feature = "backtest")]
+            None,
+        )
+        .await
+        .map_err(|e| format!("Failed to query DB via read_last_n: {e:?}"))?;
+
+    if bars.full.is_empty() {
+        return Ok(vec![MissingRange { start, end }]);
+    }
+
+    // Sort times to easily evaluate min/max boundaries available locally
+    let mut times: Vec<DateTime<Utc>> = bars.full.iter().map(|b| b.get_time()).collect();
+    times.sort_unstable();
+
+    let earliest_db_time = times.first().copied().unwrap();
+    let latest_db_time = times.last().copied().unwrap();
+
+    let mut ranges = Vec::new();
+
+    // Gap before existing DB window
+    if start < earliest_db_time {
+        ranges.push(MissingRange {
+            start,
+            end: end.min(earliest_db_time - chrono::Duration::seconds(1)),
+        });
+    }
+
+    // Gap after existing DB window
+    if end > latest_db_time {
+        ranges.push(MissingRange {
+            start: start.max(latest_db_time + chrono::Duration::seconds(1)),
+            end,
+        });
+    }
+
+    Ok(ranges)
+}
+
 // ─── IBKR ──────────────────────────────────────────────────────────────────
 
-async fn try_ibkr(
-    contracts: &[Contract],
+async fn try_ibkr_range(
+    contract: &Contract,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     pool: &PgPool,
 ) -> Result<usize, String> {
     let pool = pool.clone();
-    let contracts = contracts.to_vec();
+    let contract = contract.clone();
     with_gateway_retry("/tmp/ibc.log", 2, |_gateway| async move {
         let client =
             Client::connect("localhost:4002", 0).map_err(|e| format!("connect to IBKR: {e}"))?;
-        let mut total = 0;
-        for contract in &contracts {
-            total += paginate_historical_data(&client, contract, start, end, &pool).await?;
-        }
-        Ok::<usize, String>(total)
+        paginate_historical_data(&client, &contract, start, end, &pool).await
     })
     .await?
 }
 
 /// Paginate `client.historical_data` backwards from `end` to `start`.
-/// IBKR returns max ~2000 5-min bars per call (~1 month for stocks).
-/// Each call fetches 1 month; the cursor moves backwards; 1s sleep
-/// between calls (IBKR rate limit: ~1 req/sec).
 async fn paginate_historical_data(
     client: &Client,
     contract: &Contract,
@@ -135,7 +208,6 @@ async fn paginate_historical_data(
     };
     let bar_interval_secs: i64 = if is_forex { 60 } else { 300 };
 
-    // For forex, fetch Bid first, then Ask (mirrors prod recursion).
     let what_to_shows = if is_forex {
         vec![WhatToShow::Bid, WhatToShow::Ask]
     } else {
@@ -193,7 +265,7 @@ async fn paginate_single_direction(
             .historical_data(
                 contract,
                 Some(end_odt),
-                30.days(), // ~1 month per call (ToDuration trait)
+                30.days(), // ~1 month per call
                 bar_size.clone(),
                 what_to_show.clone(),
                 TradingHours::Regular,
@@ -206,12 +278,9 @@ async fn paginate_single_direction(
             break;
         }
 
-        // Compute the "latest incomplete bar" timestamp to skip (mirrors prod).
         let now_ts = Utc::now().timestamp();
         let latest_request_time_bar = now_ts - (now_ts % bar_interval_secs);
 
-        // Determine the earliest bar's time (to move the cursor backwards).
-        // bars are DESC order (most recent first); last() is the earliest.
         let earliest = bars
             .first()
             .map(|b| {
@@ -223,7 +292,7 @@ async fn paginate_single_direction(
         for bar in bars {
             let bar_ts = bar.date.unix_timestamp();
             if bar_ts == latest_request_time_bar {
-                continue; // skip the latest (possibly incomplete) bar
+                continue; // skip incomplete current bar
             }
 
             let bar_time = DateTime::from_timestamp(bar_ts, bar.date.nanosecond() as u32)
@@ -231,6 +300,12 @@ async fn paginate_single_direction(
 
             let fk = HistoricalDataFullKeys::from_contract_and_bar(contract, &what_to_show, bar);
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, bar_time);
+
+            // Double check individual bar presence via `read` prior to upserting if needed
+            if crud.read(&pk).await.is_ok() {
+                continue;
+            }
+
             let uk = HistoricalDataUpdateKeys::from_historical_bar(contract, &what_to_show, &fk);
 
             if let Err(e) = crud.create_or_update(&pk, &uk).await {
@@ -241,7 +316,7 @@ async fn paginate_single_direction(
             }
         }
 
-        total += 1; // count chunks; actual bar count is harder since we consumed bars
+        total += 1;
         tracing::info!("  → chunk fetched, moving cursor backwards");
 
         end_cursor = earliest - chrono::Duration::seconds(1);
@@ -249,7 +324,6 @@ async fn paginate_single_direction(
             break;
         }
 
-        // IBKR rate limit: ~1 req/sec.
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -267,8 +341,8 @@ fn what_to_show_str(w: &WhatToShow) -> &'static str {
 
 // ─── Alpaca fallback ───────────────────────────────────────────────────────
 
-async fn try_alpaca(
-    contracts: &[Contract],
+async fn try_alpaca_range(
+    contract: &Contract,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     pool: &PgPool,
@@ -278,95 +352,98 @@ async fn try_alpaca(
     let api_secret =
         std::env::var("ALPACA_API_SECRET").map_err(|_| "ALPACA_API_SECRET not set".to_string())?;
 
-    tracing::info!("Fetching historical data from Alpaca...");
+    tracing::info!(
+        "Fetching historical data from Alpaca for range [{}, {}]...",
+        start,
+        end
+    );
 
     let client = reqwest::Client::new();
     let mut total = 0;
+    let symbol = contract.symbol.to_string();
 
-    for contract in contracts {
-        let symbol = contract.symbol.to_string();
-        tracing::info!("Fetching Alpaca bars for {symbol}");
+    let mut page_token: Option<String> = None;
+    loop {
+        let mut url = format!(
+            "https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe=5Min&start={}&end={}&limit=10000&adjustment=raw",
+            start.format("%Y-%m-%dT%H:%M:%SZ"),
+            end.format("%Y-%m-%dT%H:%M:%SZ"),
+        );
+        if let Some(token) = &page_token {
+            url.push_str(&format!("&page_token={token}"));
+        }
 
-        // Alpaca REST: GET /v2/stocks/{symbol}/bars?timeframe=5Min&start=...&end=...&limit=10000
-        let mut page_token: Option<String> = None;
-        loop {
-            let mut url = format!(
-                "https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe=5Min&start={}&end={}&limit=10000&adjustment=raw",
-                start.format("%Y-%m-%dT%H:%M:%SZ"),
-                end.format("%Y-%m-%dT%H:%M:%SZ"),
+        let resp = client
+            .get(&url)
+            .header("APCA-API-KEY-ID", &api_key)
+            .header("APCA-API-SECRET-KEY", &api_secret)
+            .send()
+            .await
+            .map_err(|e| format!("Alpaca request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Alpaca API error: {} {}",
+                resp.status(),
+                resp.text().await.unwrap_or_default()
+            ));
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Alpaca parse error: {e}"))?;
+
+        let bars = body["bars"]
+            .as_array()
+            .ok_or("Alpaca: no bars in response")?;
+        if bars.is_empty() {
+            break;
+        }
+
+        let asset_type = AssetType::from_str(&contract.security_type);
+        let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+
+        for bar in bars {
+            let t = bar["t"].as_str().ok_or("Alpaca: missing 't'")?;
+            let time = chrono::DateTime::parse_from_rfc3339(t)
+                .map_err(|e| format!("Alpaca: bad timestamp {t}: {e}"))?
+                .with_timezone(&Utc);
+
+            let pk = HistoricalDataPrimaryKeys::from_contract(contract, time);
+
+            // Skip DB write if already stored
+            if crud.read(&pk).await.is_ok() {
+                continue;
+            }
+
+            let fk = HistoricalDataFullKeys::Stock(
+                crate::database::models::HistoricalStockDataFullKeys {
+                    stock: crate::helpers::contract::get_local_symbol(contract),
+                    primary_exchange: contract.primary_exchange.to_string(),
+                    currency: contract.currency.to_string(),
+                    time,
+                    open: bar["o"].as_f64().unwrap_or(0.0),
+                    high: bar["h"].as_f64().unwrap_or(0.0),
+                    low: bar["l"].as_f64().unwrap_or(0.0),
+                    close: bar["c"].as_f64().unwrap_or(0.0),
+                    volume: Decimal::from_f64(bar["v"].as_f64().unwrap_or(0.0))
+                        .unwrap_or(Decimal::ZERO),
+                },
             );
-            if let Some(token) = &page_token {
-                url.push_str(&format!("&page_token={token}"));
+
+            let uk =
+                HistoricalDataUpdateKeys::from_historical_bar(contract, &WhatToShow::Trades, &fk);
+
+            if let Err(e) = crud.create_or_update(&pk, &uk).await {
+                tracing::error!("Alpaca upsert failed for {}: {e:?}", contract.symbol);
             }
+            total += 1;
+        }
 
-            let resp = client
-                .get(&url)
-                .header("APCA-API-KEY-ID", &api_key)
-                .header("APCA-API-SECRET-KEY", &api_secret)
-                .send()
-                .await
-                .map_err(|e| format!("Alpaca request failed: {e}"))?;
-
-            if !resp.status().is_success() {
-                return Err(format!(
-                    "Alpaca API error: {} {}",
-                    resp.status(),
-                    resp.text().await.unwrap_or_default()
-                ));
-            }
-
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("Alpaca parse error: {e}"))?;
-
-            let bars = body["bars"]
-                .as_array()
-                .ok_or("Alpaca: no bars in response")?;
-            if bars.is_empty() {
-                break;
-            }
-
-            let asset_type = AssetType::from_str(&contract.security_type);
-            let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
-
-            for bar in bars {
-                let t = bar["t"].as_str().ok_or("Alpaca: missing 't'")?;
-                let time = chrono::DateTime::parse_from_rfc3339(t)
-                    .map_err(|e| format!("Alpaca: bad timestamp {t}: {e}"))?
-                    .with_timezone(&Utc);
-
-                let fk = HistoricalDataFullKeys::Stock(
-                    crate::database::models::HistoricalStockDataFullKeys {
-                        stock: crate::helpers::contract::get_local_symbol(contract),
-                        primary_exchange: contract.primary_exchange.to_string(),
-                        currency: contract.currency.to_string(),
-                        time,
-                        open: bar["o"].as_f64().unwrap_or(0.0),
-                        high: bar["h"].as_f64().unwrap_or(0.0),
-                        low: bar["l"].as_f64().unwrap_or(0.0),
-                        close: bar["c"].as_f64().unwrap_or(0.0),
-                        volume: Decimal::from_f64(bar["v"].as_f64().unwrap_or(0.0))
-                            .unwrap_or(Decimal::ZERO),
-                    },
-                );
-                let pk = HistoricalDataPrimaryKeys::from_contract(contract, time);
-                let uk = HistoricalDataUpdateKeys::from_historical_bar(
-                    contract,
-                    &WhatToShow::Trades,
-                    &fk,
-                );
-
-                if let Err(e) = crud.create_or_update(&pk, &uk).await {
-                    tracing::error!("Alpaca upsert failed for {}: {e:?}", contract.symbol);
-                }
-                total += 1;
-            }
-
-            page_token = body["next_page_token"].as_str().map(|s| s.to_string());
-            if page_token.is_none() {
-                break;
-            }
+        page_token = body["next_page_token"].as_str().map(|s| s.to_string());
+        if page_token.is_none() {
+            break;
         }
     }
 
@@ -376,17 +453,12 @@ async fn try_alpaca(
 
 // ─── Continuous aggregate refresh ─────────────────────────────────────────
 
-/// Refresh the `daily_ohlcv` continuous aggregate for `[start, end]`. This
-/// also updates the `daily_volatility` VIEW (it reads from `daily_ohlcv`).
-/// `pub` so the optimizer can call it directly (when the data is already
-/// loaded but the aggregate needs refreshing).
 pub async fn refresh_continuous_aggregate(
     pool: &PgPool,
     start: chrono::DateTime<chrono::Utc>,
     end: chrono::DateTime<chrono::Utc>,
 ) {
     tracing::info!("Refreshing daily_ohlcv continuous aggregate for [{start}, {end}]...");
-    // Runtime query (not sqlx::query! macro) to avoid needing .sqlx/ cache.
     if let Err(e) = sqlx::query(
         r#"CALL refresh_continuous_aggregate(
             'market_data.daily_ohlcv',
@@ -403,3 +475,4 @@ pub async fn refresh_continuous_aggregate(
     }
     tracing::info!("Continuous aggregate refresh done.");
 }
+
