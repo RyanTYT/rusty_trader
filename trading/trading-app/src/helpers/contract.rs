@@ -119,7 +119,7 @@ impl<'a> PartialEq<HashContractRef<'a>> for HashContract {
     }
 }
 
-pub(crate) fn get_local_symbol(contract: &Contract) -> String {
+pub fn get_local_symbol(contract: &Contract) -> String {
     match AssetType::from_str(&contract.security_type) {
         AssetType::Stock => contract.symbol.as_str().to_string(),
         AssetType::Future => {
