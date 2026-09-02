@@ -68,7 +68,7 @@ pub struct WalkForwardPoint {
 #[derive(Debug, Clone, Serialize)]
 pub struct EquityCurveSeries {
     pub label: String,
-    pub points: Vec<(String, f64)>,
+    pub points: Vec<(i64, f64)>,
     pub color_hint: Option<String>,
 }
 
@@ -116,7 +116,7 @@ impl RobustnessReport {
                 .results
                 .equity_curve
                 .iter()
-                .map(|p| (p.time.clone(), p.equity))
+                .map(|p| (p.time, p.equity))
                 .collect(),
             color_hint: None,
         });
@@ -126,7 +126,7 @@ impl RobustnessReport {
                 points: oos
                     .equity_curve
                     .iter()
-                    .map(|p| (p.time.clone(), p.equity))
+                    .map(|p| (p.time, p.equity))
                     .collect(),
                 color_hint: None,
             });
@@ -160,7 +160,7 @@ impl RobustnessReport {
                         .results
                         .equity_curve
                         .iter()
-                        .map(|p| (p.time.clone(), p.equity))
+                        .map(|p| (p.time, p.equity))
                         .collect(),
                     color_hint: Some(format!("hsl({hue:.0}, 70%, 50%)")),
                 }
@@ -437,7 +437,7 @@ fn compute_walk_forward_tracking(wf: &WalkForwardResult) -> Vec<WalkForwardPoint
 /// (scale-invariant) are chained off `aggregated_oos.starting_capital`. The
 /// curve is seeded with the first window's first OOS timestamp so the plot
 /// starts at the beginning of the OOS span.
-fn build_aggregated_oos_curve(wf: &WalkForwardResult) -> Vec<(String, f64)> {
+fn build_aggregated_oos_curve(wf: &WalkForwardResult) -> Vec<(i64, f64)> {
     let mut curve = Vec::new();
     let mut equity = wf.aggregated_oos.starting_capital;
     let mut seeded = false;
@@ -708,11 +708,7 @@ fn svg_equity(
     }
     let pts: Vec<(f64, f64)> = series
         .iter()
-        .flat_map(|s| {
-            s.points
-                .iter()
-                .filter_map(|(t, e)| time_to_millis(t).map(|ts| (ts, *e)))
-        })
+        .flat_map(|s| s.points.iter().map(|(t, e)| (*t as f64 * 1000.0, *e)))
         .collect();
     if pts.is_empty() {
         return "<p>(no equity curve data)</p>".to_string();
@@ -799,11 +795,9 @@ fn svg_equity(
             .points
             .iter()
             .filter_map(|(t, e)| {
-                time_to_millis(t).map(|ts| {
-                    let sx = margin as f64 + scale(ts, xmin, xmax, pw as f64);
-                    let sy = (h - margin) as f64 - scale(*e, ymin, ymax, ph as f64);
-                    format!("{sx:.1},{sy:.1}")
-                })
+                let sx = margin as f64 + scale(*t as f64 * 1000.0, xmin, xmax, pw as f64);
+                let sy = (h - margin) as f64 - scale(*e, ymin, ymax, ph as f64);
+                Some(format!("{sx:.1},{sy:.1}"))
             })
             .collect::<Vec<_>>()
             .join(" ");

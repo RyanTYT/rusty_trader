@@ -45,7 +45,7 @@ pub struct BacktestResults {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EquityPoint {
-    pub time: String,
+    pub time: i64,
     pub cash: f64,
     pub positions_value: f64,
     pub equity: f64,
@@ -172,7 +172,7 @@ impl BacktestResults {
             .snapshots
             .iter()
             .map(|s| EquityPoint {
-                time: s.time.to_rfc3339(),
+                time: s.time.timestamp(),
                 cash: s.cash,
                 positions_value: s.positions_value,
                 equity: s.equity,
