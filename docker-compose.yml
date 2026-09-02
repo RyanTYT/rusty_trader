@@ -217,6 +217,7 @@ services:
 
   optimizer:
     restart: "no"
+    mem_limit: 4gb
     build: 
       context: .
       dockerfile: ./trading/optimizer/Dockerfile
