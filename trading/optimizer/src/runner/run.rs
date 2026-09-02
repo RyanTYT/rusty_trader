@@ -168,6 +168,7 @@ pub async fn run_optimization(
         .cloned()
         .ok_or("optimization produced no results")?;
 
+    tracing::info!("Running OOS Validation");
     // 6. Out-of-sample validation (if Holdout).
     let out_of_sample = match &cfg.validation {
         ValidationScheme::None => None,
