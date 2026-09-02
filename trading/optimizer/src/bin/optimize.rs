@@ -277,6 +277,7 @@ async fn main() -> Result<(), String> {
         std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set".to_string())?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
+        .acquire_timeout(std::time::Duration::from_secs(90))
         .connect(&database_url)
         .await
         .map_err(|e| format!("connect: {e}"))?;
