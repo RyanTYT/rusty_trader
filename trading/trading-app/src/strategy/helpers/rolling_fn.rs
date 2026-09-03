@@ -1087,3 +1087,180 @@ impl RollingDayVwap {
         )
     }
 }
+
+/// `RollingBeta` — rolling ordinary-least-squares β of `y` on `x` over a
+/// fixed-size window (f64-based, like `RollingRankPct`). Used by the
+/// residual-momentum signal in `relative_v2`: regress an instrument's
+/// bar returns (y) on the benchmark/market's bar returns (x), then take
+/// the residual `y − β·x` as the idiosyncratic (firm-specific) component
+/// (Gutierrez-Pirinsky 2007, adapted to the intraday bar scale).
+///
+/// Maintains running sums Σx, Σy, Σxy, Σx² in O(1) per push; β is
+/// `(n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)`. Returns `Some(0.0)` for a
+/// degenerate window (no market variance) so callers don't divide by zero.
+#[derive(Debug, Clone)]
+pub struct RollingBeta {
+    window: usize,
+    deq_x: VecDeque<f64>,
+    deq_y: VecDeque<f64>,
+    sx: f64,
+    sy: f64,
+    sxy: f64,
+    sxx: f64,
+    len: usize,
+}
+
+impl RollingBeta {
+    pub fn new(window: usize) -> Self {
+        assert!(window > 1, "RollingBeta needs window > 1");
+        Self {
+            window,
+            deq_x: VecDeque::with_capacity(window),
+            deq_y: VecDeque::with_capacity(window),
+            sx: 0.0,
+            sy: 0.0,
+            sxy: 0.0,
+            sxx: 0.0,
+            len: 0,
+        }
+    }
+
+    /// Push a paired sample `(x, y)` — `x` = market return, `y` = instrument
+    /// return. Returns `Some(beta)` once the window is full, else `None`.
+    pub fn push(&mut self, x: f64, y: f64) -> Option<f64> {
+        self.deq_x.push_back(x);
+        self.deq_y.push_back(y);
+        self.sx += x;
+        self.sy += y;
+        self.sxy += x * y;
+        self.sxx += x * x;
+        self.len += 1;
+        if self.len > self.window {
+            let ox = self.deq_x.pop_front().unwrap();
+            let oy = self.deq_y.pop_front().unwrap();
+            self.sx -= ox;
+            self.sy -= oy;
+            self.sxy -= ox * oy;
+            self.sxx -= ox * ox;
+            self.len -= 1;
+        }
+        self.beta()
+    }
+
+    /// Current β if the window is full. `Some(0.0)` if the market showed no
+    /// variance in-window (degenerate) — caller treats instrument return as
+    /// entirely idiosyncratic.
+    pub fn beta(&self) -> Option<f64> {
+        if self.len < self.window {
+            return None;
+        }
+        let n = self.len as f64;
+        let denom = n * self.sxx - self.sx * self.sx;
+        if denom.abs() < 1e-12 {
+            return Some(0.0);
+        }
+        Some((n * self.sxy - self.sx * self.sy) / denom)
+    }
+}
+
+/// `RollingFracDiff` — fractional differentiation of a price series of order
+/// `d ∈ (0, 1)` (López de Prado, *Advances in Financial Machine Learning*
+/// Ch. 5). Standard integer differencing (d=1, i.e. bar returns) is
+/// stationary but *memoryless*; the raw price (d=0) has full memory but is
+/// non-stationary. A fractional `d` finds the minimum differentiation that
+/// still achieves stationarity, preserving the maximum long-memory of the
+/// trend — yielding a richer, higher-IC momentum feature than simple
+/// returns. Used by `fractional_momentum` as the cross-sectional ranking
+/// signal (the FD value is z-scored per instrument for comparability).
+///
+/// The binomial-expansion weights `w_k = ∏_{i=1..k} (i − 1 − d) / i` (with
+/// `w_0 = 1`) decay like `k^(d−1)` for `d < 1`, so the series is truncatable.
+/// We precompute the weight vector once (truncated when `|w_k| < threshold`,
+/// hard-capped at 1000 terms) and keep a fixed-size `VecDeque` of prices
+/// aligned newest→oldest. Each push is an O(window) dot-product — window is
+/// modest (a few hundred terms for d≈0.4), so this is cheap.
+#[derive(Debug, Clone)]
+pub struct RollingFracDiff {
+    /// Precomputed weights, stored **newest-aligned**: `weights[i]` pairs
+    /// with `deq[i]` where `deq[0]` is the oldest price in the window and
+    /// `deq[len-1]` is the newest (which receives `w_0 = 1`).
+    weights: Vec<f64>,
+    deq: VecDeque<f64>,
+    len: usize,
+}
+
+impl RollingFracDiff {
+    /// Construct with differentiation order `d ∈ (0, 1)` and a
+    /// weight-truncation `threshold` (typically `1e-5`). Panics if `d` is
+    /// out of range or the resulting weight vector is empty.
+    pub fn new(d: f64, threshold: f64) -> Self {
+        assert!(
+            (0.0..1.0).contains(&d),
+            "RollingFracDiff: d must be in (0, 1), got {d}"
+        );
+        let mut weights = Self::compute_weights(d, threshold);
+        assert!(!weights.is_empty(), "RollingFracDiff: empty weight vector");
+        // Store newest-aligned: weights[0] pairs with the oldest price in the
+        // window, weights[len-1] (= w_0 = 1.0) pairs with the newest price.
+        weights.reverse();
+        let cap = weights.len();
+        Self {
+            weights,
+            deq: VecDeque::with_capacity(cap),
+            len: 0,
+        }
+    }
+
+    /// Build the (non-reversed) binomial-expansion weight vector
+    /// `[w_0, w_1, …, w_{K−1}]` with `w_0 = 1`, truncating when
+    /// `|w_k| < threshold` (and a hard cap of 1000 terms for safety).
+    fn compute_weights(d: f64, threshold: f64) -> Vec<f64> {
+        let mut weights = vec![1.0]; // w_0
+        let mut w = 1.0;
+        for k in 1..=1000 {
+            w *= ((k as f64) - 1.0 - d) / (k as f64);
+            if w.abs() < threshold {
+                break;
+            }
+            weights.push(w);
+        }
+        weights
+    }
+
+    /// Push a new price. Returns `Some(fd_value)` once the window is full,
+    /// else `None`. The FD value is `Σ_k w_k · price_{t−k}` — a stationary,
+    /// memory-preserving momentum feature.
+    pub fn push(&mut self, price: f64) -> Option<f64> {
+        self.deq.push_back(price);
+        self.len += 1;
+        if self.len > self.weights.len() {
+            self.deq.pop_front();
+            self.len -= 1;
+        }
+        if self.len < self.weights.len() {
+            return None;
+        }
+        let mut acc = 0.0;
+        for (i, p) in self.deq.iter().enumerate() {
+            acc += self.weights[i] * p;
+        }
+        Some(acc)
+    }
+
+    /// Current FD value if the window is full, else `None`.
+    pub fn value(&self) -> Option<f64> {
+        if self.len < self.weights.len() {
+            return None;
+        }
+        let mut acc = 0.0;
+        for (i, p) in self.deq.iter().enumerate() {
+            acc += self.weights[i] * p;
+        }
+        Some(acc)
+    }
+
+    /// The configured window length (number of stored prices == weight count).
+    pub fn window(&self) -> usize {
+        self.weights.len()
+    }
+}
