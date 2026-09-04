@@ -708,7 +708,9 @@ impl RollingZScore {
             let n = Decimal::from_usize(self.window)
                 .expect("Expected to be able to represent window of z_score as decimal");
             let mean = self.rolling_sum.rolling_sum_dec().unwrap() / n;
-            let dec_res = (self.last_x - mean) / self.rolling_std.rolling_std_dec().unwrap();
+            let dec_res = (self.last_x - mean)
+                .checked_div(self.rolling_std.rolling_std_dec().unwrap())
+                .unwrap_or(Decimal::MAX);
             Some(dec_res)
         }
     }
