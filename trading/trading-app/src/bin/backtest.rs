@@ -180,6 +180,9 @@ async fn main() -> Result<(), String> {
     );
 
     for (strategy_name, strategy_config) in file.strategies.iter() {
+        if !strategy_config.active {
+            continue;
+        }
         let mut strategies = HashMap::new();
         strategies.insert(strategy_name.clone(), strategy_config.clone());
         // 4. Build the BacktestConfig + run.
