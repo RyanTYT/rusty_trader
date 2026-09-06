@@ -287,6 +287,7 @@ implement_crud_trait_for_interface!(
 pub trait OpenOrdersOps {
     async fn get_orders_for_strat(&self, strategy: &str)
     -> Result<Vec<OpenOrdersFullKeys>, String>;
+    async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String>;
 }
 
 #[async_trait::async_trait]
@@ -351,5 +352,38 @@ impl OpenOrdersOps for OpenOrdersCRUD {
         };
 
         result.map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"))
+    }
+
+    async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String> {
+        let result = match self {
+            Self::Stock(_) => {
+                sqlx::query_as!(
+                    OpenStockOrdersFullKeys,
+                    r#"
+                DELETE FROM trading.open_stock_orders
+                WHERE strategy = $1;
+                "#,
+                    strategy
+                )
+                .execute(self.get_pg_pool())
+                .await
+            }
+            Self::Options(_) => {
+                sqlx::query_as!(
+                    OpenOptionOrdersFullKeys,
+                    r#"
+                    DELETE FROM trading.open_option_orders
+                    WHERE strategy = $1;
+                    "#,
+                    strategy
+                )
+                .execute(self.get_pg_pool())
+                .await
+            }
+        };
+
+        result
+            .map(|res| res.rows_affected())
+            .map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"))
     }
 }
