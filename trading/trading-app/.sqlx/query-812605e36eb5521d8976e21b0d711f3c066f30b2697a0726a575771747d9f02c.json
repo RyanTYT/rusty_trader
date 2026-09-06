@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT\n                        time_bucket(make_interval(mins => $2), time) AS bucket,\n                        pair,\n                        first(bid_open, time) AS bid_open,\n                        max(bid_high)         AS bid_high,\n                        min(bid_low)          AS bid_low,\n                        last(bid_close, time) AS bid_close,\n                        first(ask_open, time) AS ask_open,\n                        max(ask_high)         AS ask_high,\n                        min(ask_low)          AS ask_low,\n                        last(ask_close, time) AS ask_close,\n                        count(*)              AS bar_count\n                    FROM market_data.historical_forex_data\n                    WHERE pair = $1\n                      AND bid_open IS NOT NULL\n                      AND ask_open IS NOT NULL\n                      AND time <= $4\n                    GROUP BY bucket, pair\n                    ORDER BY bucket DESC\n                    LIMIT $3;\n                    ",
+  "query": "\n                    SELECT\n                        time_bucket(make_interval(mins => $2), time, timezone:= 'America/New_York') AS bucket,\n                        pair,\n                        first(bid_open, time) AS bid_open,\n                        max(bid_high)         AS bid_high,\n                        min(bid_low)          AS bid_low,\n                        last(bid_close, time) AS bid_close,\n                        first(ask_open, time) AS ask_open,\n                        max(ask_high)         AS ask_high,\n                        min(ask_low)          AS ask_low,\n                        last(ask_close, time) AS ask_close,\n                        count(*)              AS bar_count\n                    FROM market_data.historical_forex_data\n                    WHERE pair = $1\n                      AND bid_open IS NOT NULL\n                      AND ask_open IS NOT NULL\n                      AND time <= $4\n                    GROUP BY bucket, pair\n                    ORDER BY bucket DESC\n                    LIMIT $3;\n                    ",
   "describe": {
     "columns": [
       {
@@ -81,5 +81,5 @@
       null
     ]
   },
-  "hash": "86dec6937add853e041b8586860059325bafefda47d0ab3b561059ca93e3c964"
+  "hash": "812605e36eb5521d8976e21b0d711f3c066f30b2697a0726a575771747d9f02c"
 }
