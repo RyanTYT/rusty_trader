@@ -1,4 +1,4 @@
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use ibapi::orders::ExecutionData;
 use rust_decimal::dec;
 use sqlx::PgPool;
@@ -200,6 +200,7 @@ pub trait TransactionsOps {
     async fn read_all_transactions_of_strat(
         &self,
         strategy: &str,
+        since_opt: Option<DateTime<Utc>>,
     ) -> Result<Vec<TransactionsFullKeys>, String>;
 }
 
@@ -295,29 +296,87 @@ impl TransactionsOps for TransactionsCRUD {
     async fn read_all_transactions_of_strat(
         &self,
         strategy: &str,
+        since_opt: Option<DateTime<Utc>>,
     ) -> Result<Vec<TransactionsFullKeys>, String> {
-        let result = match self {
-            TransactionsCRUD::Stock(_) => sqlx::query_as!(
-                StockTransactionsFullKeys,
-                r#"
+        let result = match since_opt {
+            Some(since) => match self {
+                TransactionsCRUD::Stock(_) => sqlx::query_as!(
+                    StockTransactionsFullKeys,
+                    r#"
+                    SELECT * 
+                    FROM trading.stock_transactions
+                    WHERE strategy = $1
+                        AND time >= $2
+                    ORDER BY time ASC;
+                    "#,
+                    strategy,
+                    since
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|ok_res| {
+                    ok_res
+                        .into_iter()
+                        .map(TransactionsFullKeys::Stock)
+                        .collect()
+                }),
+                TransactionsCRUD::Options(_) => sqlx::query_as!(
+                    OptionTransactionsFullKeys,
+                    r#"
+                    SELECT 
+                        execution_id as "execution_id!",
+                        strategy as "strategy!",
+                        stock as "stock!",
+                        primary_exchange as "primary_exchange!",
+                        currency as "currency!",
+                        expiry as "expiry!",
+                        strike as "strike!",
+                        multiplier as "multiplier!",
+                        option_type as "option_type!:OptionType",
+                        order_perm_id as "order_perm_id!",
+                        time as "time!",
+                        price as "price!",
+                        quantity as "quantity!",
+                        fees as "fees!"
+                    FROM trading.option_transactions
+                    WHERE strategy = $1
+                        AND time >= $2
+                    ORDER BY time ASC;
+                    "#,
+                    strategy,
+                    since
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|ok_res| {
+                    ok_res
+                        .into_iter()
+                        .map(TransactionsFullKeys::Options)
+                        .collect()
+                }),
+            },
+            None => match self {
+                TransactionsCRUD::Stock(_) => sqlx::query_as!(
+                    StockTransactionsFullKeys,
+                    r#"
                 SELECT * 
                 FROM trading.stock_transactions
                 WHERE strategy = $1
                 ORDER BY time ASC;
                 "#,
-                strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|ok_res| {
-                ok_res
-                    .into_iter()
-                    .map(TransactionsFullKeys::Stock)
-                    .collect()
-            }),
-            TransactionsCRUD::Options(_) => sqlx::query_as!(
-                OptionTransactionsFullKeys,
-                r#"
+                    strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|ok_res| {
+                    ok_res
+                        .into_iter()
+                        .map(TransactionsFullKeys::Stock)
+                        .collect()
+                }),
+                TransactionsCRUD::Options(_) => sqlx::query_as!(
+                    OptionTransactionsFullKeys,
+                    r#"
                 SELECT 
                     execution_id as "execution_id!",
                     strategy as "strategy!",
@@ -337,16 +396,17 @@ impl TransactionsOps for TransactionsCRUD {
                 WHERE strategy = $1
                 ORDER BY time ASC;
                 "#,
-                strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|ok_res| {
-                ok_res
-                    .into_iter()
-                    .map(TransactionsFullKeys::Options)
-                    .collect()
-            }),
+                    strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|ok_res| {
+                    ok_res
+                        .into_iter()
+                        .map(TransactionsFullKeys::Options)
+                        .collect()
+                }),
+            },
         };
 
         result.map_err(|e| {
