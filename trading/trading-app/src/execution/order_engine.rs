@@ -74,7 +74,7 @@ pub struct OrderIBKR {
     pub order: Order,
     // For efficiency purposes
     // -> we directly link via the index of the parent in the Vec this is passed in
-    references_parent_order: i32,
+    pub references_parent_order: i32,
 }
 
 impl OrderIBKR {
