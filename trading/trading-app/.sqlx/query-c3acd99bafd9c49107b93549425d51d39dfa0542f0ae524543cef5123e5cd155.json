@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    DELETE FROM trading.open_option_orders\n                    WHERE strategy = $1;\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c3acd99bafd9c49107b93549425d51d39dfa0542f0ae524543cef5123e5cd155"
+}
