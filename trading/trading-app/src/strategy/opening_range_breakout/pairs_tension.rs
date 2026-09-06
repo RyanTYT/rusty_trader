@@ -30,20 +30,19 @@ use std::collections::{HashMap, VecDeque};
 use chrono::{NaiveDate, Timelike};
 use chrono_tz::America::New_York;
 
-
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::strategy::helpers::rolling_fn::{RollingBeta, RollingMean, RollingStd, RollingZScore};
 use crate::strategy::opening_range_breakout::walk_forward::WalkForwardTrain;
 
 /// Stable (non-retrained) constants — robust across ALL walk-forward windows.
-const Z_WINDOW: usize = 120;       // spread z-score window
-const ENTRY_Z: f64 = 1.5;          // |z| > 1.5 → enter
-const EXIT_Z: f64 = 0.4;           // |z| < 0.4 → exit
-const CORR_THRESHOLD: f64 = 0.6;  // rolling 252d corr(A,B) > 0.6
-const HALF_LIFE_MIN: f64 = 5.0;    // days
-const HALF_LIFE_MAX: f64 = 60.0;   // days
-const OLS_WINDOW: usize = 252;     // rolling OLS window
-const ATR_STOP_MULT: f64 = 2.0;    // wider stop for pairs (lower turnover)
+const Z_WINDOW: usize = 120; // spread z-score window
+const ENTRY_Z: f64 = 1.5; // |z| > 1.5 → enter
+const EXIT_Z: f64 = 0.4; // |z| < 0.4 → exit
+const CORR_THRESHOLD: f64 = 0.6; // rolling 252d corr(A,B) > 0.6
+const HALF_LIFE_MIN: f64 = 5.0; // days
+const HALF_LIFE_MAX: f64 = 60.0; // days
+const OLS_WINDOW: usize = 252; // rolling OLS window
+const ATR_STOP_MULT: f64 = 2.0; // wider stop for pairs (lower turnover)
 const SPREAD_AUTOCORR_WINDOW: usize = 252; // for the half-life computation
 
 /// A pair of assets (A, B) where A is regressed on B.
@@ -404,10 +403,16 @@ impl PairsTension {
             let atr_b = state.atr_b.rolling_mean().unwrap_or(entry_price_b * 0.02);
             let (stop_price_a, stop_price_b) = if direction > 0.0 {
                 // Long A: stop below A; Short B: stop above B
-                (entry_price_a - ATR_STOP_MULT * atr_a, entry_price_b + ATR_STOP_MULT * atr_b)
+                (
+                    entry_price_a - ATR_STOP_MULT * atr_a,
+                    entry_price_b + ATR_STOP_MULT * atr_b,
+                )
             } else {
                 // Short A: stop above A; Long B: stop below B
-                (entry_price_a + ATR_STOP_MULT * atr_a, entry_price_b - ATR_STOP_MULT * atr_b)
+                (
+                    entry_price_a + ATR_STOP_MULT * atr_a,
+                    entry_price_b - ATR_STOP_MULT * atr_b,
+                )
             };
 
             // Take-profit: z-reversion target (|z| < 0.4 → spread reverted)
@@ -422,7 +427,13 @@ impl PairsTension {
 
             tracing::info!(
                 "[pairs_tension] {}-{} z={:.2} β={:.2} dir={} entry_a={:.2} entry_b={:.2}",
-                pair.a, pair.b, z, beta, direction, entry_price_a, entry_price_b
+                pair.a,
+                pair.b,
+                z,
+                beta,
+                direction,
+                entry_price_a,
+                entry_price_b
             );
 
             signals.push(PairSignal {
@@ -447,16 +458,40 @@ impl WalkForwardTrain for PairsTension {
     fn new(train_window: u32, oos_window: u32, name: String) -> Self {
         let candidates = vec![
             // Regional banks
-            Pair { a: "KEY".into(), b: "FITB".into() },
-            Pair { a: "HBAN".into(), b: "RF".into() },
-            Pair { a: "CFG".into(), b: "SNV".into() },
-            Pair { a: "ZION".into(), b: "CMA".into() },
+            Pair {
+                a: "KEY".into(),
+                b: "FITB".into(),
+            },
+            Pair {
+                a: "HBAN".into(),
+                b: "RF".into(),
+            },
+            Pair {
+                a: "CFG".into(),
+                b: "SNV".into(),
+            },
+            Pair {
+                a: "ZION".into(),
+                b: "CMA".into(),
+            },
             // Industrials
-            Pair { a: "PNR".into(), b: "MAS".into() },
-            Pair { a: "CARR".into(), b: "PH".into() },
+            Pair {
+                a: "PNR".into(),
+                b: "MAS".into(),
+            },
+            Pair {
+                a: "CARR".into(),
+                b: "PH".into(),
+            },
             // Biotech
-            Pair { a: "BMRN".into(), b: "ILMN".into() },
-            Pair { a: "INCY".into(), b: "EXEL".into() },
+            Pair {
+                a: "BMRN".into(),
+                b: "ILMN".into(),
+            },
+            Pair {
+                a: "INCY".into(),
+                b: "EXEL".into(),
+            },
         ];
         let mut pt = PairsTension::new(candidates);
         pt.wf_train = train_window;
@@ -479,21 +514,25 @@ impl WalkForwardTrain for PairsTension {
 
     fn train(&mut self) -> Result<HashMap<String, f64>, String> {
         let pool = self.pool.clone().ok_or("PairsTension: pool not set")?;
-        let handle = self.tokio_handle.clone().ok_or("PairsTension: handle not set")?;
+        let handle = self
+            .tokio_handle
+            .clone()
+            .ok_or("PairsTension: handle not set")?;
         let candidate_pairs = self.candidate_pairs.clone();
         let train_window = self.wf_train as u32;
 
         let selected = handle.block_on(async move {
+            use crate::database::models::AssetType;
             use crate::database::models_crud::historical_data::historical_data::{
                 HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
             };
-            use crate::database::models::AssetType;
             use ibapi::prelude::Contract;
 
             let crud = HistoricalDataCRUD::from(&AssetType::Stock, pool);
 
             // Collect all unique asset names from the candidate pairs.
-            let mut all_assets: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut all_assets: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for p in &candidate_pairs {
                 all_assets.insert(p.a.clone());
                 all_assets.insert(p.b.clone());
@@ -510,7 +549,13 @@ impl WalkForwardTrain for PairsTension {
                         .build(),
                 );
                 let bars = crud
-                    .read_last_n(pk, 1440, train_window, None)
+                    .read_last_n(
+                        pk,
+                        1440,
+                        train_window,
+                        #[cfg(feature = "backtest")]
+                        None,
+                    )
                     .await
                     .map_err(|e| format!("PairsTension train read_last_n {name}: {e}"))?;
                 let closes: Vec<f64> = bars.full.iter().map(|b| b.get_price()).collect();
@@ -568,7 +613,10 @@ mod tests {
 
     #[test]
     fn test_pairs_construction() {
-        let pt = PairsTension::new(vec![Pair { a: "KEY".into(), b: "FITB".into() }]);
+        let pt = PairsTension::new(vec![Pair {
+            a: "KEY".into(),
+            b: "FITB".into(),
+        }]);
         assert_eq!(pt.name(), "pairs_tension");
         assert_eq!(pt.wf_name, "pairs_tension");
         assert_eq!(pt.wf_train, 252);
@@ -587,7 +635,10 @@ mod tests {
         // The half-life should be computed (non-None) and in a reasonable range
         // (exact value depends on the series, but it should exist)
         let hl = state.compute_half_life();
-        assert!(hl.is_some(), "half-life should be computed with 100 data points");
+        assert!(
+            hl.is_some(),
+            "half-life should be computed with 100 data points"
+        );
     }
 
     fn rand_val() -> f64 {
