@@ -44,6 +44,7 @@
 //!         backtest_results_{name}.json per strategy.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use ibapi::contracts::Contract;
@@ -94,6 +95,7 @@ async fn main() -> Result<(), String> {
 
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
+        .acquire_timeout(Duration::from_secs(30))
         .connect(&database_url)
         .await
         .map_err(|e| format!("failed to connect to {database_url}: {e}"))?;
