@@ -607,7 +607,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 let rows = sqlx::query!(
                     r#"
                     SELECT
-                        time_bucket(make_interval(mins => $4), time) AS bucket,
+                        time_bucket(make_interval(mins => $4), time, timezone:= 'America/New_York') AS bucket,
                         stock,
                         primary_exchange,
                         currency,
@@ -667,7 +667,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 let rows = sqlx::query!(
                     r#"
                     SELECT
-                        time_bucket(make_interval(mins => $2), time) AS bucket,
+                        time_bucket(make_interval(mins => $2), time, timezone:= 'America/New_York') AS bucket,
                         pair,
                         first(bid_open, time) AS bid_open,
                         max(bid_high)         AS bid_high,
@@ -733,7 +733,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 let rows = sqlx::query!(
                     r#"
                     SELECT
-                        time_bucket(make_interval(mins => $8), time) AS bucket,
+                        time_bucket(make_interval(mins => $8), time, timezone:= 'America/New_York') AS bucket,
                         stock,
                         primary_exchange,
                         currency,
