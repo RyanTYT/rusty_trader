@@ -22,7 +22,7 @@ const BAR_INTERVAL: Duration = Duration::from_secs(5);
 /// How long to spin-poll around each expected bar arrival before giving up
 /// on stragglers for this cycle. IBKR jitter is usually well under 100ms,
 /// but leave headroom.
-const HOT_WINDOW: Duration = Duration::from_millis(200);
+const HOT_WINDOW: Duration = Duration::from_millis(500);
 /// Yield the CPU briefly between spin iterations instead of a bare spin_loop
 /// hint, if you want to trade a little latency for a lot less CPU burn.
 /// Set to Duration::ZERO for a true hot spin.
