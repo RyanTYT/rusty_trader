@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use chrono::Timelike;
+use chrono::{DateTime, Timelike, Utc};
 use chrono_tz::America::New_York;
 
 use ibapi::contracts::Contract;
@@ -413,6 +413,7 @@ fn check_resting_brackets(
                 &bracket.contract,
                 &close_order,
                 fill_price,
+                bar.get_time(),
                 order_id,
             )?;
 
@@ -447,6 +448,7 @@ fn fill_bracket_close(
     contract: &Contract,
     order: &Order,
     fill_price: f64,
+    bar_time: DateTime<Utc>,
     order_id: &mut i32,
 ) -> Result<(), String> {
     // FX rate: contract.currency → SGD.
@@ -507,7 +509,7 @@ fn fill_bracket_close(
             stock: get_local_symbol(contract),
             primary_exchange: contract.primary_exchange.to_string(),
             currency: contract.currency.to_string(),
-            time: bar_time_from_contract(config, contract),
+            time: bar_time,
             price: fill_price,
             quantity: signed_qty,
             fees,
@@ -537,13 +539,4 @@ fn fill_bracket_close(
 
     *order_id += 1;
     Ok(())
-}
-
-/// Get the bar time (for transaction logging). Falls back to the current
-/// UTC time if no bar is available.
-fn bar_time_from_contract(
-    _config: &BacktestConfig,
-    _contract: &Contract,
-) -> chrono::DateTime<chrono::Utc> {
-    chrono::Utc::now()
 }
