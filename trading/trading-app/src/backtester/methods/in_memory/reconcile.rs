@@ -76,7 +76,7 @@ pub fn handle_bar_update_outcome_in_memory(
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     outcome: &BarUpdateOutcome,
-    _contract: &Contract,
+    contract: &Contract,
     bar: &HistoricalDataFullKeys,
     contracts: &[Option<HistoricalDataFullKeys>],
     order_id: &mut i32,
@@ -87,7 +87,7 @@ pub fn handle_bar_update_outcome_in_memory(
         let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
         (ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570)
     };
-    check_resting_brackets(config, prices, state, bar, mso, order_id)?;
+    check_resting_brackets(config, prices, state, contract, bar, mso, order_id)?;
 
     match outcome {
         BarUpdateOutcome::EmitOrders(orders) => {
@@ -329,6 +329,7 @@ fn check_resting_brackets(
     config: &BacktestConfig,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
+    contract: &Contract,
     bar: &HistoricalDataFullKeys,
     mso: i32,
     order_id: &mut i32,
@@ -355,6 +356,12 @@ fn check_resting_brackets(
     for mut bracket in brackets {
         if bracket.closed {
             // Already closed — skip (it'll be removed by not being pushed to `updated`).
+            continue;
+        }
+
+        let bracket_symbol = &bracket.contract.symbol;
+        if bracket_symbol != &contract.symbol {
+            updated.push(bracket);
             continue;
         }
 
