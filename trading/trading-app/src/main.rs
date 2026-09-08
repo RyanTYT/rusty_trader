@@ -66,7 +66,7 @@ async fn tokio_main() {
     let trading_type = std::env::var("TRADING_TYPE")
         .expect("Expected TRADING_TYPE environment variable to be set!");
     let pool = PgPoolOptions::new()
-        .max_connections(15)
+        .max_connections(50)
         .acquire_timeout(Duration::from_secs(30))
         .after_connect(|conn, _meta| {
             Box::pin(async move {
