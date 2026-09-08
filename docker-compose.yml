@@ -122,7 +122,7 @@ services:
     image: timescale/timescaledb:latest-pg17
     restart: always
     volumes:
-      - ./data/postgres-data:/var/lib/postgresql/data # Mount a volume for persistent PostgreSQL data
+      - pgdata:/var/lib/postgresql/data # Mount a volume for persistent PostgreSQL data
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PW}
@@ -311,12 +311,12 @@ volumes:
   # For storing backed up orders for FX
   orders-data:
     driver: local
+  pgdata:
+    driver: local
   test-orders-data:
     driver: local
   knowledge_base:
     driver: local
-    # On the host this lives at: /var/lib/docker/volumes/knowledge_base/_data
-    # Back up with: docker run --rm -v knowledge_base:/data alpine tar czf - /data > kb_$(date +%Y%m%d).tar.gz
   scraped_articles:
     driver: local
   llm_settings:
