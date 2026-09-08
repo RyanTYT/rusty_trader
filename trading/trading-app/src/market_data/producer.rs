@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
@@ -14,10 +13,10 @@ use ibapi::{
     contracts::Contract,
     market_data::realtime::{Bar, WhatToShow},
 };
-use spmc_ring::ring_buffer::spmc_ring_buffer::{SpmcRingBuffer, SpmcRingBufferProducer};
+use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 
 use crate::{
-    market_data::{consumer::helper::next_boundary, handler::DataSubscription},
+    market_data::consumer::helper::next_boundary,
     schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler},
 };
 
