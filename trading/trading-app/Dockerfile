@@ -9,7 +9,7 @@ ARG APP_NAME
 WORKDIR /app
 
 # Install dependencies for building Rust
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
     curl \
     build-essential \
     pkg-config \
@@ -59,7 +59,7 @@ RUN touch src/main.rs && \
 FROM debian:bullseye-slim AS final
 
 # Install all necessary dependencies for TWS
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
     libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
     libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
     unzip xvfb curl \
