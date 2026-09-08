@@ -3,26 +3,35 @@ ARG RUST_VERSION=1.85.1
 # =============================================================================
 # Stage 1: Build the test binaries (unit_tests, integration_tests, smoke_tests)
 # =============================================================================
-FROM --platform=linux/amd64 debian:bullseye-slim AS build
+FROM --platform=linux/amd64 debian/eol:bullseye AS build
 WORKDIR /app
+
+RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+
 
 # Install build dependencies (clang/lld for ibapi, pkg-config for openssl,
 # postgresql-client for pg_isready + sqlx-cli for migrations, protobuf-compiler)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    pkg-config \
-    libssl-dev \
-    clang \
-    lld \
-    musl-dev \
-    git \
-    bash \
-    ca-certificates \
-    curl \
-    unzip \
-    postgresql-client \
-    protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get -o Acquire::Check-Valid-Until=false update && \
+    apt-get install -y --allow-downgrades \
+      libc6=2.31-13+deb11u11 \
+      libssl1.1=1.1.1w-0+deb11u1 \
+      perl-base=5.32.1-4+deb11u3 && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      libssl-dev \
+      clang \
+      lld \
+      musl-dev \
+      git \
+      bash \
+      ca-certificates \
+      curl \
+      unzip \
+      postgresql-client \
+      protobuf-compiler \
+      && rm -rf /var/lib/apt/lists/*
 
 # Install rustup and Cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -86,11 +95,14 @@ RUN mkdir -p /app/bin && \
 # =============================================================================
 # Stage 2: Final image with IBC + Xvfb + test binaries only (no Rust toolchain)
 # =============================================================================
-FROM --platform=linux/amd64 debian:bullseye-slim AS final
+FROM --platform=linux/amd64 debian/eol:bullseye AS final
 WORKDIR /app
 
+RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+
 # Install runtime deps for TWS/IB Gateway + Xvfb + postgresql-client + curl
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
     libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
     libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
     libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
