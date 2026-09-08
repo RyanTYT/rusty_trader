@@ -43,15 +43,19 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update && \
       ca-certificates \
       protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+
 # Install rustup and Cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable
+
 # Add Cargo to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV SQLX_OFFLINE=true
 ENV CARGO_FEATURES=hotpath,hotpath-alloc,hotpath-cpu
+
 # Copy manifests first (for better caching of dependencies)
 COPY Cargo.toml Cargo.lock ./
+
 # Copy local dependencies and migrations (needed at compile time)
 COPY crud_insertable ./crud_insertable
 COPY crud_insertable_macro ./crud_insertable_macro
@@ -59,19 +63,24 @@ COPY crud_models ./crud_models
 COPY spmc-ring ./spmc-ring
 COPY .sqlx ./.sqlx
 COPY migrations ./migrations
+
 # Create a dummy main.rs to build dependencies
 RUN mkdir src && \
     echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs && \
     cargo build --release --features="${CARGO_FEATURES}" && \
     rm -rf src
+
 # Now copy the actual source code
 COPY src ./src
+
 # Build the real application
 # Touch src/main.rs to force rebuild of the application code
 RUN touch src/main.rs && \
     cargo build --locked --release --features="${CARGO_FEATURES}" && \
     cp target/release/$APP_NAME /bin/server
+
 ################################################################################
+
 # Runtime stage
 FROM debian/eol:bullseye AS final
 
@@ -83,6 +92,7 @@ FROM debian/eol:bullseye AS final
 # instead, which has the full historical pool and actually still serves
 # the files apt asks for. This means slightly older (pre-final-security-
 # patch) builds of a handful of packages, not the live -security versions.
+
 RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
     echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
 
@@ -92,17 +102,23 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
     libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
     unzip xvfb curl \
     && rm -rf /var/lib/apt/lists/*
+
 # Install IBC properly
 COPY IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+
 RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/; \
     chown -R root /IBCLinux-3.21.2/; \
     chmod -u+x -R /IBCLinux-3.21.2/;
+
 COPY IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
 COPY IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
 RUN chmod -u+x -R /IBCLinux-3.21.2/
+
 # Copy the entrypoint script and set permissions
 COPY entrypoint.sh /entrypoint.sh
+
 RUN chmod +x /entrypoint.sh
+
 # Copy the executable from the "build" stage.
 COPY --from=build /bin/server /bin/
 COPY migrations /migrations

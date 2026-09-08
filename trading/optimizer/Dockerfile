@@ -13,13 +13,21 @@
 # Dockerfile.backtest).
 ################################################################################
 
-FROM debian:bullseye-slim AS build
+FROM debian/eol:bullseye AS build
 WORKDIR /app
 
+RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+
 # Build deps (clang/lld for ibapi sync client).
-RUN apt-get update && apt-get install -y \
-    curl build-essential pkg-config libssl-dev ca-certificates \
-    protobuf-compiler clang lld musl-dev git \
+RUN apt-get -o Acquire::Check-Valid-Until=false update && \
+    apt-get install -y --allow-downgrades \
+      libc6=2.31-13+deb11u11 \
+      libssl1.1=1.1.1w-0+deb11u1 \
+      perl-base=5.32.1-4+deb11u3 && \
+    apt-get install -y --no-install-recommends \
+      curl build-essential pkg-config libssl-dev ca-certificates \
+      protobuf-compiler clang lld musl-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -80,11 +88,14 @@ RUN cd optimizer && \
 ################################################################################
 # Runtime stage — IBC + Xvfb (same as Dockerfile.backtest, since the optimizer
 # may need to populate data via IBKR when the bars aren't pre-loaded).
-FROM debian:bullseye-slim AS final
+FROM debian/eol:bullseye AS final
+
+RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
 
 # Install runtime deps: Xvfb + IBC libs (needed for the IBKR data-load step
 # via with_gateway_retry) + postgresql-client (pg_isready) + curl.
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
     libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
     libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
     libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
