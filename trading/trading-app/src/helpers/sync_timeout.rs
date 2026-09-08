@@ -48,3 +48,28 @@ where
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(TimeoutError::Timeout),
     }
 }
+
+pub(crate) async fn async_call<F, O, E>(
+    func: F,
+) -> Result<O, TimeoutError<E>>
+where
+    F: FnOnce() -> Result<O, E> + Send + 'static,
+    O: Send + 'static,
+    E: Send + 'static,
+{
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+    let handle = thread::spawn(move || {
+        let result = func();
+        let _ = tx.blocking_send(()); // signal completion
+        result
+    });
+
+    match rx.recv().await {
+        Some(_) => match handle.join() {
+            Ok(inner) => inner.map_err(|e| TimeoutError::Function(e)),
+            Err(_) => Err(TimeoutError::WorkerPanic),
+        },
+        None => Err(TimeoutError::Timeout),
+    }
+}
