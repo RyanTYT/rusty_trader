@@ -4,7 +4,7 @@ ARG APP_NAME=trading-app
 ################################################################################
 # Create a stage for building the application.
 
-FROM ubuntu:22.04 AS build
+FROM debian:bullseye-slim AS build
 ARG APP_NAME
 WORKDIR /app
 
@@ -56,7 +56,7 @@ RUN touch src/main.rs && \
 
 ################################################################################
 # Runtime stage
-FROM ubuntu:22.04 AS final
+FROM debian:bullseye-slim AS final
 
 # Install all necessary dependencies for TWS
 RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
