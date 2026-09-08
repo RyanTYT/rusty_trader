@@ -98,11 +98,11 @@ async fn tokio_main() {
         .with_filter(LevelFilter::INFO); // show function/module name
     let ib_layer = IbConnectionLayer::new(state.clone(), "America/New_York".parse().unwrap())
         .with_filter(LevelFilter::WARN);
-    let db_tx = init_db_logger(pool.clone());
-    let db_layer = ChannelLayer { sender: db_tx }.with_filter(LevelFilter::WARN);
+    // let db_tx = init_db_logger(pool.clone());
+    // let db_layer = ChannelLayer { sender: db_tx }.with_filter(LevelFilter::WARN);
     tracing_subscriber::registry()
         .with(stdout_layer)
-        .with(db_layer)
+        // .with(db_layer)
         .with(ib_layer)
         .try_init()
         .ok();
