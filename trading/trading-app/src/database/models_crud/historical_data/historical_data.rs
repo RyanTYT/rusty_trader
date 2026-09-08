@@ -514,12 +514,12 @@ pub trait HistoricalDataOps {
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String>;
-    async fn has_at_least_n_rows_since(
+    async fn get_rows_since(
         &self,
         pk: HistoricalDataPrimaryKeysWoTime,
         n: u64,
         datetime: &DateTime<Tz>,
-    ) -> Result<bool, String>;
+    ) -> Result<i64, String>;
 }
 
 #[async_trait]
@@ -1086,12 +1086,12 @@ impl HistoricalDataOps for HistoricalDataCRUD {
         Ok(vwap_opt.map(|v| v.vwap))
     }
 
-    async fn has_at_least_n_rows_since(
+    async fn get_rows_since(
         &self,
         pk: HistoricalDataPrimaryKeysWoTime,
         n: u64,
         datetime: &DateTime<Tz>,
-    ) -> Result<bool, String> {
+    ) -> Result<i64, String> {
         let enough_rows = match pk {
             HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
                 stock,
@@ -1100,7 +1100,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }) => {
                 sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) >= $1
+                    SELECT COUNT(*)
                     FROM (
                         SELECT 1
                         FROM market_data.historical_data
@@ -1108,7 +1108,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         LIMIT $1
                     ) sub;
                     "#,
-                    (n - 1) as i32,
+                    n as i32,
                     stock,
                     primary_exchange,
                     currency,
@@ -1128,7 +1128,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }) => {
                 sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) > $1
+                    SELECT COUNT(*)
                     FROM (
                         SELECT 1
                         FROM market_data.historical_options_data
@@ -1143,7 +1143,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         LIMIT $1
                     ) sub;
                     "#,
-                    (n - 1) as i32,
+                    n as i32,
                     stock,
                     primary_exchange,
                     currency,
@@ -1161,7 +1161,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }) => {
                 sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) > $1
+                    SELECT COUNT(*)
                     FROM (
                         SELECT 1
                         FROM market_data.historical_forex_data
@@ -1172,7 +1172,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         LIMIT $1
                     ) sub;
                     "#,
-                    (n - 1) as i32,
+                    n as i32,
                     pair,
                     datetime
                 )
@@ -1188,14 +1188,15 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             ) => {
                 sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) > $1
+                    SELECT COUNT(*)
                     FROM market_data.daily_ohlcv
                     WHERE stock = $2
                         AND primary_exchange = $3
                         AND currency = $4
-                        AND day > $5;
-            "#,
-                    (n - 1) as i32,
+                        AND day > $5
+                    LIMIT $1;
+                    "#,
+                    n as i32,
                     stock,
                     primary_exchange,
                     currency,
@@ -1206,12 +1207,12 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }
         };
         match enough_rows {
-            Ok(has_at_least_n_rows) => Ok(has_at_least_n_rows.expect(
-                "Expected sql query to return a boolean at least in has_at_least_n_rows_since",
+            Ok(n_rows) => Ok(n_rows.expect(
+                "Expected sql query to return a boolean at least in get_rows_since",
             )),
             Err(e) => Err(format!(
                 "Error when fetching most recent rows from HistoricalData \
-                in has_at_least_n_rows_since: {}",
+                in get_rows_since: {}",
                 e
             )),
         }

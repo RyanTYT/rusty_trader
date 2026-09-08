@@ -112,8 +112,9 @@ pub async fn load_market_data(
         let pk = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
         let start_tz = start.with_timezone(&New_York);
         let has_data = crud
-            .has_at_least_n_rows_since(pk, 1, &start_tz)
+            .get_rows_since(pk, 1, &start_tz)
             .await
+            .map(|v| v >= 1)
             .unwrap_or(false);
         if !has_data {
             tracing::warn!(

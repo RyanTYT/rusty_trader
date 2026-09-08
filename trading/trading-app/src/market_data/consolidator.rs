@@ -347,19 +347,27 @@ impl Consolidator {
         let historical_data_crud = HistoricalDataCRUD::from(&asset_type, self.pool.clone());
         let historical_data_pk = HistoricalDataPrimaryKeysWoTime::from_contract(&contract);
         match historical_data_crud
-            .has_at_least_n_rows_since(
+            .get_rows_since(
                 historical_data_pk,
                 required_num_bars as u64,
                 &earliest_datetime,
             )
             .await
         {
-            Ok(passed) => {
+            Ok(n_rows) => {
+                let num_bars_in_day =
+                    if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
+                        STOCK_BARS_PER_DAY * 5
+                    } else {
+                        STOCK_BARS_PER_DAY
+                    };
+                let num_days_required =
+                    ((required_num_bars - n_rows) as f64 / num_bars_in_day as f64).ceil();
                 let config = HistoricalDataConfig::new(
-                    if passed {
+                    if n_rows >= (required_num_bars as i64) {
                         1.days()
                     } else {
-                        (days as i32).days()
+                        (num_days_required as i32).days()
                     },
                     if asset_type == AssetType::ForexPair || asset_type == AssetType::CFD {
                         ibapi::market_data::historical::BarSize::Min
@@ -373,7 +381,7 @@ impl Consolidator {
                     },
                     use_batching,
                 );
-                if passed {
+                if n_rows >= required_num_bars as i64 {
                     self.refresh_if_stale(&contract, &config).await;
                 } else {
                     if let Err(e) = self.populate_historical_data(&contract, &config).await {
@@ -383,7 +391,7 @@ impl Consolidator {
                     };
                 }
             }
-            Err(e) => tracing::error!("Failed to check for has_at_least_n_rows_since: {e:?}"),
+            Err(e) => tracing::error!("Failed to check for get_rows_since: {e:?}"),
         };
         Ok(())
     }

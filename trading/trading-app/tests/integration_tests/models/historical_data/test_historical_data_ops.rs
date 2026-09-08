@@ -1,7 +1,7 @@
 //! Comprehensive DB integration tests for `HistoricalDataOps` on `HistoricalDataCRUD`.
 //!
 //! Tests ALL variants (Stock, DailyStock, Options, Forex) for ALL methods:
-//! read_last_n, read_last_bar, read_last_vwap, has_at_least_n_rows_since.
+//! read_last_n, read_last_bar, read_last_vwap, get_rows_since.
 //!
 //! Requires: live Postgres + DATABASE_URL. All tests #[ignore]'d.
 
@@ -452,11 +452,11 @@ async fn test_read_last_vwap_daily_stock_error() {
     );
 }
 
-// ============================ has_at_least_n_rows_since — all variants ============================
+// ============================ get_rows_since — all variants ============================
 
 #[tokio::test]
 #[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_has_at_least_n_rows_since_stock_true() {
+async fn test_get_rows_since_stock_true() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
     let stock = "HAS_S1";
@@ -471,8 +471,9 @@ async fn test_has_at_least_n_rows_since_stock_true() {
     insert_stock_bars(&pool, stock, 5, Utc::now()).await;
     let since = Utc::now() - Duration::hours(1);
     let has = crud
-        .has_at_least_n_rows_since(pk, 5, &since.with_timezone(&New_York))
+        .get_rows_since(pk, 5, &since.with_timezone(&New_York))
         .await
+        .map(|v| v >= 5)
         .expect("failed");
     assert!(has, "5 rows, n=5 → true");
     cleanup_stock(&pool, stock).await;
@@ -480,7 +481,7 @@ async fn test_has_at_least_n_rows_since_stock_true() {
 
 #[tokio::test]
 #[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_has_at_least_n_rows_since_stock_false() {
+async fn test_get_rows_since_stock_false() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
     let stock = "HAS_S2";
@@ -495,8 +496,9 @@ async fn test_has_at_least_n_rows_since_stock_false() {
     insert_stock_bars(&pool, stock, 3, Utc::now()).await;
     let since = Utc::now() - Duration::hours(1);
     let has = crud
-        .has_at_least_n_rows_since(pk, 5, &since.with_timezone(&New_York))
+        .get_rows_since(pk, 5, &since.with_timezone(&New_York))
         .await
+        .map(|v| v >= 5)
         .expect("failed");
     assert!(!has, "3 rows, n=5 → false");
     cleanup_stock(&pool, stock).await;
@@ -504,7 +506,7 @@ async fn test_has_at_least_n_rows_since_stock_false() {
 
 #[tokio::test]
 #[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_has_at_least_n_rows_since_stock_zero_rows() {
+async fn test_get_rows_since_stock_zero_rows() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
     let crud = HistoricalDataCRUD::stock(pool.clone());
@@ -515,15 +517,16 @@ async fn test_has_at_least_n_rows_since_stock_zero_rows() {
     });
     let since = Utc::now() - Duration::hours(1);
     let has = crud
-        .has_at_least_n_rows_since(pk, 1, &since.with_timezone(&New_York))
+        .get_rows_since(pk, 1, &since.with_timezone(&New_York))
         .await
+        .map(|v| v >= 1)
         .expect("failed");
     assert!(!has, "0 rows, n=1 → false");
 }
 
 #[tokio::test]
 #[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_has_at_least_n_rows_since_forex_with_bid_ask_filter() {
+async fn test_get_rows_since_forex_with_bid_ask_filter() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
     let pair = "HAS_FX";
@@ -537,8 +540,9 @@ async fn test_has_at_least_n_rows_since_forex_with_bid_ask_filter() {
     // Forex filter: bid_open IS NOT NULL AND ask_open IS NOT NULL
     let since = Utc::now() - Duration::hours(1);
     let has = crud
-        .has_at_least_n_rows_since(pk, 5, &since.with_timezone(&New_York))
+        .get_rows_since(pk, 5, &since.with_timezone(&New_York))
         .await
+        .map(|v| v >= 5)
         .expect("failed");
     assert!(has, "5 forex bars with bid+ask → true");
     cleanup_forex(&pool, pair).await;
@@ -546,7 +550,7 @@ async fn test_has_at_least_n_rows_since_forex_with_bid_ask_filter() {
 
 #[tokio::test]
 #[ignore = "requires live Postgres + DATABASE_URL"]
-async fn test_has_at_least_n_rows_since_daily_stock_uses_day_column() {
+async fn test_get_rows_since_daily_stock_uses_day_column() {
     let _lock = TEST_MUTEX.lock().await;
     let pool = setup_test_db().await;
     let stock = "HAS_DLY";
@@ -563,8 +567,9 @@ async fn test_has_at_least_n_rows_since_daily_stock_uses_day_column() {
     insert_daily_bars(&pool, stock, 3, Utc::now()).await;
     let since = Utc::now() - Duration::days(10);
     let has = crud
-        .has_at_least_n_rows_since(pk, 3, &since.with_timezone(&New_York))
+        .get_rows_since(pk, 3, &since.with_timezone(&New_York))
         .await
+        .map(|v| v >= 3)
         .expect("failed");
     assert!(has, "3 daily bars, n=3 → true");
     cleanup_stock(&pool, stock).await;
