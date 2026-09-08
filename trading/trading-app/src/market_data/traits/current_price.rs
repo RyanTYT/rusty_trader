@@ -117,6 +117,8 @@ impl PriceSupplier for Consolidator {
         contract: &Contract,
         config: &HistoricalDataConfig,
     ) -> Result<(), String> {
+        use crate::helpers::sync_timeout::async_call;
+
         let pool = self.pool.clone();
         let (cloned_client, cloned_contract, duration, bar_size, what_to_show) = (
             self.client.clone(),
@@ -125,7 +127,7 @@ impl PriceSupplier for Consolidator {
             config.bar_size.clone(),
             config.what_to_show.clone(),
         );
-        let historical_bars = timeout(Duration::from_secs(5 * 60), move || {
+        let historical_bars = async_call(move || {
             cloned_client
                 .historical_data(
                     &cloned_contract,
@@ -143,6 +145,7 @@ impl PriceSupplier for Consolidator {
                     )
                 })
         })
+        .await
         .map_err(|e| format!("Failed to fetch historical data: {e:?}"))?;
 
         let bar_interval = if contract.security_type == SecurityType::ForexPair {
