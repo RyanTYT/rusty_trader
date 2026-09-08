@@ -4,14 +4,9 @@ ARG APP_NAME=trading-app
 ################################################################################
 # Create a stage for building the application.
 
-FROM debian:bullseye-slim AS build
+FROM debian:bookworm-slim AS build
 ARG APP_NAME
 WORKDIR /app
-
-# Switch sources to archive.debian.org for EOL Debian Bullseye
-RUN sed -i 's/deb.debian.org/archive.debian.org/g' /etc/apt/sources.list && \
-    sed -i 's/security.debian.org/archive.debian.org/g' /etc/apt/sources.list && \
-    sed -i '/bullseye-updates/d' /etc/apt/sources.list
 
 # Install dependencies for building Rust
 RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
@@ -61,12 +56,7 @@ RUN touch src/main.rs && \
 
 ################################################################################
 # Runtime stage
-FROM debian:bullseye-slim AS final
-
-# Switch sources to archive.debian.org for EOL Debian Bullseye
-RUN sed -i 's/deb.debian.org/archive.debian.org/g' /etc/apt/sources.list && \
-    sed -i 's/security.debian.org/archive.debian.org/g' /etc/apt/sources.list && \
-    sed -i '/bullseye-updates/d' /etc/apt/sources.list
+FROM debian:bookworm-slim AS final
 
 # Install all necessary dependencies for TWS
 RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
