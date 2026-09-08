@@ -1100,10 +1100,14 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }) => {
                 sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) > $1
-                    FROM market_data.historical_data
-                    WHERE stock = $2 AND primary_exchange = $3 AND currency = $4 AND time > $5;
-            "#,
+                    SELECT COUNT(*) >= $1
+                    FROM (
+                        SELECT 1
+                        FROM market_data.historical_data
+                        WHERE stock = $2 AND primary_exchange = $3 AND currency = $4 AND time > $5
+                        LIMIT $1
+                    ) sub;
+                    "#,
                     (n - 1) as i32,
                     stock,
                     primary_exchange,
@@ -1125,15 +1129,19 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 sqlx::query_scalar!(
                     r#"
                     SELECT COUNT(*) > $1
-                    FROM market_data.historical_options_data
-                    WHERE stock = $2
-                        AND primary_exchange = $3
-                        AND currency = $4
-                        AND expiry = $5
-                        AND strike = $6
-                        AND multiplier = $7
-                        AND option_type = $8
-                        AND time > $9;
+                    FROM (
+                        SELECT 1
+                        FROM market_data.historical_options_data
+                        WHERE stock = $2
+                            AND primary_exchange = $3
+                            AND currency = $4
+                            AND expiry = $5
+                            AND strike = $6
+                            AND multiplier = $7
+                            AND option_type = $8
+                            AND time > $9
+                        LIMIT $1
+                    ) sub;
                     "#,
                     (n - 1) as i32,
                     stock,
@@ -1154,11 +1162,15 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 sqlx::query_scalar!(
                     r#"
                     SELECT COUNT(*) > $1
-                    FROM market_data.historical_forex_data
-                    WHERE pair = $2
-                        AND bid_open IS NOT NULL
-                        AND ask_open IS NOT NULL
-                        AND time > $3;
+                    FROM (
+                        SELECT 1
+                        FROM market_data.historical_forex_data
+                        WHERE pair = $2
+                            AND bid_open IS NOT NULL
+                            AND ask_open IS NOT NULL
+                            AND time > $3
+                        LIMIT $1
+                    ) sub;
                     "#,
                     (n - 1) as i32,
                     pair,
