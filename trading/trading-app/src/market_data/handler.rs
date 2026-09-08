@@ -13,7 +13,7 @@ use ibapi::{
 };
 use moka::sync::Cache;
 use ordered_float::OrderedFloat;
-use spmc_ring::{bench::RingBuffer, ring_buffer::spmc_ring_buffer::SpmcRingBuffer};
+use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBuffer;
 use sqlx::PgPool;
 
 use crate::{
@@ -25,9 +25,7 @@ use crate::{
             },
             strategy_consumer::IbkrBarConsumer,
         },
-        producer::{
-            IbkrBarProducer, MarketDataProducer, begin_producer_thread_grouped, subscribe_to_data,
-        },
+        producer::{IbkrBarProducer, MarketDataProducer, begin_producer_thread_grouped},
     },
     schedule::contract_scheduler::IbkrContractScheduler,
 };
