@@ -472,7 +472,7 @@ impl OrderEngine {
                                 } else {
                                     ibapi::orders::Action::Sell
                                 },
-                                qty_diff,
+                                qty_diff.abs(),
                             )
                         } else {
                             limit_order(
@@ -481,7 +481,7 @@ impl OrderEngine {
                                 } else {
                                     ibapi::orders::Action::Sell
                                 },
-                                qty_diff,
+                                qty_diff.abs(),
                                 avg_price,
                             )
                         };
