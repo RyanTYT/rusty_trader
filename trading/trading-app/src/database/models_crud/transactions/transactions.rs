@@ -68,9 +68,9 @@ impl TransactionsFullKeys {
 
                 price: execution_data.execution.average_price,
                 quantity: if execution_data.execution.side == "BOT" {
-                    execution_data.execution.shares.clone()
+                    execution_data.execution.shares
                 } else {
-                    -execution_data.execution.shares.clone()
+                    -execution_data.execution.shares
                 },
                 fees: dec!(0),
             }),
