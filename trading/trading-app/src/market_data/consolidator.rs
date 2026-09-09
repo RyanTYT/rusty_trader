@@ -209,7 +209,9 @@ impl Consolidator {
         timeout_duration: Duration,
     ) -> Option<Contract> {
         if contract.contract_id != 0
-            && memoised_contracts.is_some_and(|v| v.contains_key(&contract.contract_id))
+            && memoised_contracts
+                .as_ref()
+                .is_some_and(|v| v.contains_key(&contract.contract_id))
         {
             return memoised_contracts
                 .unwrap()
