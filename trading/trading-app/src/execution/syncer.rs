@@ -574,7 +574,7 @@ async fn sync_stock_and_option_positions(
             PositionUpdateMulti::Position(position) => {
                 let contract = {
                     let validated_contract = consolidator
-                        .validate_contract(position.contract.clone(), Duration::from_secs(1));
+                        .validate_contract(position.contract.clone(), Duration::from_secs(10));
                     validated_contract.unwrap_or(position.contract)
                 };
                 let asset_type = AssetType::from_str(&contract.security_type);
@@ -746,7 +746,7 @@ fn on_full_open_order_received(
     //    call - but low on priority list since this is performed before mkt open - non-critical
     //    path
     let contract = consolidator
-        .validate_contract(unvalidated_contract.clone(), Duration::from_secs(1))
+        .validate_contract(unvalidated_contract.clone(), Duration::from_secs(10))
         .unwrap_or(unvalidated_contract.clone());
 
     // 3. Begin a detached thread to update the DB accordingly

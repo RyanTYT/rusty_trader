@@ -7,6 +7,7 @@ use ibapi::{
     market_data::historical::ToDuration,
     prelude::{Contract, SecurityType},
 };
+use moka::sync::Cache;
 use nyse_holiday_cal::HolidayCal;
 use sqlx::PgPool;
 
@@ -51,6 +52,7 @@ pub struct Consolidator {
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
+    pub(super) memoised_contracts: Arc<Cache<i32, Contract>>,
     #[cfg(not(feature = "backtest"))]
     contract_scheduler: Arc<IbkrContractScheduler>,
 
@@ -90,6 +92,8 @@ impl Consolidator {
         market_data_handler: MarketDataHandler,
         contract_scheduler: Arc<IbkrContractScheduler>,
     ) -> Self {
+        use moka::sync::CacheBuilder;
+
         let price_ttl = Duration::from_mins(15);
         let ttl = Duration::from_secs(60);
         let mut memoisers: HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>> =
@@ -154,6 +158,12 @@ impl Consolidator {
             market_data_handler: market_data_handler,
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
+            memoised_contracts: Arc::new(
+                Cache::builder()
+                    .time_to_live(Duration::from_hours(24))
+                    .max_capacity(100)
+                    .build(),
+            ),
             contract_scheduler,
         }
     }
@@ -168,6 +178,12 @@ impl Consolidator {
             pool,
             market_data_handler,
             memoisers: Arc::new(HashMap::new()),
+            memoised_contracts: Arc::new(
+                Cache::builder()
+                    .time_to_live(Duration::from_hours(24))
+                    .max_capacity(100)
+                    .build(),
+            ),
             price_supplier,
         }
     }
@@ -178,21 +194,45 @@ impl Consolidator {
         contract: Contract,
         timeout_duration: Duration,
     ) -> Option<Contract> {
-        Self::_validate_contract(self.client.clone(), contract, timeout_duration)
+        Self::_validate_contract(
+            self.client.clone(),
+            Some(self.memoised_contracts.clone()),
+            contract,
+            timeout_duration,
+        )
     }
 
     pub(crate) fn _validate_contract(
         client: Arc<Client>,
+        memoised_contracts: Option<Arc<Cache<i32, Contract>>>,
         contract: Contract,
         timeout_duration: Duration,
     ) -> Option<Contract> {
+        if contract.contract_id != 0
+            && memoised_contracts.is_some_and(|v| v.contains_key(&contract.contract_id))
+        {
+            return memoised_contracts
+                .unwrap()
+                .get(&contract.contract_id)
+                .map(|v| v.clone());
+        }
+
         let symbol = contract.symbol.clone();
         match timeout(timeout_duration, move || client.contract_details(&contract)) {
             Ok(validated_contracts) => {
                 if validated_contracts.len() == 0 {
                     return None;
                 }
-                return Some(validated_contracts.first().take().unwrap().contract.clone());
+                let contract = validated_contracts
+                    .into_iter()
+                    .take(1)
+                    .next()
+                    .unwrap()
+                    .contract;
+                if let Some(v) = memoised_contracts {
+                    v.insert(contract.contract_id, contract.clone());
+                }
+                return Some(contract);
             }
             Err(e) => {
                 tracing::error!(

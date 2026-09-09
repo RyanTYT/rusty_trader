@@ -81,6 +81,7 @@ impl StrategyExecutor for Manual {
         vec![
             Consolidator::_validate_contract(
                 client,
+                None,
                 Contract {
                     symbol: Symbol::new("GBP"),
                     security_type: ibapi::prelude::SecurityType::ForexPair,
