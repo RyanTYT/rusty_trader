@@ -14,6 +14,7 @@ use tracing::{info, warn};
 
 use crate::{
     execution::{fx_backed_up_order::OrderStore, order_update_stream},
+    market_data::consolidator::Consolidator,
     strategy::strategy::StrategyDetails,
 };
 
@@ -102,6 +103,7 @@ impl OrderUpdateStreamController {
     /// not handled quickly could block up channel and stow updates indefinitely
     pub fn new(
         pool: PgPool,
+        consolidator: Weak<Consolidator>,
         weak_client: Weak<Client>,
         strategy_details: Arc<HashMap<String, StrategyDetails>>,
         default_strategy: Option<String>,
@@ -208,6 +210,7 @@ impl OrderUpdateStreamController {
                             order_update,
                             def_strat.as_str(),
                             cloned_handle.clone(),
+                            &consolidator,
                             &weak_client,
                             backed_up_orders.clone(),
                         )
@@ -239,6 +242,7 @@ async fn on_order_update_received(
     order_update: OrderUpdate,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
+    consolidator: &Weak<Consolidator>,
     weak_client: &Weak<Client>,
     backed_up_orders: Arc<OrderStore>,
 ) -> Result<(), String> {
@@ -285,6 +289,7 @@ async fn on_order_update_received(
             match StatusOfOrderStatus::from_str(open_order.order_state.status.as_str()) {
                 StatusOfOrderStatus::Submitted | StatusOfOrderStatus::PreSubmitted => {
                     match order_update_stream::event_handlers::open_order::submitted(
+                        &consolidator,
                         pool.clone(),
                         &open_order.contract,
                         &open_order.order,
@@ -317,6 +322,7 @@ async fn on_order_update_received(
                 )
             );
             if let Err(e) = order_update_stream::event_handlers::execution::on_execution_update(
+                &consolidator,
                 pool.clone(),
                 execution_data,
                 &strategy_details,

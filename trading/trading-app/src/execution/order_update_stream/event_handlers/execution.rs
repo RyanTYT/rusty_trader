@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
+    collections::HashMap, sync::{Arc, Weak}, time::Duration,
 };
 
 use ibapi::{Client, orders::ExecutionData};
@@ -27,6 +26,7 @@ use crate::{
         },
     },
     execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine},
+    market_data::consolidator::Consolidator,
     strategy::strategy::StrategyDetails,
 };
 
@@ -38,14 +38,23 @@ use crate::{
 /// - also means that matching of arms is purely for database filtering (NOTE) -> depends on
 /// correctness of on_new_order_submitted
 pub fn on_execution_update(
+    consolidator: &Weak<Consolidator>,
     pool: PgPool,
-    execution_data: ExecutionData,
+    mut execution_data: ExecutionData,
     strategy_details: &Arc<HashMap<String, StrategyDetails>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
     weak_client: &Weak<Client>,
     backed_up_orders: Arc<OrderStore>,
 ) -> Result<(), String> {
+    let contract = {
+        consolidator
+            .upgrade()
+            .ok_or("Consolidator died when received submitted order update")?
+            .validate_contract(execution_data.contract.clone(), Duration::from_secs(10))
+            .ok_or("No valid contract for contract for order update")?
+    };
+    execution_data.contract = contract;
     let asset_type = AssetType::from_str(&execution_data.contract.security_type);
     match asset_type {
         AssetType::CASH => {

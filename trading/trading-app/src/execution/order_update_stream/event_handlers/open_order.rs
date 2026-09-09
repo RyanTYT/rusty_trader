@@ -1,27 +1,40 @@
+use std::{sync::Weak, time::Duration};
+
 use ibapi::{
     contracts::{Contract, SecurityType},
     orders::Order,
 };
 use sqlx::PgPool;
 
-use crate::database::{
-    crud::CRUDTrait,
-    models::AssetType,
-    models_crud::open_orders::open_orders::{
-        OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
+use crate::{
+    database::{
+        crud::CRUDTrait,
+        models::AssetType,
+        models_crud::open_orders::open_orders::{
+            OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
+        },
     },
+    market_data::consolidator::Consolidator,
 };
 
 /// Should be triggered by Submitted and PreSubmitted Order Events to update the local OpenOrders
 /// table
 pub fn submitted(
+    consolidator: &Weak<Consolidator>,
     pool: PgPool,
     contract: &Contract,
     order: &Order,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
+    let contract = {
+        consolidator
+            .upgrade()
+            .ok_or("Consolidator died when received submitted order update")?
+            .validate_contract(contract.clone(), Duration::from_secs(10))
+            .ok_or("No valid contract for contract for order update")?
+    };
     let asset_type = AssetType::from_str(&contract.security_type);
     let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
-    let open_order_fk = OpenOrdersFullKeys::from_contract_and_order(contract, order, 0.0);
+    let open_order_fk = OpenOrdersFullKeys::from_contract_and_order(&contract, order, 0.0);
     let open_orders_pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order.order_id);
     Ok(tokio::spawn(async move {
         if let Err(e) = open_orders_crud.delete(&open_orders_pk).await {

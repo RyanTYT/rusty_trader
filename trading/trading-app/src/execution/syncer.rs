@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::{Arc, Weak}, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -95,6 +95,7 @@ pub trait SyncOps {
     fn sync_executions(
         &self,
         client: &Arc<Client>,
+        consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String>;
@@ -120,6 +121,7 @@ impl SyncOps for SyncerEngine {
     fn sync_executions(
         &self,
         client: &Arc<Client>,
+        consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String> {
@@ -152,6 +154,7 @@ impl SyncOps for SyncerEngine {
 
                     if let Err(e) =
                         order_update_stream::event_handlers::execution::on_execution_update(
+                            consolidator,
                             self.pool.clone(),
                             execution_data,
                             &self.strategy_details,
