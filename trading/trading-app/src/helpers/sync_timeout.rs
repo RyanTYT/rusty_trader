@@ -49,9 +49,7 @@ where
     }
 }
 
-pub(crate) async fn async_call<F, O, E>(
-    func: F,
-) -> Result<O, TimeoutError<E>>
+pub(crate) async fn async_call<F, O, E>(func: F) -> Result<O, TimeoutError<E>>
 where
     F: FnOnce() -> Result<O, E> + Send + 'static,
     O: Send + 'static,
@@ -71,5 +69,33 @@ where
             Err(_) => Err(TimeoutError::WorkerPanic),
         },
         None => Err(TimeoutError::Timeout),
+    }
+}
+
+pub(crate) fn timeout_panic<F, O, E>(duration: Duration, func: F) -> Result<O, E>
+where
+    F: FnOnce() -> Result<O, E> + Send + 'static,
+    O: Send + 'static,
+    E: Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+        let result = func();
+        let _ = tx.send(()); // signal completion
+        result
+    });
+
+    match rx.recv_timeout(duration) {
+        Ok(_) => match handle.join() {
+            Ok(inner) => inner,
+            Err(_) => panic!("Failed to complete function with timeout_panic"),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("Failed to complete timeout_panic - timed out")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("Failed to complete timeout_panic - disconnected")
+        }
     }
 }
