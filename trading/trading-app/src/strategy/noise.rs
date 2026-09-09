@@ -354,7 +354,7 @@ impl StrategyExecutor for Noise {
             .build();
         #[cfg(not(feature = "backtest"))]
         let res = vec![
-            Consolidator::_validate_contract(client, contract, Duration::from_secs(10))
+            Consolidator::_validate_contract(client, None, contract, Duration::from_secs(10))
                 .expect("Expected to be able to get_contracts when init_app"),
         ];
         #[cfg(feature = "backtest")]
