@@ -98,7 +98,7 @@ pub fn on_execution_update(
         match &transactions_crud.read(&transaction_pk).await {
             Ok(transaction) => {
                 if transaction.is_some() {
-                    tracing::error!("Received duplicate transaction");
+                    tracing::debug!("Already processed duplicate transaction");
                     return;
                 }
             }
