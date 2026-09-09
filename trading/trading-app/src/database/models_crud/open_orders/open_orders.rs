@@ -217,7 +217,12 @@ impl OpenOrdersUpdateKeys {
                     primary_exchange: Some(contract.primary_exchange.to_string()),
                     currency: Some(contract.currency.to_string()),
                     time: Some(Utc::now()),
-                    quantity: Some(order.total_quantity),
+                    quantity: Some(order.total_quantity)
+                        * if order.action == Action::Buy {
+                            1.0
+                        } else {
+                            -1.0
+                        },
                     executions: None,
                     filled: Some(0.0),
                 })
@@ -232,7 +237,12 @@ impl OpenOrdersUpdateKeys {
                 multiplier: Some(contract.multiplier.to_string()),
                 option_type: Some(OptionType::from_str(&contract.right).unwrap()),
                 time: Some(Utc::now()),
-                quantity: Some(order.total_quantity),
+                quantity: Some(order.total_quantity)
+                    * if order.action == Action::Buy {
+                        1.0
+                    } else {
+                        -1.0
+                    },
                 executions: None,
                 filled: Some(0.0),
             }),
