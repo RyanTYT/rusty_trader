@@ -6,7 +6,7 @@ use ibapi::{
     Client,
     accounts::{PositionUpdateMulti, types::AccountId},
     contracts::SecurityType,
-    orders::{ExecutionFilter, Executions, Order, OrderStatus},
+    orders::{Action, ExecutionFilter, Executions, Order, OrderStatus},
     prelude::Contract,
 };
 use sqlx::PgPool;
@@ -770,7 +770,14 @@ fn on_full_open_order_received(
                         .expect("Expected contract right to be convertible to OptionType"),
                 ),
                 time: Some(Utc::now()),
-                quantity: Some(order.total_quantity),
+                quantity: Some(
+                    order.total_quantity
+                        * if order.action == Action::Buy {
+                            1.0
+                        } else {
+                            -1.0
+                        },
+                ),
                 executions: None,
                 filled: Some(order_status_filled),
             }),
@@ -781,7 +788,14 @@ fn on_full_open_order_received(
                     primary_exchange: Some(contract.primary_exchange.to_string()),
                     currency: Some(contract.currency.to_string()),
                     time: Some(Utc::now()),
-                    quantity: Some(order.total_quantity),
+                    quantity: Some(
+                        order.total_quantity
+                            * if order.action == Action::Buy {
+                                1.0
+                            } else {
+                                -1.0
+                            },
+                    ),
                     executions: None,
                     filled: Some(order_status_filled),
                 })
