@@ -1,18 +1,19 @@
 use ibapi::orders::OrderStatus;
 use sqlx::PgPool;
 
-use crate::database::{
-    crud::CRUDTrait,
-    models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
-    models_crud::open_orders::open_orders::{
-        OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
+use crate::{
+    database::{
+        crud::CRUDTrait,
+        models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
+        models_crud::open_orders::open_orders::{
+            OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
+        },
     },
 };
 
 /// Should be triggered by Submitted and PreSubmitted Order Events to update the local OpenOrders
 /// table
 pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
-    // order_status.
     let order_perm_id = order_status.perm_id;
     let order_id = order_status.order_id;
     let (filled, quantity) = (
