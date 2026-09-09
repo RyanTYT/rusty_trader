@@ -18,7 +18,10 @@ use crate::{
             HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
         },
     },
-    helpers::{contract::HashContract, sync_timeout::timeout},
+    helpers::{
+        contract::HashContract,
+        sync_timeout::{timeout, timeout_panic},
+    },
     market_data::{
         handler::MarketDataHandler,
         memoise::{AnyMemoized, Memoized},
@@ -220,7 +223,7 @@ impl Consolidator {
         }
 
         let symbol = contract.symbol.clone();
-        match timeout(timeout_duration, move || client.contract_details(&contract)) {
+        match timeout_panic(timeout_duration, move || client.contract_details(&contract)) {
             Ok(validated_contracts) => {
                 if validated_contracts.len() == 0 {
                     return None;
