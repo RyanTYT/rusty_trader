@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use std::{collections::VecDeque, sync::Arc};
 
-use chrono::Utc;
 use ibapi::Client;
 use ibapi::market_data::realtime::Bar;
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
