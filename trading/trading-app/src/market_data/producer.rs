@@ -199,6 +199,12 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                             subscriptions[active_producers[idx]].1.contract.symbol,
                             num_misses + 1
                         );
+                        if let Some(e) = subscriptions[active_producers[idx]].0.error() {
+                            tracing::error!(
+                                "Failed to receive bar for {} from IBKR because of error: {e:?}",
+                                subscriptions[active_producers[idx]].1.contract.symbol,
+                            );
+                        }
                         // if miss a minute worth of bars, re-subscribe
                         if num_misses + 1 > 12 {
                             tracing::warn!(
