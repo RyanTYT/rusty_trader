@@ -336,7 +336,7 @@ pub fn begin_db_consumer_thread_grouped<
                     if !received_bool {
                         tracing::warn!(
                             "Failed to receive bar for {} in db consumer",
-                            consumers[idx].contract.symbol
+                            consumers[active_consumers[idx]].contract.symbol
                         );
                     }
                 }
