@@ -39,13 +39,13 @@ pub trait ContractScheduler {
     ) -> Result<DateTime<Utc>, String>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Interval {
     open: i64,
     close: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct IbkrContractScheduler {
     client: Arc<Client>,
     is_under_editing: Arc<HashMap<i32, AtomicBool>>,
@@ -229,7 +229,7 @@ impl IbkrContractScheduler {
         Ok(())
     }
 
-    fn get_interval<'a>(&'a self, contract: &Contract) -> Result<(i64, &'a Interval), String> {
+    fn get_interval(&self, contract: &Contract) -> Result<(i64, Interval), String> {
         let schedule_cell = self
             .schedules
             .get(&contract.contract_id)
@@ -246,14 +246,14 @@ impl IbkrContractScheduler {
                 .as_ref()
                 .expect("Expected schedule cell to not be None");
             if schedule.is_empty() {
-                self.update_schedule(contract);
+                self.update_schedule(contract)?;
                 return self.get_interval(contract);
             }
 
             let now = Utc::now().timestamp();
             let interval = schedule.front().unwrap();
             if now < interval.close {
-                return Ok((now, interval));
+                return Ok((now, *interval));
             }
 
             let contract_under_edit = self
@@ -289,7 +289,7 @@ impl IbkrContractScheduler {
                 }
 
                 contract_under_edit.store(false, std::sync::atomic::Ordering::Release);
-                return Ok((now, schedule_mut.front().unwrap()));
+                return Ok((now, *schedule_mut.front().unwrap()));
             }
         }
     }
@@ -324,7 +324,7 @@ impl ContractScheduler for IbkrContractScheduler {
         let mut contracts_vec = Vec::new();
         for contract in contracts {
             if self.schedules.contains_key(&contract.contract_id) {
-                return Ok(());
+                continue;
             }
 
             {
