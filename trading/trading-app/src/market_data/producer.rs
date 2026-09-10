@@ -221,6 +221,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                     "Expected to be able to make subscription for realtime_bars",
                                 )
                             };
+                            consecutive_misses[active_producers[idx]] = 0;
                         }
                     }
                 }
