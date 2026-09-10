@@ -1207,9 +1207,10 @@ impl HistoricalDataOps for HistoricalDataCRUD {
             }
         };
         match enough_rows {
-            Ok(n_rows) => Ok(n_rows.expect(
-                "Expected sql query to return a boolean at least in get_rows_since",
-            )),
+            Ok(n_rows) => {
+                Ok(n_rows
+                    .expect("Expected sql query to return a boolean at least in get_rows_since"))
+            }
             Err(e) => Err(format!(
                 "Error when fetching most recent rows from HistoricalData \
                 in get_rows_since: {}",

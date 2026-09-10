@@ -165,7 +165,13 @@ pub fn linreg(x: &[f64], y: &[f64]) -> Option<LinReg> {
         sxy / (sxx.sqrt() * syy.sqrt())
     };
     let rsq = corr * corr;
-    Some(LinReg { alpha, beta, rsq, corr, n })
+    Some(LinReg {
+        alpha,
+        beta,
+        rsq,
+        corr,
+        n,
+    })
 }
 
 /// Residuals y_i - (alpha + beta·x_i).
@@ -242,11 +248,7 @@ pub fn historical_cvar(xs: &[f64], pct: f64) -> f64 {
         return f64::NAN;
     }
     let tail: Vec<f64> = xs.iter().cloned().filter(|x| *x <= var).collect();
-    if tail.is_empty() {
-        var
-    } else {
-        mean(&tail)
-    }
+    if tail.is_empty() { var } else { mean(&tail) }
 }
 
 /// Annualized Sharpe ratio (rf=0). `ppy` = periods per year (252 daily,
@@ -263,7 +265,11 @@ pub fn sharpe(returns: &[f64], ppy: f64) -> f64 {
 /// downside or zero downside-dev.
 pub fn sortino(returns: &[f64], ppy: f64) -> f64 {
     let m = mean(returns);
-    let downside: Vec<f64> = returns.iter().filter(|r| **r < 0.0).map(|r| r.powi(2)).collect();
+    let downside: Vec<f64> = returns
+        .iter()
+        .filter(|r| **r < 0.0)
+        .map(|r| r.powi(2))
+        .collect();
     if downside.is_empty() {
         return f64::NAN;
     }
@@ -460,35 +466,36 @@ pub fn parkinson_var(highs: &[f64], lows: &[f64]) -> f64 {
             cnt += 1;
         }
     }
-    if cnt == 0 {
-        f64::NAN
-    } else {
-        acc / cnt as f64
-    }
+    if cnt == 0 { f64::NAN } else { acc / cnt as f64 }
 }
 
 /// Garman-Klass (1980) variance estimator from OHLC:
 /// 0.5·(ln(H/L))² − (2·ln2 − 1)·(ln(C/O))², averaged over bars. NaN if none.
 pub fn garman_klass_var(opens: &[f64], highs: &[f64], lows: &[f64], closes: &[f64]) -> f64 {
-    let n = opens.len().min(highs.len()).min(lows.len()).min(closes.len());
+    let n = opens
+        .len()
+        .min(highs.len())
+        .min(lows.len())
+        .min(closes.len());
     if n == 0 {
         return f64::NAN;
     }
     let (mut acc, mut cnt) = (0.0, 0);
     let coef = 2.0 * (2f64.ln()) - 1.0;
     for i in 0..n {
-        if opens[i] > 0.0 && highs[i] > 0.0 && lows[i] > 0.0 && closes[i] > 0.0 && highs[i] >= lows[i] {
+        if opens[i] > 0.0
+            && highs[i] > 0.0
+            && lows[i] > 0.0
+            && closes[i] > 0.0
+            && highs[i] >= lows[i]
+        {
             let hl = (highs[i] / lows[i]).ln();
             let co = (closes[i] / opens[i]).ln();
             acc += 0.5 * hl * hl - coef * co * co;
             cnt += 1;
         }
     }
-    if cnt == 0 {
-        f64::NAN
-    } else {
-        acc / cnt as f64
-    }
+    if cnt == 0 { f64::NAN } else { acc / cnt as f64 }
 }
 
 // =========================================================================
@@ -509,11 +516,7 @@ pub fn amihud(returns: &[f64], dollar_volumes: &[f64]) -> f64 {
             cnt += 1;
         }
     }
-    if cnt == 0 {
-        f64::NAN
-    } else {
-        acc / cnt as f64
-    }
+    if cnt == 0 { f64::NAN } else { acc / cnt as f64 }
 }
 
 /// Roll (1984) effective bid-ask spread proxy:
@@ -729,11 +732,7 @@ pub fn garch11_fit(returns: &[f64]) -> Option<GarchFit> {
         let omega = params[0];
         let alpha = params[1];
         let beta = params[2];
-        if omega <= 0.0
-            || alpha < 0.0
-            || beta < 0.0
-            || alpha + beta >= 0.9999
-            || alpha + beta < 0.0
+        if omega <= 0.0 || alpha < 0.0 || beta < 0.0 || alpha + beta >= 0.9999 || alpha + beta < 0.0
         {
             return 1e18;
         }
@@ -824,7 +823,11 @@ fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: Vec<f64>, tol: f64, max_iter: u
     simplex.push((start.clone(), f(&start)));
     for i in 0..n {
         let mut p = start.clone();
-        p[i] = if p[i].abs() < 1e-12 { 1e-6 } else { p[i] * 1.05 + 1e-6 };
+        p[i] = if p[i].abs() < 1e-12 {
+            1e-6
+        } else {
+            p[i] * 1.05 + 1e-6
+        };
         simplex.push((p.clone(), f(&p)));
     }
 

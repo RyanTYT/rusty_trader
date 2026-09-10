@@ -587,7 +587,7 @@ impl OrderEngine {
                     }
                     #[cfg(feature = "backtest")]
                     if let Err(e) = submitter.cancel_order(*order_id) {
-                        tracing::error!("Failed to cancel order: {:?}", *order_id)
+                        tracing::error!("Failed to cancel order ({:?}): {e:?}", *order_id)
                     }
                 }
 

@@ -72,7 +72,8 @@ impl BacktestMethod for HistoricalReplay {
             .handle
             .block_on(strategy.warm_up_data(
                 &ctx.consolidator,
-                #[cfg(feature = "backtest")] bar_time,
+                #[cfg(feature = "backtest")]
+                bar_time,
             ))
             .map_err(|e| format!("warm_up_data: {e}"))?;
 

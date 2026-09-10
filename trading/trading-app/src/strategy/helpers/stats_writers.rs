@@ -204,9 +204,7 @@ impl DualWriter {
         self.flush_batch()?;
         if let Some(pq) = self.pq.take() {
             let aw = pq.into_inner().unwrap_or_else(|e| e.into_inner());
-            let _ = aw
-                .close()
-                .map_err(|e| format!("parquet close: {e}"))?;
+            let _ = aw.close().map_err(|e| format!("parquet close: {e}"))?;
         }
         if let Some(csv) = self.csv.as_mut() {
             csv.flush().map_err(|e| format!("csv flush: {e}"))?;

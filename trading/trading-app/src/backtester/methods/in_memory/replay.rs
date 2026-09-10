@@ -95,7 +95,8 @@ impl InMemoryReplay {
         let warmup_end = handle
             .block_on(strategy.warm_up_data(
                 &light.consolidator,
-                #[cfg(feature = "backtest")] bar_time,
+                #[cfg(feature = "backtest")]
+                bar_time,
             ))
             .map_err(|e| format!("warm_up_data: {e}"))?;
 
