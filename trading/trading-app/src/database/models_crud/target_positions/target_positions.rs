@@ -58,6 +58,13 @@ impl TargetPositionsQtyDiff {
         }
     }
 
+    pub fn get_stock(&self) -> String {
+        match self {
+            Self::Stock(TargetStockPositionsQtyDiff { stock, .. }) => stock.clone(),
+            Self::Options(TargetOptionPositionsQtyDiff { stock, .. }) => stock.clone(),
+        }
+    }
+
     pub fn get_qty_diff(&self) -> f64 {
         match self {
             Self::Stock(TargetStockPositionsQtyDiff { qty_diff, .. }) => *qty_diff,

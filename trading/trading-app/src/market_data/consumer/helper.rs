@@ -64,7 +64,7 @@ pub fn aggregate_bars(
             first_bar.close,
             first_bar.volume,
         );
-        tracing::warn!(
+        tracing::debug!(
             "Bar Time: {bar_time:?}, bar_no: {bar_no:?}, open: {open:?}, high: {high:?}, low: {low:?}, close: {close:?}"
         );
 
@@ -84,7 +84,7 @@ pub fn aggregate_bars(
             close = first_bar.close;
             volume += first_bar.volume;
         }
-        tracing::info!("Has first bar: {has_first_bar:?}");
+        tracing::debug!("Has first bar: {has_first_bar:?}");
 
         agg_bars.push(HistoricalDataFullKeys::from_data(
             &contract,
