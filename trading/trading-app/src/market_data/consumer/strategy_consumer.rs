@@ -298,7 +298,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                             "aggregate_bars output more than 1 bar"
                                                         );
                                                     }
-                                                    agg_bars[slot] = Some(big_bars.pop().unwrap());
+                                                    agg_bars[idx] = Some(big_bars.pop().unwrap());
                                                 }
                                             }
                                             IbkrBarType::ForexAsk => {
@@ -332,7 +332,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                             "aggregate_bars output more than 1 bar"
                                                         );
                                                     }
-                                                    agg_bars[slot] = Some(big_bars.pop().unwrap());
+                                                    agg_bars[idx] = Some(big_bars.pop().unwrap());
                                                 }
                                             }
                                         }
