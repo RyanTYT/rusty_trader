@@ -127,13 +127,12 @@ pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize, const NUM_CONSUMER
     loop {
         let mut progressed = false;
 
-        let now = Utc::now();
         for (i, consumer) in consumers.iter().enumerate() {
             if settled[i] {
                 continue;
             }
             if !contract_scheduler
-                .is_trading(&consumer.contract, &now)
+                .is_trading(&consumer.contract)
                 .expect("Expected schedule to be populated")
             {
                 settled[i] = true;
@@ -167,7 +166,6 @@ pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize, const NUM_CONSUMER
         }
     }
 
-    let now = Utc::now();
     // Get latest observed bar time
     // - then for all consumers slower than that -> wait for pop bar
     //   (for up to 250ms)
@@ -175,7 +173,7 @@ pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize, const NUM_CONSUMER
         Some(latest) => {
             for (i, consumer) in consumers.iter().enumerate() {
                 if !contract_scheduler
-                    .is_trading(&consumer.contract, &now)
+                    .is_trading(&consumer.contract)
                     .expect("Expected schedule to be populated")
                 {
                     continue;
