@@ -81,7 +81,7 @@ impl ContractScheduler for IbkrContractScheduler {
         let client = self.client.clone();
         let cloned_contract = contract.clone();
         let mut schedules = HashMap::new();
-        match timeout(Duration::from_secs(1), move || {
+        match timeout(Duration::from_secs(10), move || {
             client.contract_details(&cloned_contract)
         }) {
             Ok(all_contract_details) => {

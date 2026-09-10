@@ -87,11 +87,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
     let thread_handle = std::thread::Builder::new()
         .name("grp_prod".to_string())
         .spawn(move || {
-            let subscription_data: Vec<(Contract, WhatToShow)> = producers
-                .iter()
-                .map(|a| (a.contract.clone(), a.what_to_show.clone()))
-                .collect();
-            let subscriptions: Vec<(
+            let mut subscriptions: Vec<(
                 Subscription<Bar>,
                 IbkrBarProducer<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>,
             )> = {
@@ -117,18 +113,19 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                     })
                     .collect()
             };
+            let mut consecutive_misses: Vec<u32> = subscriptions.iter().map(|_| 0).collect();
             let mut next_deadline = hotpath::measure_block!("align_and_prime_schedule", {
                 align_and_prime_schedule_producers(&contract_scheduler, &subscriptions)
             });
 
             while cloned_is_alive.load(Ordering::Acquire) {
                 let now = Utc::now();
-                let active_producers: Vec<usize> = subscription_data
+                let active_producers: Vec<usize> = subscriptions
                     .iter()
                     .enumerate()
-                    .filter_map(|(idx, (contract, _))| {
+                    .filter_map(|(idx, (_, spmc_producer))| {
                         if contract_scheduler
-                            .is_trading(&contract, &now)
+                            .is_trading(&spmc_producer.contract, &now)
                             .expect("Expected consumer contract to be in scheduler")
                         {
                             Some(idx)
@@ -193,11 +190,39 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                 // Anything still marked not-received missed its window
                 // this cycle — surface that instead of silently dropping it.
                 for (idx, received_bool) in received.iter().enumerate() {
-                    if !received_bool {
+                    if *received_bool {
+                        consecutive_misses[active_producers[idx]] = 0;
+                    } else {
+                        let num_misses = consecutive_misses[active_producers[idx]];
+                        consecutive_misses[active_producers[idx]] += 1;
                         tracing::warn!(
-                            "Failed to receive bar for {} from IBKR",
-                            subscriptions[active_producers[idx]].1.contract.symbol
+                            "Failed to receive bar for {} from IBKR for {}-th time",
+                            subscriptions[active_producers[idx]].1.contract.symbol,
+                            num_misses + 1
                         );
+                        // if miss a minute worth of bars, re-subscribe
+                        if num_misses + 1 > 12 {
+                            tracing::warn!(
+                                "Re-subscribing to bar for {} from IBKR!",
+                                subscriptions[active_producers[idx]].1.contract.symbol
+                            );
+                            let (_, spmc_producer) = &subscriptions[active_producers[idx]];
+                            subscriptions[active_producers[idx]].0 = {
+                                let client = weak_client.upgrade().expect(
+                                    "Expected client to still be alive when subscribing to data",
+                                );
+                                client
+                                .realtime_bars(
+                                    &spmc_producer.contract,
+                                    ibapi::market_data::realtime::BarSize::Sec5,
+                                    spmc_producer.what_to_show,
+                                    ibapi::market_data::TradingHours::Regular,
+                                )
+                                .expect(
+                                    "Expected to be able to make subscription for realtime_bars",
+                                )
+                            };
+                        }
                     }
                 }
 
