@@ -19,10 +19,6 @@ use crate::{
     },
     schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler},
     strategy::{
-        // forex_mean_reversion::ForexMeanReversion,
-        // forex_momentum::ForexMomentum,
-        // fractional_momentum::FractionalMomentum,
-        // gold_momentum::GoldMomentum,
         manual::Manual,
         noise::Noise,
         strategy::{StrategyEnum, StrategyExecutor},
@@ -382,6 +378,7 @@ pub async fn init_app(
     );
     if let Err(e) = syncer.sync_executions(
         &master_client,
+        &Arc::downgrade(&consolidator),
         Some(default_strategy.clone()),
         backed_up_orders.clone(),
     ) {
@@ -399,6 +396,7 @@ pub async fn init_app(
 
     let order_update_stream_controller = OrderUpdateStreamController::new(
         pool.clone(),
+        Arc::downgrade(&consolidator),
         Arc::downgrade(&master_client),
         strategy_details,
         Some(default_strategy.clone()),
