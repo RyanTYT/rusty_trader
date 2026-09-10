@@ -1,5 +1,7 @@
 use std::{
-    collections::HashMap, sync::{Arc, Weak}, time::Duration,
+    collections::HashMap,
+    sync::{Arc, Weak},
+    time::Duration,
 };
 
 use ibapi::{Client, orders::ExecutionData};

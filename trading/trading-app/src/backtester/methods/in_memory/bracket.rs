@@ -82,23 +82,27 @@ impl BracketFillConfig {
         let stop_fill = match params.get("stop_fill_model").map(|v| *v as i32) {
             Some(0) => StopFillModel::StopPrice,
             Some(2) => StopFillModel::NextBarOpen,
-            Some(1) | _ => StopFillModel::PctOfBar(
-                params.get("stop_fill_slippage").copied().unwrap_or(0.5),
-            ),
+            Some(1) | _ => {
+                StopFillModel::PctOfBar(params.get("stop_fill_slippage").copied().unwrap_or(0.5))
+            }
         };
         let tp_fill = match params.get("tp_fill_model").map(|v| *v as i32) {
             Some(0) => TpFillModel::LimitPrice,
             Some(2) => TpFillModel::NextBarOpen,
-            Some(1) | _ => TpFillModel::PctOfBar(
-                params.get("tp_fill_slippage").copied().unwrap_or(0.5),
-            ),
+            Some(1) | _ => {
+                TpFillModel::PctOfBar(params.get("tp_fill_slippage").copied().unwrap_or(0.5))
+            }
         };
         let ambiguity = match params.get("ambiguity").map(|v| *v as i32) {
             Some(1) => AmbiguityResolution::Optimistic,
             Some(2) => AmbiguityResolution::OpenBased,
             Some(0) | _ => AmbiguityResolution::Pessimistic,
         };
-        Self { stop_fill, tp_fill, ambiguity }
+        Self {
+            stop_fill,
+            tp_fill,
+            ambiguity,
+        }
     }
 }
 
@@ -168,9 +172,7 @@ fn parse_good_after_time_mso(good_after_time: &str) -> Option<i32> {
         return None;
     }
     // Format: "YYYYMMDD-HH:MM:SS" or "YYYYMMDD HH:MM:SS"
-    let time_str = good_after_time
-        .split(|c| c == '-' || c == ' ')
-        .nth(1)?;
+    let time_str = good_after_time.split(|c| c == '-' || c == ' ').nth(1)?;
     let parts: Vec<&str> = time_str.split(':').collect();
     if parts.len() < 2 {
         return None;
@@ -251,9 +253,7 @@ pub fn build_resting_bracket(
             "MIDPRICE" => {
                 // Midpoint-close: parse the good_after_time for the mso.
                 if !child.order.good_after_time.is_empty() {
-                    midpoint_close_mso = parse_good_after_time_mso(
-                        &child.order.good_after_time,
-                    );
+                    midpoint_close_mso = parse_good_after_time_mso(&child.order.good_after_time);
                 }
             }
             _ => {}
@@ -324,20 +324,13 @@ pub fn check_bracket(
     }
 
     // Check stop + TP triggers.
-    let stop_triggers = bracket.stop.map_or(false, |sp| {
-        if is_short {
-            high >= sp
-        } else {
-            low <= sp
-        }
-    });
-    let tp_triggers = bracket.tp.map_or(false, |tp| {
-        if is_short {
-            low <= tp
-        } else {
-            high >= tp
-        }
-    });
+    let stop_triggers =
+        bracket
+            .stop
+            .map_or(false, |sp| if is_short { high >= sp } else { low <= sp });
+    let tp_triggers = bracket
+        .tp
+        .map_or(false, |tp| if is_short { low <= tp } else { high >= tp });
 
     // Ambiguity resolution: if both trigger on the same bar.
     if stop_triggers && tp_triggers {
@@ -494,10 +487,7 @@ mod tests {
             parse_good_after_time_mso("20260101-15:50:00"),
             Some(380) // 15:50 - 9:30 = 380 min
         );
-        assert_eq!(
-            parse_good_after_time_mso("20260101 15:50:00"),
-            Some(380)
-        );
+        assert_eq!(parse_good_after_time_mso("20260101 15:50:00"), Some(380));
         assert_eq!(parse_good_after_time_mso(""), None);
         assert_eq!(parse_good_after_time_mso("invalid"), None);
     }
@@ -514,8 +504,8 @@ mod tests {
     fn test_bracket_fill_config_from_params() {
         let mut params = std::collections::HashMap::new();
         params.insert("stop_fill_model".to_string(), 0.0); // StopPrice
-        params.insert("tp_fill_model".to_string(), 2.0);   // NextBarOpen
-        params.insert("ambiguity".to_string(), 1.0);        // Optimistic
+        params.insert("tp_fill_model".to_string(), 2.0); // NextBarOpen
+        params.insert("ambiguity".to_string(), 1.0); // Optimistic
         let config = BracketFillConfig::from_params(&params);
         assert_eq!(config.stop_fill, StopFillModel::StopPrice);
         assert_eq!(config.tp_fill, TpFillModel::NextBarOpen);

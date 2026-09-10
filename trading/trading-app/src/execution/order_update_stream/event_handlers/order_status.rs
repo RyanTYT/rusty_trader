@@ -1,13 +1,11 @@
 use ibapi::orders::OrderStatus;
 use sqlx::PgPool;
 
-use crate::{
-    database::{
-        crud::CRUDTrait,
-        models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
-        models_crud::open_orders::open_orders::{
-            OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
-        },
+use crate::database::{
+    crud::CRUDTrait,
+    models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
+    models_crud::open_orders::open_orders::{
+        OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
     },
 };
 

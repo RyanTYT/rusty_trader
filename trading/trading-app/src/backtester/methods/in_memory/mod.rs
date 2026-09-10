@@ -11,7 +11,7 @@
 //!   `run_with_bars`).
 
 pub mod bar_cache;
+pub mod bracket;
 pub mod reconcile;
 pub mod replay;
 pub mod state;
-pub mod bracket;
