@@ -1,9 +1,10 @@
 use std::{hash::Hash, sync::Arc};
 
-#[cfg(feature = "backtest")]
 use chrono::{DateTime, Utc};
 use ibapi::{Client, prelude::Contract};
 
+#[cfg(feature = "backtest")]
+use crate::strategy::stats_logger::StatsLogger;
 use crate::{
     database::{
         models::AssetType, models_crud::historical_data::historical_data::HistoricalDataFullKeys,
@@ -79,7 +80,13 @@ pub trait StrategyExecutor: Send + Sync {
         &mut self,
         consolidator: &Arc<Consolidator>,
         #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
-    ) -> Result<(), String>;
+    ) -> Result<DateTime<Utc>, String>;
+
+    /// The number of bars the strategy's `warm_up_data` reads (its warmup
+    /// lookback). The backtester's `load_bars` loads this many extra prefix
+    /// bars before the backtest window so the warmup doesn't eat into the
+    /// backtest period.
+    fn warmup_bars_required(&self) -> usize;
 }
 
 // Define the macro to generate the enum and impl
@@ -133,27 +140,36 @@ macro_rules! strategy_enum {
             async fn warm_up_data(
                 &mut self,
                 consolidator: &Arc<Consolidator>,
-                #[cfg(feature = "backtest")] bar_time: DateTime<chrono::Utc>
-            ) -> Result<(), String>
+                #[cfg(feature = "backtest")] bar_time: DateTime<Utc>,
+            ) -> Result<DateTime<Utc>, String>
             {
                 match self {
                     $(StrategyEnum::$variant(s) => s.warm_up_data(
                             consolidator,
-                            #[cfg(feature = "backtest")] bar_time
+                            #[cfg(feature = "backtest")] bar_time,
                      ).await),*
+                }
+            }
+
+            fn warmup_bars_required(&self) -> usize {
+                match self {
+                    $(StrategyEnum::$variant(s) => s.warmup_bars_required()),*
                 }
             }
         }
     };
 }
 
-// Now adding a new strategy is just one line!
+#[cfg(feature = "backtest")]
 strategy_enum! {
     Noise(Noise),
-    // FractionalMomentum(FractionalMomentum),
-    // ForexMeanReversion(ForexMeanReversion),
-    // ForexMomentum(ForexMomentum),
-    // GoldMomentum(GoldMomentum),
     Manual(Manual),
-    Unknown(Unknown)
+    Unknown(Unknown),
+}
+
+#[cfg(not(feature = "backtest"))]
+strategy_enum! {
+    Noise(Noise),
+    Manual(Manual),
+    Unknown(Unknown),
 }
