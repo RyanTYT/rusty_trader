@@ -221,13 +221,12 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 );
 
                 while is_alive.load(Ordering::Acquire) {
-                    let now = Utc::now();
                     // Do all pre-work for next loop b4 slping
                     let active: Vec<usize> = hotpath::measure_block!("compute_active_contracts", {
                         (0..consumers.len())
                             .filter(|&i| {
                                 contract_scheduler
-                                    .is_trading(&consumers[i].contract, &now)
+                                    .is_trading(&consumers[i].contract)
                                     .expect("Expected schedule to be populated")
                             })
                             .collect()

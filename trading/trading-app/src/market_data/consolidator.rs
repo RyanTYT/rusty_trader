@@ -257,7 +257,7 @@ impl Consolidator {
         let asset_type = AssetType::from_str(&contract.security_type);
         if self
             .contract_scheduler
-            .is_trading(contract, &Utc::now())
+            .is_trading(contract)
             .is_ok_and(|is_trading| !is_trading)
         {
             return;

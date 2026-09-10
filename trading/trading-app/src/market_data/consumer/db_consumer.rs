@@ -235,13 +235,12 @@ pub fn begin_db_consumer_thread_grouped<
 
                 sleep_until_system_time(next_deadline - HOT_WINDOW);
 
-                let now = Utc::now();
                 let active_consumers: Vec<usize> = consumers
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, consumer)| {
                         if contract_scheduler
-                            .is_trading(&consumer.contract, &now)
+                            .is_trading(&consumer.contract)
                             .expect("Expected consumer contract to be in scheduler")
                         {
                             Some(idx)

@@ -1,63 +1,66 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    cell::UnsafeCell,
+    collections::{HashMap, VecDeque},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
-use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, TimeDelta, Utc};
-use chrono_tz::Tz;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use ibapi::{Client, prelude::Contract};
 
 use crate::helpers::sync_timeout::timeout;
 
-#[derive(Debug, Clone)]
-pub struct TradingHours {
-    open: DateTime<Tz>,
-    close: DateTime<Tz>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Schedule {
-    time_zone: Tz,
-    schedule: BTreeMap<NaiveDate, Option<TradingHours>>,
-}
+// #[derive(Debug, Clone)]
+// pub struct TradingHours {
+//     open: i64,
+//     close: i64,
+// }
+//
+// #[derive(Debug, Clone)]
+// pub struct Schedule {
+//     time_zone: Tz,
+//     schedule: BTreeMap<NaiveDate, Option<TradingHours>>,
+// }
 
 pub trait ContractScheduler {
     fn add_schedule(&mut self, contract: &Contract) -> Result<(), String>;
     fn add_all_schedules<I>(&mut self, contracts: I) -> Result<(), String>
     where
         I: IntoIterator<Item = Contract>;
-    fn get_schedule(
-        &self,
-        contract: &Contract,
-        dt: &DateTime<Utc>,
-    ) -> Result<(Tz, Option<TradingHours>), String>;
-    fn is_trading(&self, contract: &Contract, dt: &DateTime<Utc>) -> Result<bool, String>;
-
+    fn is_trading(&self, contract: &Contract) -> Result<bool, String>;
     fn get_next_latest_unavailable_data(
         &self,
         contracts: &[Contract],
-        dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String>;
     fn get_next_earliest_available_data(
         &self,
         contracts: &[Contract],
-        dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String>;
+}
+
+#[derive(Debug, Clone)]
+pub struct Interval {
+    open: i64,
+    close: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct IbkrContractScheduler {
     client: Arc<Client>,
+    is_under_editing: Arc<HashMap<i32, AtomicBool>>,
     // Contract id -> Schedule
-    schedules: Arc<HashMap<i32, Schedule>>,
+    schedules: Arc<HashMap<i32, UnsafeCell<VecDeque<Interval>>>>,
 }
+
+unsafe impl Send for IbkrContractScheduler {}
+unsafe impl Sync for IbkrContractScheduler {}
 
 impl IbkrContractScheduler {
     pub fn new(client: Arc<Client>) -> Self {
         Self {
             client,
+            is_under_editing: Arc::new(HashMap::new()),
             schedules: Arc::new(HashMap::new()),
         }
     }
@@ -65,22 +68,10 @@ impl IbkrContractScheduler {
     pub fn contains_contract(&self, contract: &Contract) -> bool {
         self.schedules.contains_key(&contract.contract_id)
     }
-}
 
-/// must set option in global config api settings to return 1 month of trading hours
-/// option: 'Expose whole trading schedule to api ...'
-impl ContractScheduler for IbkrContractScheduler {
-    fn add_schedule(&mut self, contract: &Contract) -> Result<(), String> {
-        // =====================
-        // skip if alr have data
-        // =====================
-        if self.schedules.contains_key(&contract.contract_id) {
-            return Ok(());
-        }
-
+    fn fetch_schedule(&self, contract: &Contract) -> Result<VecDeque<Interval>, String> {
         let client = self.client.clone();
         let cloned_contract = contract.clone();
-        let mut schedules = HashMap::new();
         match timeout(Duration::from_secs(10), move || {
             client.contract_details(&cloned_contract)
         }) {
@@ -103,7 +94,8 @@ impl ContractScheduler for IbkrContractScheduler {
                     }
                     tz_res.unwrap()
                 };
-                let mut schedule = BTreeMap::new();
+
+                let mut schedule = VecDeque::new();
                 let trading_hours = {
                     if contract_details.liquid_hours.is_empty() {
                         &contract_details.trading_hours
@@ -148,222 +140,266 @@ impl ContractScheduler for IbkrContractScheduler {
                                 }
                             }
                         };
-                        let trading_hours = TradingHours {
-                            open: open_formatted.and_local_timezone(tz).unwrap(),
-                            close: close_formatted.and_local_timezone(tz).unwrap(),
-                        };
-                        schedule.insert(open_formatted.date(), Some(trading_hours));
+                        let (open, close) = (
+                            open_formatted.and_local_timezone(tz).unwrap(),
+                            close_formatted.and_local_timezone(tz).unwrap(),
+                        );
+                        schedule.push_back(Interval {
+                            open: open.timestamp(),
+                            close: close.timestamp(),
+                        });
                     } else if day.contains(":CLOSED") {
-                        match NaiveDate::parse_from_str(
-                            &day.strip_suffix(":CLOSED").unwrap(),
-                            "%Y%m%d",
-                        ) {
-                            Ok(naive_date) => {
-                                schedule.insert(naive_date, None);
-                            }
-                            Err(e) => {
-                                return Err(format!(
-                                    "Could not parse datetime from supposed closed string of {day:?}: {e:?}"
-                                ));
-                            }
-                        }
                     } else {
                         tracing::warn!(
-                            "Patterm for days returned in contract details not found: {day:?}"
+                            "Pattern for days returned in contract details not found: {day:?}"
                         )
                     }
                 }
 
-                // Impute missing days
-                // - occurs mainly for FX contracts whereby schedule says time ends Sat 06:00
-                //   so Sat is not technically closed, and it only reports for Sun next - so
-                //   missing 1 day in between
-                // - this implementation should correctly handle the issues - i.e. if on Sat open,
-                //   fn will check for prev day data first - if open return that, else check tdy's
-                //   data
-                let (last_day, _) = schedule
-                    .last_key_value()
-                    .expect("Expected at least one day of schedule in data by IBKR");
-                let mut missing_days = Vec::new();
-                for day in schedule.keys() {
-                    let mut next_day = *day;
-                    loop {
-                        next_day = next_day
-                            .checked_add_days(Days::new(1))
-                            .expect("Expected not to overflow");
-                        if !schedule.contains_key(&next_day) && &next_day < last_day {
-                            missing_days.push(next_day);
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                for day in missing_days {
-                    schedule.insert(day, None);
-                }
-
-                schedules.insert(
-                    contract.contract_id,
-                    Schedule {
-                        time_zone: tz,
-                        schedule,
-                    },
-                );
-                schedules.extend((*self.schedules).clone());
-                self.schedules = Arc::new(schedules);
-
-                Ok(())
+                Ok(schedule)
             }
             Err(_) => return Err("Request for contract details to IBKR timed out!".to_string()),
         }
+    }
+
+    fn update_schedule(&self, contract: &Contract) -> Result<(), String> {
+        // =====================
+        // skip if alr have data
+        // =====================
+        let schedule_cell = self
+            .schedules
+            .get(&contract.contract_id)
+            .ok_or_else(|| "schedules tracked does not contain contract's schedule".to_string())?;
+
+        let contract_under_edit = self
+            .is_under_editing
+            .get(&contract.contract_id)
+            .expect("Expected is_under_editing to also have contract");
+
+        // Atomic test-and-set instead of load-then-store — closes the TOCTOU
+        // window where two threads could both pass the check and both proceed.
+        while contract_under_edit
+            .compare_exchange_weak(
+                false,
+                true,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+
+        // RAII guard: releases the lock on every exit path, including panics.
+        struct LockGuard<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for LockGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let _guard = LockGuard(contract_under_edit);
+
+        // Safe to dereference now: the lock guarantees no other thread is
+        // concurrently reading or writing this cell.
+        let orig_schedule = unsafe {
+            schedule_cell
+                .get()
+                .as_mut()
+                .expect("Expected to be able to get schedule for contract")
+        };
+        if !orig_schedule.is_empty() {
+            return Ok(());
+        }
+
+        // Fetch Schedule
+        let mut schedule = self.fetch_schedule(contract)?;
+        if schedule.is_empty() {
+            return Err("Empty schedule returned!".to_string());
+        }
+        schedule
+            .make_contiguous()
+            .sort_by(|interval_a, interval_b| interval_a.open.cmp(&interval_b.open));
+
+        let now = Utc::now().timestamp();
+        while schedule.front().unwrap().close < now {
+            schedule.pop_front();
+        }
+        orig_schedule.extend(schedule);
+
+        Ok(())
+    }
+
+    fn get_interval<'a>(&'a self, contract: &Contract) -> Result<(i64, &'a Interval), String> {
+        let schedule_cell = self
+            .schedules
+            .get(&contract.contract_id)
+            .expect(
+                format!(
+                    "Expected contract id entry to be in contract scheduler: ({},{},{})",
+                    contract.symbol, contract.primary_exchange, contract.currency
+                )
+                .as_str(),
+            )
+            .get();
+        unsafe {
+            let schedule = schedule_cell
+                .as_ref()
+                .expect("Expected schedule cell to not be None");
+            if schedule.is_empty() {
+                self.update_schedule(contract);
+                return self.get_interval(contract);
+            }
+
+            let now = Utc::now().timestamp();
+            let interval = schedule.front().unwrap();
+            if now < interval.close {
+                return Ok((now, interval));
+            }
+
+            let contract_under_edit = self
+                .is_under_editing
+                .get(&contract.contract_id)
+                .expect("Expected is_under_editing to also have contract");
+
+            // Atomic test-and-set instead of load-then-store — closes the TOCTOU
+            // window where two threads could both pass the check and both proceed.
+            while contract_under_edit
+                .compare_exchange_weak(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::Acquire,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                std::hint::spin_loop();
+            }
+
+            let schedule_mut = schedule_cell
+                .as_mut()
+                .expect("Expected schedule cell to not be null");
+            loop {
+                if schedule_mut.is_empty() {
+                    contract_under_edit.store(false, std::sync::atomic::Ordering::Release);
+                    return self.get_interval(contract);
+                }
+                if now > schedule_mut.front().unwrap().close {
+                    schedule_mut.pop_front();
+                    continue;
+                }
+
+                contract_under_edit.store(false, std::sync::atomic::Ordering::Release);
+                return Ok((now, schedule_mut.front().unwrap()));
+            }
+        }
+    }
+}
+
+/// must set option in global config api settings to return 1 month of trading hours
+/// option: 'Expose whole trading schedule to api ...'
+impl ContractScheduler for IbkrContractScheduler {
+    fn add_schedule(&mut self, contract: &Contract) -> Result<(), String> {
+        if self.schedules.contains_key(&contract.contract_id) {
+            return Ok(());
+        }
+
+        {
+            Arc::get_mut(&mut self.schedules)
+                .expect("Expected there to only be one strong reference to schedules")
+                .insert(contract.contract_id, UnsafeCell::new(VecDeque::new()));
+            Arc::get_mut(&mut self.is_under_editing)
+                .expect("Expected there to only be one strong reference to schedules")
+                .insert(contract.contract_id, AtomicBool::new(false));
+        }
+
+        self.update_schedule(contract)?;
+
+        Ok(())
     }
 
     fn add_all_schedules<I>(&mut self, contracts: I) -> Result<(), String>
     where
         I: IntoIterator<Item = Contract>,
     {
-        let mut cum_err = Vec::new();
+        let mut contracts_vec = Vec::new();
         for contract in contracts {
-            if let Err(e) = self.add_schedule(&contract) {
-                cum_err.push(e);
+            if self.schedules.contains_key(&contract.contract_id) {
+                return Ok(());
             }
-        }
-        if cum_err.is_empty() {
-            return Ok(());
-        }
-        Err(format!("{}", cum_err.join("\n")))
-    }
 
-    fn get_schedule(
-        &self,
-        contract: &Contract,
-        dt: &DateTime<Utc>,
-    ) -> Result<(Tz, Option<TradingHours>), String> {
-        if !self.schedules.contains_key(&contract.contract_id) {
-            return Err(format!(
-                "Schedule in Scheduler doesn't contain key for contract: {contract:?}"
-            ));
+            {
+                Arc::get_mut(&mut self.schedules)
+                    .expect("Expected there to only be one strong reference to schedules")
+                    .insert(contract.contract_id, UnsafeCell::new(VecDeque::new()));
+                Arc::get_mut(&mut self.is_under_editing)
+                    .expect("Expected there to only be one strong reference to schedules")
+                    .insert(contract.contract_id, AtomicBool::new(false));
+            }
+            contracts_vec.push(contract);
         }
 
-        let schedule = self.schedules.get(&contract.contract_id).unwrap();
-        let date_tdy = dt.with_timezone(&schedule.time_zone).date_naive();
-        match schedule.schedule.get(&date_tdy) {
-            Some(trading_hours) => Ok((schedule.time_zone, trading_hours.clone())),
-            None => Err(format!("Date not found under schedules: {date_tdy:?}")),
-        }
-    }
+        let handle = std::thread::scope(|s| {
+            let thread_handles = contracts_vec
+                .iter()
+                .map(|contract| s.spawn(|| self.update_schedule(contract)));
+            let cum_err = thread_handles
+                .filter_map(move |handle| {
+                    let res = handle
+                        .join()
+                        .map_err(|e| format!("Thread for updating schedule panicked: {e:?}"))
+                        .and_then(|update_schedule_res| update_schedule_res);
+                    if let Err(e) = res { Some(e) } else { None }
+                })
+                .collect::<Vec<String>>();
+            cum_err.join("\n")
+        });
 
-    fn is_trading(&self, contract: &Contract, dt: &DateTime<Utc>) -> Result<bool, String> {
-        let potential_res = match self.get_schedule(contract, &(*dt - TimeDelta::days(1))) {
-            Ok(trading_hours_opt_w_tz) => {
-                let (tz, trading_hours_opt) = trading_hours_opt_w_tz;
-                let dt_now = dt.with_timezone(&tz);
-                match trading_hours_opt {
-                    Some(trading_hours) => {
-                        // tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
-                        Ok(trading_hours.open <= dt_now && dt_now <= trading_hours.close)
-                    }
-                    None => Ok(false),
-                }
-            }
-            Err(e) => Err(e),
-        };
-        if potential_res.is_ok_and(|is_trading_rn| is_trading_rn) {
-            return Ok(true);
-        }
-        match self.get_schedule(contract, dt) {
-            Ok(trading_hours_opt_w_tz) => {
-                let (tz, trading_hours_opt) = trading_hours_opt_w_tz;
-                let dt_now = dt.with_timezone(&tz);
-                match trading_hours_opt {
-                    Some(trading_hours) => {
-                        // tracing::info!("HWOT: {dt_now:?}, {trading_hours:?}");
-                        Ok(trading_hours.open <= dt_now && dt_now <= trading_hours.close)
-                    }
-                    None => Ok(false),
-                }
-            }
-            Err(e) => Err(e),
+        if handle.is_empty() {
+            Ok(())
+        } else {
+            Err(handle)
         }
     }
 
+    fn is_trading(&self, contract: &Contract) -> Result<bool, String> {
+        let (now, interval) = self.get_interval(contract)?;
+        Ok(now >= interval.open)
+    }
+
+    /// returns current time if no contracts being traded currently
     fn get_next_latest_unavailable_data(
         &self,
         contracts: &[Contract],
-        dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String> {
-        // 1. Collect all intervals in UTC
-        let mut intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = {
-            contracts
-                .iter()
-                .filter_map(|contract| self.schedules.get(&contract.contract_id))
-                .flat_map(|schedule| {
-                    schedule.schedule.iter().filter_map(|(_, session)| {
-                        let session = session.as_ref()?;
-                        if *dt > session.close {
-                            return None;
-                        }
-                        Some((session.open.to_utc(), session.close.to_utc()))
-                    })
-                })
-                .collect()
-        };
-
-        if intervals.is_empty() {
-            return Err("No intervals available".to_string());
-        }
-
-        // 2. Sort by open time
-        intervals.sort_by_key(|(open, _)| *open);
-
-        // 3. Merge allowing max 5 min gap
-        let max_gap = Duration::from_secs(5 * 60);
-
-        let (_, mut current_end) = intervals[0];
-
-        for (open, close) in intervals.into_iter().skip(1) {
-            if open <= current_end + max_gap {
-                // Extend coverage
-                current_end = current_end.max(close);
-            } else {
-                // Gap too large → stop here
-                break;
+        let mut latest_time = Utc::now().timestamp();
+        for contract in contracts {
+            let (now, interval) = self.get_interval(contract)?;
+            // skip contracts that are currently alr unavailable
+            if now < interval.open {
+                continue;
             }
+            latest_time = latest_time.max(interval.close);
         }
-
-        Ok(current_end)
+        Ok(DateTime::from_timestamp(latest_time, 0).expect(
+            "Expected Datetime utc to be constructible from get_next_latest_unavailable_data",
+        ))
     }
 
     fn get_next_earliest_available_data(
         &self,
         contracts: &[Contract],
-        dt: &DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String> {
-        let earliest_dt = {
-            contracts
-                .iter()
-                .filter_map(|contract| {
-                    let schedule = self
-                        .schedules
-                        .get(&contract.contract_id)
-                        .ok_or_else(|| format!("Couldn't find contract in schedules: {contract:?}"))
-                        .ok()?;
-
-                    schedule.schedule.iter().find_map(|(_, session)| {
-                        let session = session.as_ref()?;
-
-                        if dt.with_timezone(&schedule.time_zone) < session.close {
-                            Some(session.open)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .min()
-        };
-
-        earliest_dt
-            .map(|dt| dt.to_utc())
-            .ok_or_else(|| "Could not get earliest datetime available for contracts!".to_string())
+        let mut earliest_time = i64::MAX;
+        for contract in contracts {
+            let (now, interval) = self.get_interval(contract)?;
+            // skip contracts that are currently alr unavailable
+            if now >= interval.open {
+                return Ok(Utc::now());
+            }
+            earliest_time = earliest_time.min(interval.open);
+        }
+        Ok(DateTime::from_timestamp(earliest_time, 0).expect(
+            "Expected Datetime utc to be constructible from get_next_latest_unavailable_data",
+        ))
     }
 }

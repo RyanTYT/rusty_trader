@@ -119,13 +119,12 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
             });
 
             while cloned_is_alive.load(Ordering::Acquire) {
-                let now = Utc::now();
                 let active_producers: Vec<usize> = subscriptions
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, (_, spmc_producer))| {
                         if contract_scheduler
-                            .is_trading(&spmc_producer.contract, &now)
+                            .is_trading(&spmc_producer.contract)
                             .expect("Expected consumer contract to be in scheduler")
                         {
                             Some(idx)
@@ -445,13 +444,12 @@ pub fn align_and_prime_schedule_producers<
     loop {
         let mut progressed = false;
 
-        let now = Utc::now();
         for (i, (ib_producer, spmc_producer)) in producers.iter().enumerate() {
             if settled[i] {
                 continue;
             }
             if !contract_scheduler
-                .is_trading(&spmc_producer.contract, &now)
+                .is_trading(&spmc_producer.contract)
                 .expect("Expected schedule to be populated")
             {
                 settled[i] = true;
@@ -504,7 +502,7 @@ pub fn align_and_prime_schedule_producers<
         Some(latest) => {
             for (i, (ib_producer, spmc_producer)) in producers.iter().enumerate() {
                 if !contract_scheduler
-                    .is_trading(&spmc_producer.contract, &now)
+                    .is_trading(&spmc_producer.contract)
                     .expect("Expected schedule to be populated")
                 {
                     continue;
