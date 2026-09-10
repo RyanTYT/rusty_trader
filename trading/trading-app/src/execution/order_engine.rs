@@ -284,7 +284,7 @@ impl OrderEngine {
                             is_from_db: false,
                         })
                     });
-                    if !requires_reconciliation(&target_pos_diffs, open_orders) {
+                    if !requires_reconciliation(&target_pos_diffs, open_orders, strategy_detail) {
                         continue;
                     }
                     // tracing::info!(
@@ -815,6 +815,7 @@ impl OrderEngine {
 fn requires_reconciliation(
     target_pos_diffs: &Vec<TargetPositionsQtyDiff>,
     open_orders: Vec<LocalOpenOrder>,
+    strategy_detail: &StrategyDetails,
 ) -> bool {
     let mut orders_map = HashMap::new();
     for order in open_orders.into_iter() {
@@ -828,6 +829,11 @@ fn requires_reconciliation(
     }
 
     target_pos_diffs.into_iter().any(|pos_diff| {
+        // Skip if "CASH:..." position diff for non-FX strategies
+        if !strategy_detail.is_fx_strategy && pos_diff.get_stock().strip_prefix("CASH:").is_some() {
+            return false;
+        }
+
         let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
         let hash_contract = HashContract { contract };
         let open_orders_qty = orders_map.get(&hash_contract).unwrap_or(&0.0);
