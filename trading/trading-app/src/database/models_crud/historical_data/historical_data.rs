@@ -91,6 +91,19 @@ impl HistoricalDataFullKeys {
         }
     }
 
+    pub fn get_bid_open(&self) -> Option<f64> {
+        match self {
+            Self::Forex(v) => v.bid_open,
+            _ => panic!("Tried to get bid open of non-stock asset"),
+        }
+    }
+    pub fn get_ask_open(&self) -> Option<f64> {
+        match self {
+            Self::Forex(v) => v.ask_open,
+            _ => panic!("Tried to get ask open of non-stock asset"),
+        }
+    }
+
     pub fn get_volume(&self) -> Decimal {
         match self {
             Self::Stock(v) => v.volume,
