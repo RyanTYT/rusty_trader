@@ -93,6 +93,7 @@ pub fn begin_db_consumer_thread_singular<
                 sleep_until_system_time(next_deadline - HOT_WINDOW);
                 let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
                 hotpath::measure_block!("db_consumer_singular_spin_loop", {
+                    let mut did_pop = false;
                     loop {
                         match consumer.try_pop() {
                             Some(bar) => {
@@ -140,9 +141,12 @@ pub fn begin_db_consumer_thread_singular<
                                         label = "historical_data_create_or_update_singular"
                                     ));
                                 }
-                                break;
+                                did_pop = true;
                             }
                             None => {
+                                if did_pop {
+                                    break;
+                                }
                                 if Instant::now() >= spin_deadline {
                                     tracing::warn!(
                                         "Failed to receive bar for {} in db consumer",
@@ -263,39 +267,45 @@ pub fn begin_db_consumer_thread_grouped<
 
                             let idx = *ref_idx;
                             let consumer = consumers.get(idx).unwrap();
-                            match consumer.try_pop() {
-                                Some(bar) => {
-                                    received[received_idx] = true;
-                                    small_bars[idx].push_back(bar);
-                                    let big_bars = aggregate_bars(
-                                        &consumer.contract,
-                                        &consumer.what_to_show,
-                                        &mut small_bars.get_mut(idx).unwrap(),
-                                        match consumer.get_bar_type() {
-                                            IbkrBarType::Normal => 60,
-                                            _ => 300,
-                                        },
-                                    );
-
-                                    for bar in big_bars {
-                                        let asset_type =
-                                            AssetType::from_str(&consumer.contract.security_type);
-                                        let historical_data_pk =
-                                            HistoricalDataPrimaryKeys::from_contract(
-                                                &consumer.contract,
-                                                bar.get_time(),
-                                            );
-                                        let historical_data_uk = HistoricalDataUpdateKeys::from_bar(
+                            let mut did_pop = false;
+                            loop {
+                                match consumer.try_pop() {
+                                    Some(bar) => {
+                                        did_pop = true;
+                                        small_bars[idx].push_back(bar);
+                                        let big_bars = aggregate_bars(
                                             &consumer.contract,
                                             &consumer.what_to_show,
-                                            &bar,
+                                            &mut small_bars.get_mut(idx).unwrap(),
+                                            match consumer.get_bar_type() {
+                                                IbkrBarType::Normal => 60,
+                                                _ => 300,
+                                            },
                                         );
-                                        let historical_data_crud =
-                                            HistoricalDataCRUD::from(&asset_type, pool.clone());
-                                        let contract_id = contract_ids[idx];
-                                        cache
-                                            .insert(contract_id, (bar.get_time(), bar.get_price()));
-                                        rt_handle.spawn(hotpath::future!(
+
+                                        for bar in big_bars {
+                                            let asset_type = AssetType::from_str(
+                                                &consumer.contract.security_type,
+                                            );
+                                            let historical_data_pk =
+                                                HistoricalDataPrimaryKeys::from_contract(
+                                                    &consumer.contract,
+                                                    bar.get_time(),
+                                                );
+                                            let historical_data_uk =
+                                                HistoricalDataUpdateKeys::from_bar(
+                                                    &consumer.contract,
+                                                    &consumer.what_to_show,
+                                                    &bar,
+                                                );
+                                            let historical_data_crud =
+                                                HistoricalDataCRUD::from(&asset_type, pool.clone());
+                                            let contract_id = contract_ids[idx];
+                                            cache.insert(
+                                                contract_id,
+                                                (bar.get_time(), bar.get_price()),
+                                            );
+                                            rt_handle.spawn(hotpath::future!(
                                             async move {
                                                 if let Err(e) = historical_data_crud
                                                     .create_or_update(
@@ -311,9 +321,17 @@ pub fn begin_db_consumer_thread_grouped<
                                             },
                                             label = "historical_data_create_or_update_grouped"
                                         ));
+                                        }
+                                    }
+                                    None => {
+                                        if did_pop {
+                                            received[received_idx] = true;
+                                        } else {
+                                            all_done = false;
+                                        }
+                                        break;
                                     }
                                 }
-                                None => all_done = false,
                             }
                         }
 

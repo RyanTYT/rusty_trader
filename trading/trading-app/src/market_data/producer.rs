@@ -148,29 +148,39 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
 
                             let idx = *ref_idx;
                             let (ibapi_producer, spmc_producer) = subscriptions.get(idx).unwrap();
-                            match ibapi_producer.try_next() {
-                                Some(mut bar) => {
-                                    received[received_idx] = true;
-                                    let mut is_pushed = false;
-                                    for _ in 0..10 {
-                                        match spmc_producer.producer.try_push(bar) {
-                                            Ok(_) => {
-                                                is_pushed = true;
-                                                break;
-                                            }
-                                            Err(bar_returned) => {
-                                                bar = bar_returned;
+                            let mut did_pop = false;
+                            loop {
+                                match ibapi_producer.try_next() {
+                                    Some(mut bar) => {
+                                        did_pop = true;
+                                        let mut is_pushed = false;
+                                        for _ in 0..10 {
+                                            match spmc_producer.producer.try_push(bar) {
+                                                Ok(_) => {
+                                                    is_pushed = true;
+                                                    break;
+                                                }
+                                                Err(bar_returned) => {
+                                                    bar = bar_returned;
+                                                }
                                             }
                                         }
+                                        if !is_pushed {
+                                            tracing::error!(
+                                                "Failed to push bar for {} into Ring Buffer",
+                                                spmc_producer.contract.symbol
+                                            )
+                                        }
                                     }
-                                    if !is_pushed {
-                                        tracing::error!(
-                                            "Failed to push bar for {} into Ring Buffer",
-                                            spmc_producer.contract.symbol
-                                        )
+                                    None => {
+                                        if did_pop {
+                                            received[received_idx] = true;
+                                        } else {
+                                            all_done = false
+                                        }
+                                        break;
                                     }
                                 }
-                                None => all_done = false,
                             }
                         }
 
