@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, TimeDelta, Utc};
 use ibapi::{
     Client,
     client::Subscription,
@@ -113,12 +113,54 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                     })
                     .collect()
             };
+            let mut next_available_times: Vec<DateTime<Utc>> = match subscriptions
+                .iter()
+                .map(
+                    |(_ib_producer, spmc_producer)| -> Result<DateTime<Utc>, String> {
+                        let next_time = contract_scheduler.get_next_earliest_available_data(
+                            std::iter::once(&spmc_producer.contract),
+                        )?;
+                        Ok(next_time - TimeDelta::seconds(30))
+                    },
+                )
+                .collect()
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    panic!("Failed to get next earliest available data for some contract: {e:?}");
+                }
+            };
             let mut consecutive_misses: Vec<u32> = subscriptions.iter().map(|_| 0).collect();
             let mut next_deadline = hotpath::measure_block!("align_and_prime_schedule", {
                 align_and_prime_schedule_producers(&contract_scheduler, &subscriptions)
             });
 
             while cloned_is_alive.load(Ordering::Acquire) {
+                for idx in 0..next_available_times.len() {
+                    if Utc::now() >= next_available_times[idx] {
+                        subscriptions[idx].0 = {
+                            let client = weak_client.upgrade().expect(
+                                "Expected client to still be alive when subscribing to data",
+                            );
+                            client
+                                .realtime_bars(
+                                    &subscriptions[idx].1.contract,
+                                    ibapi::market_data::realtime::BarSize::Sec5,
+                                    subscriptions[idx].1.what_to_show,
+                                    ibapi::market_data::TradingHours::Regular,
+                                )
+                                .expect(
+                                    "Expected to be able to make subscription for realtime_bars",
+                                )
+                        };
+                        next_available_times[idx] = match contract_scheduler.get_next_earliest_available_data(
+                            std::iter::once(&subscriptions[idx].1.contract),
+                        ) {
+                            Ok(v) => v - TimeDelta::seconds(30),
+                            Err(e) => panic!("Couldn't fetch contract data for next_earliest_available_data: {e:?}")
+                        };
+                    }
+                }
                 let active_producers: Vec<usize> = subscriptions
                     .iter()
                     .enumerate()
