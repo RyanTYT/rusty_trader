@@ -29,13 +29,13 @@ pub trait ContractScheduler {
     where
         I: IntoIterator<Item = Contract>;
     fn is_trading(&self, contract: &Contract) -> Result<bool, String>;
-    fn get_next_latest_unavailable_data(
+    fn get_next_latest_unavailable_data<'a>(
         &self,
-        contracts: &[Contract],
+        contracts: impl IntoIterator<Item = &'a Contract>,
     ) -> Result<DateTime<Utc>, String>;
-    fn get_next_earliest_available_data(
+    fn get_next_earliest_available_data<'a>(
         &self,
-        contracts: &[Contract],
+        contracts: impl IntoIterator<Item = &'a Contract>,
     ) -> Result<DateTime<Utc>, String>;
 }
 
@@ -367,9 +367,9 @@ impl ContractScheduler for IbkrContractScheduler {
     }
 
     /// returns current time if no contracts being traded currently
-    fn get_next_latest_unavailable_data(
+    fn get_next_latest_unavailable_data<'a>(
         &self,
-        contracts: &[Contract],
+        contracts: impl IntoIterator<Item = &'a Contract>
     ) -> Result<DateTime<Utc>, String> {
         let mut latest_time = Utc::now().timestamp();
         for contract in contracts {
@@ -385,9 +385,9 @@ impl ContractScheduler for IbkrContractScheduler {
         ))
     }
 
-    fn get_next_earliest_available_data(
+    fn get_next_earliest_available_data<'a>(
         &self,
-        contracts: &[Contract],
+        contracts: impl IntoIterator<Item = &'a Contract>
     ) -> Result<DateTime<Utc>, String> {
         let mut earliest_time = i64::MAX;
         for contract in contracts {
