@@ -1,0 +1,43 @@
+# Prometheus scrape config for rusty_trader.
+# hotpath (0.25+, hotpath-prometheus feature) serves GET /metrics on :6772
+# in Prometheus text format — raw numbers, NOT the formatted-string JSON of
+# :6770. Prometheus scrapes it over the compose network (trading-bot:6772);
+# trading-bot sets HOTPATH_PROMETHEUS_HOST=0.0.0.0 so the exporter is
+# reachable from this sibling container (default 127.0.0.1 is not).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: "rusty_trader"
+
+# Prometheus-managed alert rules (converted from the old Grafana rules).
+# Prometheus evaluates these every evaluation_interval (15s) and fires alerts
+# to AlertManager when conditions are met.
+rule_files:
+  - /etc/prometheus/rules.yml
+
+# AlertManager — the notification router (Telegram, Slack, etc.). Prometheus
+# sends firing alerts here; AlertManager handles dedup, grouping, and routing
+# to the configured receiver (telegram_configs in alertmanager.yml).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  - job_name: "trading-bot"
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["trading-bot:6772"]
+        labels:
+          service: "trading-bot"
+    # Native histograms give accurate p99 on Rust hot-path latency (50-200µs
+    # for try_push, 1ms-2s for order_submit) via sub-bucket resolution. The
+    # classic FAST_BUCKETS (250ns..10s, log-spaced) only give rough quantile
+    # estimates. Prometheus 3.0+ supports scrape_native_histograms natively
+    # (prom/prometheus:latest is 3.x as of 2026). The dashboard queries use the
+    # bare-metric form (histogram_quantile(0.99, rate(metric[5m]))) which is
+    # what native histograms expose.
+    scrape_native_histograms: true

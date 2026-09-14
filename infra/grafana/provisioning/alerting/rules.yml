@@ -1,0 +1,107 @@
+apiVersion: 1
+
+# Grafana-managed alert rules for rusty_trader. Bound to the Prometheus
+# datasource (uid: prometheus) provisioned alongside this file. Each rule's
+# PromQL encodes its own threshold (returns a non-empty series only when the
+# condition is true), so the alert fires when the query returns rows.
+
+groups:
+  - orgId: 1
+    name: rusty_trader.money_path
+    folder: rusty_trader
+    interval: 30s
+    rules:
+      # TIER 1 — IBKR order-submission WIRE latency = slippage risk. Per-strategy
+      # series ({strat}_order_submit_ibkr_wire) isolate the IBKR network round-
+      # trip from the DB spawn. Page if p99 over 500ms for 5m.
+      - uid: order_submit_wire_p99_high
+        title: "order_submit IBKR wire p99 > 500ms for 5m"
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 'histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~".*_order_submit_ibkr_wire"}[5m])) > 0.5'
+              instant: true
+              refId: A
+        for: 5m
+        annotations:
+          summary: "order_submit IBKR wire p99 above 500ms for 5m (slippage risk)"
+          description: "The IBKR submit_order wire call is slow. Compare {strat}_order_submit_total vs {strat}_order_submit_ibkr_wire to see if the DB spawn is also slow. Check IBKR connection / gateway health."
+        labels:
+          severity: page
+          tier: "1"
+
+      # TIER 4 — thread DEATH detector (replaces the misleading CPU% alert).
+      # The spin loops fire every BAR_INTERVAL while their thread is alive,
+      # continuously (unlike bar_update which only fires during market hours).
+      # Zero spin-loop calls over 2m = the thread is dead/panicked. CPU% was a
+      # bad signal because 5-min-bar strategy threads are idle ~99% of the time.
+      - uid: strategy_thread_dead
+        title: "Strategy/producer thread dead (spin loop stopped)"
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 'rate(hotpath_function_calls_total{function=~".*_strat_bar_rcv_spin_loop|producer_grouped_spin_loop"}[2m]) == 0'
+              instant: true
+              refId: A
+        for: 2m
+        annotations:
+          summary: "A strategy or producer spin loop has stopped firing — the thread is dead/stalled"
+          description: "Spin loops fire every BAR_INTERVAL while alive. Zero calls over 2m = thread not running. Check for a panic in the logs or an OS-thread crash."
+        labels:
+          severity: page
+          tier: "4"
+
+      # TIER 5c — bars being dropped = blind trading.
+      - uid: missed_bar
+        title: "Bars missed (blind trading)"
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 'max(hotpath_gauge{key=~"bar_missed_.*"}) > 0'
+              instant: true
+              refId: A
+        for: 1m
+        annotations:
+          summary: "At least one contract missed bars from IBKR — trading blind to that contract"
+          description: "Check bar_sub_errors_* for subscription failures and the IBKR connection health."
+        labels:
+          severity: page
+          tier: "5"
+
+      # TIER 5a — spmc-ring full (consumer can't keep up). Sustained push
+      # retries = the leading overload indicator.
+      - uid: bar_push_retries_sustained
+        title: "Bar push retries sustained (ring full / consumer overloaded)"
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 'increase(hotpath_gauge_updates_total{key="bar_push_retries"}[5m]) > 10'
+              instant: true
+              refId: A
+        for: 5m
+        annotations:
+          summary: "Producer is retrying try_push (ring full) — strategy/db consumer is too slow"
+          description: "Check the per-strategy bar_update p99 and the bar_arrival_lag gauge — a consumer is likely stalled or overloaded."
+        labels:
+          severity: warn
+          tier: "5"

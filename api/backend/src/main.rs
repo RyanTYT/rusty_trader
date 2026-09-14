@@ -70,6 +70,7 @@ struct AppState {
     db: PgPool,
     clients: Arc<Mutex<HashMap<Uuid, Arc<Mutex<SplitSink<WebSocket, Message>>>>>>,
     trading_bot_url: String,
+    prometheus_url: String,
     // alpaca_key: String,
     // alpaca_secret: String, // pub notification_tx: broadcast::Sender<String>,
 }
@@ -90,6 +91,8 @@ async fn main() {
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let trading_bot_url = std::env::var("TRADING_BOT_URL").expect("TRADING_BOT_URL must be set");
+    let prometheus_url = std::env::var("PROMETHEUS_URL")
+        .unwrap_or_else(|_| "http://prometheus:9090".to_string());
     let bearer_token = std::env::var("BEARER_TOKEN").expect("BEARER_TOKEN must be set");
     let server_host = std::env::var("SERVER_HOST").expect("SERVER_HOST must be set");
     let alpaca_api_key = std::env::var("ALPACA_API_KEY").expect("ALPACA_API_KEY must be set");
@@ -114,6 +117,7 @@ async fn main() {
         db,
         clients: Arc::new(Mutex::new(HashMap::new())),
         trading_bot_url,
+        prometheus_url,
         // alpaca_key: alpaca_api_key,
         // alpaca_secret: alpaca_api_secret,
         // notification_tx
@@ -138,6 +142,8 @@ async fn main() {
         .route("/strategy", delete(delete_strategy))
         .route("/logs", get(crate::core::logs::list_logs))
         .route("/logs/:filename", get(crate::core::logs::read_log))
+        .route("/prometheus/query", get(prometheus_query))
+        .route("/prometheus/query_range", get(prometheus_query_range))
         .route(
             "/current_stock_positions",
             post(create_current_stock_positions),
@@ -311,6 +317,67 @@ async fn check_health() -> impl IntoResponse {
         StatusCode::OK,
         axum::Json(serde_json::json!({ "status": "ok" })),
     )
+}
+
+// ── Prometheus proxy ──────────────────────────────────────────────────────
+// Thin pass-through to the internal Prometheus (prometheus:9090). The Tauri
+// frontend calls these (bearer-auth'd via auth_middleware, like all other
+// routes) instead of hitting Prometheus directly — keeps Prometheus internal
+// (no port exposure) and reuses the backend's auth. The frontend never sees
+// the Prometheus URL.
+
+#[derive(Deserialize)]
+struct PrometheusQueryParams {
+    query: String,
+}
+
+async fn prometheus_query(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<PrometheusQueryParams>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let url = format!("{}/api/v1/query", state.prometheus_url);
+    let response = Client::new()
+        .get(&url)
+        .query(&[("query", params.query.as_str())])
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Prometheus request failed: {e}")))?;
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse Prometheus response: {e}")))?;
+    Ok((StatusCode::OK, Json(body)))
+}
+
+#[derive(Deserialize)]
+struct PrometheusQueryRangeParams {
+    query: String,
+    start: String, // RFC3339 or unix timestamp
+    end: String,
+    step: String, // e.g. "15s"
+}
+
+async fn prometheus_query_range(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<PrometheusQueryRangeParams>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let url = format!("{}/api/v1/query_range", state.prometheus_url);
+    let response = Client::new()
+        .get(&url)
+        .query(&[
+            ("query", params.query.as_str()),
+            ("start", params.start.as_str()),
+            ("end", params.end.as_str()),
+            ("step", params.step.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Prometheus request failed: {e}")))?;
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse Prometheus response: {e}")))?;
+    Ok((StatusCode::OK, Json(body)))
 }
 
 async fn auth_middleware(

@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# Prometheus datasource for Grafana. The `uid: prometheus` is referenced by
+# the dashboard JSON and the alerting rules so they bind automatically.
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"

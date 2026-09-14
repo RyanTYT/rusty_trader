@@ -1,0 +1,318 @@
+{
+  "uid": "rusty-trader-hotpath",
+  "title": "rusty_trader \u2014 hotpath",
+  "tags": ["rusty_trader", "hotpath"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "datasource": { "type": "prometheus", "uid": "prometheus" },
+  "description": "Native-histogram form (histogram_quantile over the bare metric). If panels are empty, hotpath is emitting classic _bucket series instead \u2014 switch queries to histogram_quantile(0.99, sum(rate(metric_bucket[5m])) by (le)).",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "T1 \u2014 Order submit TOTAL latency per strategy: p50/p95/p99",
+      "description": "{strat}_order_submit_total \u2014 the whole spawned order-submission block (IBKR wire + DB spawn). Alert: wire p99 > 500ms \u00d7 5m \u2192 page (see panel 2).",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~\".*_order_submit_total\"}[5m]))",
+          "legendFormat": "{{function}} p99"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, rate(hotpath_function_duration_seconds{function=~\".*_order_submit_total\"}[5m]))",
+          "legendFormat": "{{function}} p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.50, rate(hotpath_function_duration_seconds{function=~\".*_order_submit_total\"}[5m]))",
+          "legendFormat": "{{function}} p50"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "T1 \u2014 Order submit IBKR WIRE latency per strategy: p99",
+      "description": "{strat}_order_submit_ibkr_wire \u2014 isolates client.submit_order() (the IBKR network round-trip), the single biggest source of order latency variance. This is the actionable slippage signal.",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~\".*_order_submit_ibkr_wire\"}[5m]))",
+          "legendFormat": "{{function}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "T2 \u2014 Per-strategy bar_update latency: p99",
+      "description": "{strat}_strat_bar_update \u2014 per-strategy thinking time (strategy compute + target-position DB write). Alert: p99 > 2s (can't keep up with 5-min bars).",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~\".*_strat_bar_update\"}[5m]))",
+          "legendFormat": "{{function}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "T1 \u2014 DB write + read latency: p99",
+      "description": "noise_create_or_update_target_position / noise_delete_target_position (DB writes) + get_target_pos_diff_by_strat / get_orders_for_strat (DB reads). Slow reads delay order submission; slow writes block the decision path.",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~\"noise_(create|delete).*target_position|.*get_target_pos_diff_by_strat|get_orders_for_strat|.*_compute_fx_attachments\"}[5m]))",
+          "legendFormat": "{{function}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "T3 \u2014 IBKR wire (producer): realtime_bars_subscribe + bar_next_wait p99",
+      "description": "The IBKR market-data wire round-trips: subscription calls + per-bar next() waits. The biggest source of ingestion jitter. Re-added (were lost in the refactor to begin_producer_thread_grouped).",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_function_duration_seconds{function=~\"ibkr_(realtime_bars_subscribe|bar_next_wait)\"}[5m]))",
+          "legendFormat": "{{function}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "T1/T2 \u2014 Call rate (orders/min & bar_updates/min)",
+      "description": "rate(hotpath_function_calls_total). Order rate spike = order storm; \u2192 0 during market hours = stalled. Bar_update rate should be ~12/hr per strategy (5-min bars).",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(hotpath_function_calls_total{function=~\".*_order_submit_total\"}[5m]) * 60",
+          "legendFormat": "{{function}} orders/min"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(hotpath_function_calls_total{function=~\".*_strat_bar_update\"}[5m]) * 60",
+          "legendFormat": "{{function}} bar_updates/min"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "T3 \u2014 Ingestion rate (spin loops)",
+      "description": "rate(hotpath_function_calls_total{function=producer_grouped_spin_loop / db_consumer_*_spin_loop}). These fire every BAR_INTERVAL while the thread is alive \u2014 a drop to 0 means the thread died (see the strategy_thread_dead alert).",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(hotpath_function_calls_total{function=\"producer_grouped_spin_loop\"}[5m]) * 60",
+          "legendFormat": "producer cycles/min"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(hotpath_function_calls_total{function=~\"db_consumer_.*_spin_loop\"}[5m]) * 60",
+          "legendFormat": "{{function}} cycles/min"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "T4 \u2014 Thread count & per-thread CPU%",
+      "description": "hotpath_threads (gauge) + hotpath_thread_cpu_percent. NOTE: 0% CPU for a strategy thread is NORMAL between 5-min bars \u2014 do not alert on CPU. Use the spin-loop rate (panel 7) as the liveness signal instead.",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hotpath_threads",
+          "legendFormat": "thread count"
+        },
+        {
+          "refId": "B",
+          "expr": "hotpath_thread_cpu_percent",
+          "legendFormat": "{{name}} CPU%"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "thread count" },
+            "properties": [{ "id": "unit", "value": "short" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "T5 \u2014 Bar arrival lag (staleness signal)",
+      "description": "bar_arrival_lag_seconds = (now - expected boundary) when a bar is received. Positive = late = about to trade on stale data. hotpath_gauge_max gives the peak lag per scrape window (the alertable staleness signal).",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hotpath_gauge{key=\"bar_arrival_lag_seconds\"}",
+          "legendFormat": "current lag"
+        },
+        {
+          "refId": "B",
+          "expr": "hotpath_gauge_max{key=\"bar_arrival_lag_seconds\"}",
+          "legendFormat": "peak lag (per scrape)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "T5 \u2014 Bar push retries (ring full = overload)",
+      "description": "hotpath_gauge{key=\"bar_push_retries\"}. Each inc = spmc-ring was full = consumer too slow. The leading overload indicator (replaces hotpath_channel_queue_size, which can't wrap the custom spmc-ring).",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hotpath_gauge{key=\"bar_push_retries\"}",
+          "legendFormat": "push retries (cumulative)"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(hotpath_gauge_updates_total{key=\"bar_push_retries\"}[5m]) * 60",
+          "legendFormat": "retries/min"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "T5 \u2014 Missed bars & sub errors (per contract)",
+      "description": "Per-contract gauges (bar_missed_*, bar_sub_errors_*). Any missed bar = blind trading; any sub error = IBKR subscription failing.",
+      "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hotpath_gauge{key=~\"bar_missed_.*\"}",
+          "legendFormat": "{{key}}"
+        },
+        {
+          "refId": "B",
+          "expr": "hotpath_gauge{key=~\"bar_sub_errors_.*\"}",
+          "legendFormat": "{{key}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "T4 \u2014 RSS memory (leak detection)",
+      "description": "hotpath_rss_bytes. Monotonic growth = leak.",
+      "gridPos": { "x": 12, "y": 40, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "hotpath_rss_bytes", "legendFormat": "RSS" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "T5 \u2014 AppState mutex contention (axum API)",
+      "description": "hotpath_mutex_wait_seconds / hotpath_mutex_acquire_seconds (label=\"app_state\"). High wait = the axum REST API's state lock is contended = API stalls.",
+      "gridPos": { "x": 0, "y": 48, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, rate(hotpath_mutex_wait_seconds{label=\"app_state\"}[5m]))",
+          "legendFormat": "wait p99"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, rate(hotpath_mutex_acquire_seconds{label=\"app_state\"}[5m]))",
+          "legendFormat": "hold p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Build info",
+      "description": "hotpath_build_info \u2014 version labels confirm the deploy.",
+      "gridPos": { "x": 12, "y": 48, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hotpath_build_info",
+          "legendFormat": "{{hotpath_version}} / {{profile}} / {{os}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Slowest functions by p99 (top 15) — surfaces CRUD-level sqlx",
+      "description": "topk(15, p99) across ALL hotpath functions. The #[measure_all] on the CRUD impls (create_or_update, delete, get_orders_for_strat, get_target_pos_diff_by_strat, the HistoricalDataCRUD bar insert, etc.) now appear here. Use this to spot the slowest sqlx method globally, then cross-reference with the per-strategy panels to attribute it.",
+      "gridPos": { "x": 12, "y": 56, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(15, histogram_quantile(0.99, rate(hotpath_function_duration_seconds[5m])))",
+          "legendFormat": "{{function}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    }
+  ]
+}

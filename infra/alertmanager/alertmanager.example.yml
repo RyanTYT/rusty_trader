@@ -1,0 +1,28 @@
+global:
+  resolve_timeout: 5m
+
+# Route all alerts to the Telegram receiver. group_by clusters by alertname;
+# group_wait delays the first notification; group_interval is the min time
+# between notifications for the same group; repeat_interval is how often to
+# re-notify if the alert is still firing.
+route:
+  receiver: 'telegram'
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 1h
+
+receivers:
+  - name: 'telegram'
+    telegram_configs:
+      # ─────────────────────────────────────────────────────────────────────
+      # SETUP (do this once):
+      # 1. Talk to @BotFather on Telegram → /newbot → get the bot token.
+      # 2. Message the bot (or use @userinfobot) → get your numeric chat_id.
+      # 3. Replace the values below.
+      # 4. GITIGNORE this file (it contains a secret). Or mount from a
+      #    secrets manager / Docker secret.
+      # ─────────────────────────────────────────────────────────────────────
+      - bot_token: 'YOUR_BOT_TOKEN_HERE'
+        chat_id: 0  # replace with your numeric chat ID (e.g. 123456789)
+        send_resolved: true  # send a "resolved" message when the alert clears
