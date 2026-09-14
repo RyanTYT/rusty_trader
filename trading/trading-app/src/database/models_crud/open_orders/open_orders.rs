@@ -260,6 +260,7 @@ impl OpenOrdersUpdateKeys {
     }
 }
 
+#[hotpath::measure_all]
 impl OpenOrdersCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
@@ -305,6 +306,7 @@ pub trait OpenOrdersOps {
 }
 
 #[async_trait::async_trait]
+#[hotpath::measure_all]
 impl OpenOrdersOps for OpenOrdersCRUD {
     async fn get_orders_for_strat(
         &self,

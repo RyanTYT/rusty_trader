@@ -25,10 +25,9 @@ use ibapi::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Weak,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(not(feature = "backtest"))]
+use std::sync::Weak;
 
 use crate::{
     database::{
@@ -122,16 +121,27 @@ impl OrderEngine {
         }
         let client = client_opt.unwrap();
         let order_id = client.next_order_id();
+        // Strategy prefix of order_ref — works for stock (order_ref == strategy)
+        // and FX (order_ref == "{strategy}:{price}") orders alike.
+        let strategy_name = order_ibkr
+            .order
+            .order_ref
+            .split(':')
+            .next()
+            .unwrap_or("unknown");
+        let total_label = StrategyEnum::metric_label(strategy_name, "order_submit_total");
+        let wire_label = StrategyEnum::metric_label(strategy_name, "order_submit_ibkr_wire");
         std::thread::spawn(move || {
-            hotpath::measure_block!("order_submit_to_ibkr", {
+            hotpath::measure_block!(total_label, {
                 tracing::info!(
                     "Order submitted to IBKR: {:?} for {:?}",
                     order_ibkr.order.action,
                     order_ibkr.contract.symbol
                 );
-                if let Err(e) =
+                let submit_result = hotpath::measure_block!(wire_label, {
                     client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
-                {
+                });
+                if let Err(e) = submit_result {
                     tracing::error!(
                         message=%format!(
                             "Failed to place order for {}, order: {}, Error: {}",
@@ -145,12 +155,15 @@ impl OrderEngine {
                 let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
                 let uk =
                     OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
-                handle.spawn(async move {
-                    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
-                    if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
-                        tracing::error!("Failed to create or update open order for place_order (Optimistic Open Order): {e:?}");
-                    };
-                });
+                handle.spawn(hotpath::future!(
+                    async move {
+                        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+                        if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
+                            tracing::error!("Failed to create or update open order for place_order (Optimistic Open Order): {e:?}");
+                        };
+                    },
+                    label = "order_submit_db_write"
+                ));
             });
         });
 
@@ -234,20 +247,25 @@ impl OrderEngine {
                         TargetPositionsCRUD::from(&asset_type, self.pool.clone());
                     let target_positions_crud_clone = target_positions_crud.clone();
                     let strategy_name = strategy_name_orig.clone();
-                    let target_pos_diffs =
-                        match hotpath::measure_block!("get_target_pos_diff_by_strat", {
+                    let target_pos_diffs = match hotpath::measure_block!(
+                        StrategyEnum::metric_label(
+                            &strategy_name_orig,
+                            "get_target_pos_diff_by_strat"
+                        ),
+                        {
                             self.tokio_handle.block_on(async move {
                                 target_positions_crud_clone
                                     .get_target_pos_diff_by_strat(&strategy_name)
                                     .await
                             })
-                        }) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                tracing::error!("target_qty_diff error: {}", e);
-                                continue;
-                            }
-                        };
+                        }
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::error!("target_qty_diff error: {}", e);
+                            continue;
+                        }
+                    };
                     // Check if all orders alr open
                     let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
                     let strategy_name = strategy_name_orig.clone();
@@ -302,87 +320,92 @@ impl OrderEngine {
                     //             .join(",\n")
                     //     )
                     // );
-                    let mut fx_attachments = hotpath::measure_block!("compute_fx_attachments", {
-                        if !strategy_detail.is_fx_strategy {
-                            tracing::info!("Strat is not FX Strat");
-                            let mut funds = HashMap::new();
-                            let mut funds_from_selling = HashMap::<HashContract, Vec<f64>>::new();
-                            let mut insufficient_funds = HashMap::new();
+                    let mut fx_attachments = hotpath::measure_block!(
+                        StrategyEnum::metric_label(&strategy_name_orig, "compute_fx_attachments"),
+                        {
+                            if !strategy_detail.is_fx_strategy {
+                                tracing::info!("Strat is not FX Strat");
+                                let mut funds = HashMap::new();
+                                let mut funds_from_selling =
+                                    HashMap::<HashContract, Vec<f64>>::new();
+                                let mut insufficient_funds = HashMap::new();
 
-                            let mut pos_to_open = Vec::new();
-                            for pos_diff in target_pos_diffs.clone().into_iter() {
-                                if let TargetPositionsQtyDiff::Stock(
-                                    TargetStockPositionsQtyDiff {
-                                        ref stock,
-                                        qty_diff,
-                                        ..
-                                    },
-                                ) = pos_diff
+                                let mut pos_to_open = Vec::new();
+                                for pos_diff in target_pos_diffs.clone().into_iter() {
+                                    if let TargetPositionsQtyDiff::Stock(
+                                        TargetStockPositionsQtyDiff {
+                                            ref stock,
+                                            qty_diff,
+                                            ..
+                                        },
+                                    ) = pos_diff
+                                    {
+                                        if let Some(quote) = stock.strip_prefix("CASH:") {
+                                            funds.insert(quote.to_string(), -qty_diff);
+                                            continue;
+                                        }
+                                    }
+                                    let (current_qty, qty_diff) = match pos_diff {
+                                        TargetPositionsQtyDiff::Stock(ref v) => {
+                                            (v.current_qty, v.qty_diff)
+                                        }
+                                        TargetPositionsQtyDiff::Options(ref v) => {
+                                            (v.current_qty, v.qty_diff)
+                                        }
+                                    };
+                                    if current_qty != 0.0
+                                        && qty_diff.signum() != current_qty.signum()
+                                    {
+                                        let hash_contract = HashContract {
+                                            contract: get_contract_from(
+                                                &LocalContractTypes::TargetPosQtyDiff(pos_diff),
+                                            ),
+                                        };
+                                        if !funds_from_selling.contains_key(&hash_contract) {
+                                            funds_from_selling
+                                                .insert(hash_contract.clone(), Vec::new());
+                                        };
+                                        let funds_from_selling_currency =
+                                            funds_from_selling.get_mut(&hash_contract).unwrap();
+                                        funds_from_selling_currency.push(qty_diff.abs());
+                                    } else {
+                                        pos_to_open.push(pos_diff);
+                                    }
+                                }
+
+                                tracing::info!("Constructed hashmaps for FX strat");
                                 {
-                                    if let Some(quote) = stock.strip_prefix("CASH:") {
-                                        funds.insert(quote.to_string(), -qty_diff);
-                                        continue;
-                                    }
-                                }
-                                let (current_qty, qty_diff) = match pos_diff {
-                                    TargetPositionsQtyDiff::Stock(ref v) => {
-                                        (v.current_qty, v.qty_diff)
-                                    }
-                                    TargetPositionsQtyDiff::Options(ref v) => {
-                                        (v.current_qty, v.qty_diff)
-                                    }
-                                };
-                                if current_qty != 0.0 && qty_diff.signum() != current_qty.signum() {
-                                    let hash_contract = HashContract {
-                                        contract: get_contract_from(
-                                            &LocalContractTypes::TargetPosQtyDiff(pos_diff),
-                                        ),
-                                    };
-                                    if !funds_from_selling.contains_key(&hash_contract) {
-                                        funds_from_selling
-                                            .insert(hash_contract.clone(), Vec::new());
-                                    };
-                                    let funds_from_selling_currency =
-                                        funds_from_selling.get_mut(&hash_contract).unwrap();
-                                    funds_from_selling_currency.push(qty_diff.abs());
-                                } else {
-                                    pos_to_open.push(pos_diff);
-                                }
-                            }
-
-                            tracing::info!("Constructed hashmaps for FX strat");
-                            {
-                                #[cfg(not(feature = "backtest"))]
-                                let strong_consolidator = {
-                                    let upgraded_consolidator_opt = consolidator.upgrade();
-                                    if upgraded_consolidator_opt.is_none() {
-                                        tracing::error!(
-                                            "Consolidator reference dropped before orders for positional differences could be submitted!"
-                                        );
-                                        return;
-                                    }
-                                    upgraded_consolidator_opt.unwrap()
-                                };
-                                for pos_diff in pos_to_open {
-                                    let (qty_diff, currency) = match &pos_diff {
-                                        TargetPositionsQtyDiff::Stock(v) => {
-                                            (v.qty_diff, v.currency.clone())
-                                        }
-                                        TargetPositionsQtyDiff::Options(v) => {
-                                            (v.qty_diff, v.currency.clone())
-                                        }
-                                    };
-
-                                    let contract = get_contract_from(
-                                        &LocalContractTypes::TargetPosQtyDiff(pos_diff),
-                                    );
-                                    let hash_contract = HashContract {
-                                        contract: contract.clone(),
-                                    };
-
-                                    let symbol = contract.symbol.clone();
-                                    tracing::info!("Fetching price for {}", symbol);
                                     #[cfg(not(feature = "backtest"))]
+                                    let strong_consolidator = {
+                                        let upgraded_consolidator_opt = consolidator.upgrade();
+                                        if upgraded_consolidator_opt.is_none() {
+                                            tracing::error!(
+                                                "Consolidator reference dropped before orders for positional differences could be submitted!"
+                                            );
+                                            return;
+                                        }
+                                        upgraded_consolidator_opt.unwrap()
+                                    };
+                                    for pos_diff in pos_to_open {
+                                        let (qty_diff, currency) = match &pos_diff {
+                                            TargetPositionsQtyDiff::Stock(v) => {
+                                                (v.qty_diff, v.currency.clone())
+                                            }
+                                            TargetPositionsQtyDiff::Options(v) => {
+                                                (v.qty_diff, v.currency.clone())
+                                            }
+                                        };
+
+                                        let contract = get_contract_from(
+                                            &LocalContractTypes::TargetPosQtyDiff(pos_diff),
+                                        );
+                                        let hash_contract = HashContract {
+                                            contract: contract.clone(),
+                                        };
+
+                                        let symbol = contract.symbol.clone();
+                                        tracing::info!("Fetching price for {}", symbol);
+                                        #[cfg(not(feature = "backtest"))]
                                     let price = strong_consolidator.get_current_price(
                                             contract,
                                             false,
@@ -391,7 +414,7 @@ impl OrderEngine {
                                             tracing::warn!("Could not get current price of contract in order_engine!");
                                             0.0
                                         });
-                                    #[cfg(feature = "backtest")]
+                                        #[cfg(feature = "backtest")]
                                     let price = price_supplier.get_current_price(
                                             contract,
                                             false,
@@ -400,42 +423,46 @@ impl OrderEngine {
                                             tracing::warn!("Could not get current price of contract in order_engine!");
                                             0.0
                                         });
-                                    let required_currency = qty_diff * price;
-                                    tracing::info!("Fetched price for {}", symbol);
+                                        let required_currency = qty_diff * price;
+                                        tracing::info!("Fetched price for {}", symbol);
 
-                                    let available_funds = funds.get(&currency).unwrap_or(&0.0);
-                                    if available_funds >= &required_currency {
-                                        funds.insert(
-                                            currency.clone(),
-                                            available_funds - required_currency,
+                                        let available_funds = funds.get(&currency).unwrap_or(&0.0);
+                                        if available_funds >= &required_currency {
+                                            funds.insert(
+                                                currency.clone(),
+                                                available_funds - required_currency,
+                                            );
+                                            continue;
+                                        }
+
+                                        insufficient_funds.insert(
+                                            hash_contract,
+                                            (
+                                                (qty_diff, price),
+                                                required_currency - available_funds,
+                                            ),
                                         );
-                                        continue;
+                                        funds.insert(currency.clone(), 0.0);
                                     }
+                                }
 
-                                    insufficient_funds.insert(
-                                        hash_contract,
-                                        ((qty_diff, price), required_currency - available_funds),
-                                    );
-                                    funds.insert(currency.clone(), 0.0);
+                                // Collect all buy contracts that are handled via FX attachment chains
+                                tracing::info!("getting required attached FX");
+                                // so we can skip them in the main placement loop.
+                                OrderEngine::get_required_fx_attachments(
+                                    funds,
+                                    funds_from_selling,
+                                    insufficient_funds,
+                                    &strategy_name_orig,
+                                )
+                            } else {
+                                FxAttachments {
+                                    contracts_sold_to_fx_orders: HashMap::new(),
+                                    backed_up_orders: Vec::new(),
                                 }
                             }
-
-                            // Collect all buy contracts that are handled via FX attachment chains
-                            tracing::info!("getting required attached FX");
-                            // so we can skip them in the main placement loop.
-                            OrderEngine::get_required_fx_attachments(
-                                funds,
-                                funds_from_selling,
-                                insufficient_funds,
-                                &strategy_name_orig,
-                            )
-                        } else {
-                            FxAttachments {
-                                contracts_sold_to_fx_orders: HashMap::new(),
-                                backed_up_orders: Vec::new(),
-                            }
                         }
-                    });
+                    );
 
                     target_pos_diffs.into_iter().for_each(|pos_diff| {
                         let (stock, qty_diff, avg_price) = match &pos_diff {

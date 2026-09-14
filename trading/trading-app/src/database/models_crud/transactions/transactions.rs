@@ -152,6 +152,7 @@ pub enum TransactionsUnderlyingPrimaryKeys {
     Options(OptionTransactionsUnderlyingPrimaryKeys),
 }
 
+#[hotpath::measure_all]
 impl TransactionsCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
@@ -205,6 +206,7 @@ pub trait TransactionsOps {
 }
 
 #[async_trait::async_trait]
+#[hotpath::measure_all]
 impl TransactionsOps for TransactionsCRUD {
     async fn read_last_transaction(
         &self,

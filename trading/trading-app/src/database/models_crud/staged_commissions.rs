@@ -24,6 +24,7 @@ implement_all_crud_methods!(
     StagedCommissionsCRUD
 );
 
+#[hotpath::measure_all]
 impl StagedCommissionsCRUD {
     pub fn new(pool: PgPool) -> Self {
         Self {

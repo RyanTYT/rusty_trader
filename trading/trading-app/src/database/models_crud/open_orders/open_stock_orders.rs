@@ -22,6 +22,7 @@ implement_all_crud_methods!(
     OpenStockOrdersCRUD
 );
 
+#[hotpath::measure_all]
 impl OpenStockOrdersCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

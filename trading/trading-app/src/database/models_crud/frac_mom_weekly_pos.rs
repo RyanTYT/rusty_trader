@@ -21,6 +21,7 @@ pub struct FractionalMomentumWeeklyPositionsCRUD {
     >,
 }
 
+#[hotpath::measure_all]
 impl FractionalMomentumWeeklyPositionsCRUD {
     fn new(pool: PgPool) -> Self {
         Self {

@@ -21,6 +21,7 @@ implement_all_crud_methods!(
     StrategyCRUD
 );
 
+#[hotpath::measure_all]
 impl StrategyCRUD {
     pub fn new(pool: PgPool) -> Self {
         Self {

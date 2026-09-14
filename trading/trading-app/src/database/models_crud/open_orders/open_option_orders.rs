@@ -24,6 +24,7 @@ implement_all_crud_methods!(
     OpenOptionOrdersCRUD
 );
 
+#[hotpath::measure_all]
 impl OpenOptionOrdersCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

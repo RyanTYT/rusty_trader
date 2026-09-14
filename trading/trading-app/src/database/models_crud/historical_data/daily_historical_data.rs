@@ -28,6 +28,7 @@ implement_all_crud_methods!(
     DailyHistoricalStockDataCRUD
 );
 
+#[hotpath::measure_all]
 impl DailyHistoricalStockDataCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

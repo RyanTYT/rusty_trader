@@ -85,6 +85,7 @@ pub enum TargetPositionsUpdateKeys {
     Options(TargetOptionPositionsUpdateKeys),
 }
 
+#[hotpath::measure_all]
 impl TargetPositionsCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
@@ -136,6 +137,7 @@ pub trait TargetPositionsOps {
 }
 
 #[async_trait]
+#[hotpath::measure_all]
 impl TargetPositionsOps for TargetPositionsCRUD {
     async fn get_target_pos_diff_by_pk(
         &self,

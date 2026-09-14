@@ -21,6 +21,7 @@ implement_all_crud_methods!(
     NotificationCRUD
 );
 
+#[hotpath::measure_all]
 impl NotificationCRUD {
     pub fn new(pool: PgPool) -> Self {
         Self {

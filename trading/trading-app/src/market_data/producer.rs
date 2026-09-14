@@ -98,21 +98,36 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                     .into_iter()
                     .map(|producer| {
                         (
-                            client
-                                .realtime_bars(
-                                    &producer.contract,
-                                    ibapi::market_data::realtime::BarSize::Sec5,
-                                    producer.what_to_show,
-                                    ibapi::market_data::TradingHours::Regular,
-                                )
-                                .expect(
-                                    "Expected to be able to make subscription for realtime_bars",
-                                ),
+                            hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
+                                client
+                                    .realtime_bars(
+                                        &producer.contract,
+                                        ibapi::market_data::realtime::BarSize::Sec5,
+                                        producer.what_to_show,
+                                        ibapi::market_data::TradingHours::Regular,
+                                    )
+                                    .expect(
+                                        "Expected to be able to make subscription for realtime_bars",
+                                    )
+                            }),
                             producer,
                         )
                     })
                     .collect()
             };
+
+            // Per-contract gauges — pass format!() directly to hotpath::gauge!; it
+            // takes impl Into<Arc<str>> and aggregates by content, so no Box::leak
+            // / &'static str cache is needed.
+            for (_, p) in subscriptions.iter() {
+                hotpath::gauge!(format!("bar_missed_{}", p.contract.symbol)).set(0.0);
+                hotpath::gauge!(format!("bar_sub_errors_{}", p.contract.symbol)).set(0.0);
+            }
+            // Aggregate gauge: ring-full events = consumer can't keep up = the
+            // leading overload indicator. (Replaces hotpath::channel! queue-size,
+            // which can't wrap the custom spmc-ring — only 6 specific crates.)
+            hotpath::gauge!("bar_push_retries").set(0.0);
+
             let mut next_available_times: Vec<DateTime<Utc>> = match subscriptions
                 .iter()
                 .map(
@@ -142,16 +157,18 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                             let client = weak_client.upgrade().expect(
                                 "Expected client to still be alive when subscribing to data",
                             );
-                            client
-                                .realtime_bars(
-                                    &subscriptions[idx].1.contract,
-                                    ibapi::market_data::realtime::BarSize::Sec5,
-                                    subscriptions[idx].1.what_to_show,
-                                    ibapi::market_data::TradingHours::Regular,
-                                )
-                                .expect(
-                                    "Expected to be able to make subscription for realtime_bars",
-                                )
+                            hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
+                                client
+                                    .realtime_bars(
+                                        &subscriptions[idx].1.contract,
+                                        ibapi::market_data::realtime::BarSize::Sec5,
+                                        subscriptions[idx].1.what_to_show,
+                                        ibapi::market_data::TradingHours::Regular,
+                                    )
+                                    .expect(
+                                        "Expected to be able to make subscription for realtime_bars",
+                                    )
+                            })
                         };
                         next_available_times[idx] = match contract_scheduler.get_next_earliest_available_data(
                             std::iter::once(&subscriptions[idx].1.contract),
@@ -192,9 +209,20 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                             let (ibapi_producer, spmc_producer) = subscriptions.get(idx).unwrap();
                             let mut did_pop = false;
                             loop {
-                                match ibapi_producer.try_next() {
+                                match hotpath::measure_block!("ibkr_bar_next_wait", {
+                                    ibapi_producer.try_next()
+                                }) {
                                     Some(mut bar) => {
                                         did_pop = true;
+                                        // Staleness signal — how late is this bar relative to the
+                                        // expected boundary? Positive = late = about to trade on
+                                        // stale data. hotpath_gauge_max{key=...} gives the peak lag
+                                        // per scrape window (the alertable staleness signal).
+                                        let lag = SystemTime::now()
+                                            .duration_since(next_deadline)
+                                            .map(|d| d.as_secs_f64())
+                                            .unwrap_or_else(|e| -(e.duration().as_secs_f64()));
+                                        hotpath::gauge!("bar_arrival_lag_seconds").set(lag);
                                         let mut is_pushed = false;
                                         for _ in 0..10 {
                                             match spmc_producer.producer.try_push(bar) {
@@ -204,6 +232,10 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                                 }
                                                 Err(bar_returned) => {
                                                     bar = bar_returned;
+                                                    // Ring full — consumer too slow. Each retry
+                                                    // is a backlog event (the overload signal
+                                                    // hotpath_channel_queue_size would have given).
+                                                    hotpath::gauge!("bar_push_retries").inc(1.0);
                                                 }
                                             }
                                         }
@@ -241,45 +273,50 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                 // Anything still marked not-received missed its window
                 // this cycle — surface that instead of silently dropping it.
                 for (idx, received_bool) in received.iter().enumerate() {
+                    let sub_idx = active_producers[idx];
                     if *received_bool {
-                        consecutive_misses[active_producers[idx]] = 0;
+                        consecutive_misses[sub_idx] = 0;
                     } else {
-                        let num_misses = consecutive_misses[active_producers[idx]];
-                        consecutive_misses[active_producers[idx]] += 1;
+                        let num_misses = consecutive_misses[sub_idx];
+                        consecutive_misses[sub_idx] += 1;
+                        hotpath::gauge!(format!("bar_missed_{}", subscriptions[sub_idx].1.contract.symbol)).inc(1.0);
                         tracing::warn!(
                             "Failed to receive bar for {} from IBKR for {}-th time",
-                            subscriptions[active_producers[idx]].1.contract.symbol,
+                            subscriptions[sub_idx].1.contract.symbol,
                             num_misses + 1
                         );
-                        if let Some(e) = subscriptions[active_producers[idx]].0.error() {
+                        if let Some(e) = subscriptions[sub_idx].0.error() {
+                            hotpath::gauge!(format!("bar_sub_errors_{}", subscriptions[sub_idx].1.contract.symbol)).inc(1.0);
                             tracing::error!(
                                 "Failed to receive bar for {} from IBKR because of error: {e:?}",
-                                subscriptions[active_producers[idx]].1.contract.symbol,
+                                subscriptions[sub_idx].1.contract.symbol,
                             );
                         }
                         // if miss a minute worth of bars, re-subscribe
                         if num_misses + 1 > 12 {
                             tracing::warn!(
                                 "Re-subscribing to bar for {} from IBKR!",
-                                subscriptions[active_producers[idx]].1.contract.symbol
+                                subscriptions[sub_idx].1.contract.symbol
                             );
-                            let (_, spmc_producer) = &subscriptions[active_producers[idx]];
-                            subscriptions[active_producers[idx]].0 = {
+                            let (_, spmc_producer) = &subscriptions[sub_idx];
+                            subscriptions[sub_idx].0 = {
                                 let client = weak_client.upgrade().expect(
                                     "Expected client to still be alive when subscribing to data",
                                 );
-                                client
-                                .realtime_bars(
-                                    &spmc_producer.contract,
-                                    ibapi::market_data::realtime::BarSize::Sec5,
-                                    spmc_producer.what_to_show,
-                                    ibapi::market_data::TradingHours::Regular,
-                                )
-                                .expect(
-                                    "Expected to be able to make subscription for realtime_bars",
-                                )
+                                hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
+                                    client
+                                        .realtime_bars(
+                                            &spmc_producer.contract,
+                                            ibapi::market_data::realtime::BarSize::Sec5,
+                                            spmc_producer.what_to_show,
+                                            ibapi::market_data::TradingHours::Regular,
+                                        )
+                                        .expect(
+                                            "Expected to be able to make subscription for realtime_bars",
+                                        )
+                                })
                             };
-                            consecutive_misses[active_producers[idx]] = 0;
+                            consecutive_misses[sub_idx] = 0;
                         }
                     }
                 }

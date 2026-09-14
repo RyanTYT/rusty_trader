@@ -21,6 +21,7 @@ implement_all_crud_methods!(
     LogsCRUD
 );
 
+#[hotpath::measure_all]
 impl LogsCRUD {
     pub fn new(pool: PgPool) -> Self {
         Self {

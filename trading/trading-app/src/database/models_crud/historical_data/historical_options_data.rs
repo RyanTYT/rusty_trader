@@ -28,6 +28,7 @@ implement_all_crud_methods!(
     HistoricalOptionsDataCRUD
 );
 
+#[hotpath::measure_all]
 impl HistoricalOptionsDataCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

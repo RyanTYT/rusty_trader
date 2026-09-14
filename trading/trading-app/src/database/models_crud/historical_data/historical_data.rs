@@ -437,6 +437,7 @@ impl HistoricalDataUpdateKeys {
     }
 }
 
+#[hotpath::measure_all]
 impl HistoricalDataCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
@@ -584,6 +585,7 @@ pub struct AggregatedBars {
 }
 
 #[async_trait]
+#[hotpath::measure_all]
 impl HistoricalDataOps for HistoricalDataCRUD {
     async fn read_last_n(
         &self,
@@ -1234,6 +1236,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
 }
 
 #[async_trait]
+#[hotpath::measure_all]
 impl NoiseOps for HistoricalDataCRUD {
     /// Today's move will NOT be included in the calculation
     /// avg move is of the last 15 days
@@ -1564,6 +1567,7 @@ impl NoiseOps for HistoricalDataCRUD {
 }
 
 #[async_trait::async_trait]
+#[hotpath::measure_all]
 impl TimescaleDbOps for HistoricalDataCRUD {
     async fn refresh_daily_data(&self) -> Result<(), String> {
         sqlx::query!(

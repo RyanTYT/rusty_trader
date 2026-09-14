@@ -540,6 +540,7 @@ pub enum BatchDbCreatorEnum {
     Forex(BatchDbCreator<HistoricalForexDataFullKeys>),
 }
 
+#[hotpath::measure_all]
 impl BatchDbCreatorEnum {
     pub async fn batch_create_or_update(&self, fk: &HistoricalDataFullKeys) -> Result<(), String> {
         match (self, fk) {

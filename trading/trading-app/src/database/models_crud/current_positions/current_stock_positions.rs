@@ -28,6 +28,7 @@ implement_all_crud_methods!(
     CurrentStockPositionsCRUD
 );
 
+#[hotpath::measure_all]
 impl CurrentStockPositionsCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

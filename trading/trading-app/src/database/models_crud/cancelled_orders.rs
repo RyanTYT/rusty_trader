@@ -22,6 +22,7 @@ implement_all_crud_methods!(
     CancelledOrdersCRUD
 );
 
+#[hotpath::measure_all]
 impl CancelledOrdersCRUD {
     pub fn new(pool: PgPool) -> Self {
         Self {

@@ -28,6 +28,7 @@ implement_all_crud_methods!(
     HistoricalForexDataCRUD
 );
 
+#[hotpath::measure_all]
 impl HistoricalForexDataCRUD {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self {

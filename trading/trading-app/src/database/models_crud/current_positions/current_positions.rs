@@ -280,6 +280,7 @@ impl CurrentPositionsUpdateKeys {
     }
 }
 
+#[hotpath::measure_all]
 impl CurrentPositionsCRUD {
     fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
         match self {
@@ -343,6 +344,7 @@ pub trait CurrentPositionsOps {
 }
 
 #[async_trait::async_trait]
+#[hotpath::measure_all]
 impl CurrentPositionsOps for CurrentPositionsCRUD {
     async fn get_pos_by_strat(
         &self,
