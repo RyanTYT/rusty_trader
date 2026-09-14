@@ -10,7 +10,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use ibapi::{
     Client,
     client::Subscription,
-    contracts::Contract,
+    contracts::{Contract, SecurityType},
     market_data::realtime::{Bar, WhatToShow},
 };
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
@@ -104,7 +104,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                         &producer.contract,
                                         ibapi::market_data::realtime::BarSize::Sec5,
                                         producer.what_to_show,
-                                        ibapi::market_data::TradingHours::Regular,
+                                        if producer.contract.security_type == SecurityType::ForexPair {ibapi::market_data::TradingHours::Regular} else {ibapi::market_data::TradingHours::Extended}
                                     )
                                     .expect(
                                         "Expected to be able to make subscription for realtime_bars",
@@ -163,7 +163,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                         &subscriptions[idx].1.contract,
                                         ibapi::market_data::realtime::BarSize::Sec5,
                                         subscriptions[idx].1.what_to_show,
-                                        ibapi::market_data::TradingHours::Regular,
+                                        if subscriptions[idx].1.contract.security_type == SecurityType::ForexPair {ibapi::market_data::TradingHours::Regular} else {ibapi::market_data::TradingHours::Extended}
                                     )
                                     .expect(
                                         "Expected to be able to make subscription for realtime_bars",
@@ -309,7 +309,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                             &spmc_producer.contract,
                                             ibapi::market_data::realtime::BarSize::Sec5,
                                             spmc_producer.what_to_show,
-                                            ibapi::market_data::TradingHours::Regular,
+                                            if spmc_producer.contract.security_type == SecurityType::ForexPair {ibapi::market_data::TradingHours::Regular} else {ibapi::market_data::TradingHours::Extended}
                                         )
                                         .expect(
                                             "Expected to be able to make subscription for realtime_bars",
