@@ -121,16 +121,9 @@ impl OrderEngine {
         }
         let client = client_opt.unwrap();
         let order_id = client.next_order_id();
-        // Strategy prefix of order_ref — works for stock (order_ref == strategy)
-        // and FX (order_ref == "{strategy}:{price}") orders alike.
-        let strategy_name = order_ibkr
-            .order
-            .order_ref
-            .split(':')
-            .next()
-            .unwrap_or("unknown");
-        let total_label = StrategyEnum::metric_label(strategy_name, "order_submit_total");
-        let wire_label = StrategyEnum::metric_label(strategy_name, "order_submit_ibkr_wire");
+        let strategy_name = order_ibkr.order.order_ref.clone();
+        let total_label = StrategyEnum::metric_label(&strategy_name, "order_submit_total");
+        let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
         std::thread::spawn(move || {
             hotpath::measure_block!(total_label, {
                 tracing::info!(
