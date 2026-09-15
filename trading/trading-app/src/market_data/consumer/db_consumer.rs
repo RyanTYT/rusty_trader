@@ -90,8 +90,8 @@ pub fn begin_db_consumer_thread_singular<
             let contract_id = consumer.contract.contract_id;
 
             while is_alive.load(Ordering::Acquire) {
-                sleep_until_system_time(next_deadline - HOT_WINDOW);
-                let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
+                sleep_until_system_time(next_deadline);
+                let spin_deadline = Instant::now() + HOT_WINDOW; // one window either side of the boundary
                 hotpath::measure_block!("db_consumer_singular_spin_loop", {
                     let mut did_pop = false;
                     loop {
@@ -237,7 +237,7 @@ pub fn begin_db_consumer_thread_grouped<
             while is_alive.load(Ordering::Acquire) {
                 // Do all pre-work for next loop b4 slping
 
-                sleep_until_system_time(next_deadline - HOT_WINDOW);
+                sleep_until_system_time(next_deadline);
 
                 let active_consumers: Vec<usize> = consumers
                     .iter()
@@ -254,8 +254,7 @@ pub fn begin_db_consumer_thread_grouped<
                     })
                     .collect();
                 let mut received = vec![false; active_consumers.len()];
-
-                let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
+                let spin_deadline = Instant::now() + HOT_WINDOW; // one window either side of the boundary
                 hotpath::measure_block!("db_consumer_grouped_spin_loop", {
                     loop {
                         let mut all_done = true;

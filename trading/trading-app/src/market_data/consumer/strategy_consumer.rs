@@ -253,10 +253,10 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     let mut received = vec![false; active.len()];
 
                     hotpath::measure_block!("sleep_until_deadline", {
-                        sleep_until_system_time(next_deadline - HOT_WINDOW, &strategy_name);
+                        sleep_until_system_time(next_deadline, &strategy_name);
                     });
 
-                    let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
+                    let spin_deadline = Instant::now() + HOT_WINDOW; // one window either side of the boundary
                     hotpath::measure_block!(gauge_name, {
                         loop {
                             let mut all_done = true;

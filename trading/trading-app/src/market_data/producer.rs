@@ -154,41 +154,35 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
             });
 
             while cloned_is_alive.load(Ordering::Acquire) {
+                let now = Utc::now();
                 for idx in 0..next_available_times.len() {
-                    if Utc::now() >= next_available_times[idx] {
-                        subscriptions[idx].0 = {
-                            let client = weak_client
-                                .upgrade()
-                                .expect("Expected client to still be alive when subscribing to data");
-                            hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
-                                client
-                                    .realtime_bars(
-                                        &subscriptions[idx].1.contract,
-                                        ibapi::market_data::realtime::BarSize::Sec5,
-                                        subscriptions[idx].1.what_to_show,
-                                        if subscriptions[idx].1.contract.security_type
-                                            == SecurityType::ForexPair
-                                        {
-                                            ibapi::market_data::TradingHours::Regular
-                                        } else {
-                                            ibapi::market_data::TradingHours::Extended
-                                        },
-                                    )
-                                    .expect(
-                                        "Expected to be able to make subscription for realtime_bars",
-                                    )
-                            })
-                        };
+                    if now >= next_available_times[idx] {
+                        // Assumes no contract schedule has a downtime shorter than 30s
                         next_available_times[idx] = match contract_scheduler
                             .get_next_earliest_available_data(std::iter::once(
                                 &subscriptions[idx].1.contract,
                             )) {
-                            Ok(v) => v - TimeDelta::seconds(30),
+                            Ok(v) => {
+                                let next_time = v - TimeDelta::seconds(30);
+                                if now >= next_time {
+                                    resubscribe_bar(&mut subscriptions, &weak_client, idx);
+                        
+                                    match contract_scheduler.get_next_latest_unavailable_data(
+                                        std::iter::once(&subscriptions[idx].1.contract)
+                                    ) {
+                                        Ok(v) => v + TimeDelta::seconds(5),
+                                        Err(e) => panic!("Couldn't fetch contract data for get_next_latest_unavailable_data: {e:?}")
+                                    }
+                                } else {
+                                    next_time
+                                }
+                            },
                             Err(e) => panic!(
-                                "Couldn't fetch contract data for next_earliest_available_data: {e:?}"
+                                "Couldn't fetch contract data for get_next_earliest_available_data: {e:?}"
                             ),
                         };
                     }
+                    
                 }
                 let active_producers: Vec<usize> = subscriptions
                     .iter()
@@ -206,8 +200,8 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                     .collect();
                 let mut received = vec![false; active_producers.len()];
 
-                sleep_until_system_time(next_deadline - HOT_WINDOW);
-                let spin_deadline = Instant::now() + HOT_WINDOW * 2; // one window either side of the boundary
+                sleep_until_system_time(next_deadline);
+                let spin_deadline = Instant::now() + HOT_WINDOW; // one window either side of the boundary
                 hotpath::measure_block!("producer_grouped_spin_loop", {
                     loop {
                         let mut all_done = true;
@@ -318,30 +312,8 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
                                 "Re-subscribing to bar for {} from IBKR!",
                                 subscriptions[sub_idx].1.contract.symbol
                             );
-                            let (_, spmc_producer) = &subscriptions[sub_idx];
-                            subscriptions[sub_idx].0 = {
-                                let client = weak_client
-                                    .upgrade()
-                                    .expect("Expected client to still be alive when subscribing to data");
-                                hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
-                                    client
-                                        .realtime_bars(
-                                            &spmc_producer.contract,
-                                            ibapi::market_data::realtime::BarSize::Sec5,
-                                            spmc_producer.what_to_show,
-                                            if spmc_producer.contract.security_type
-                                                == SecurityType::ForexPair
-                                            {
-                                                ibapi::market_data::TradingHours::Regular
-                                            } else {
-                                                ibapi::market_data::TradingHours::Extended
-                                            },
-                                        )
-                                        .expect(
-                                            "Expected to be able to make subscription for realtime_bars",
-                                        )
-                                })
-                            };
+                            resubscribe_bar(&mut subscriptions, &weak_client, sub_idx);
+                            
                             consecutive_misses[sub_idx] = 0;
                         }
                     }
@@ -356,6 +328,43 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
         is_alive,
         thread_handle: Some(thread_handle),
     }
+}
+
+fn resubscribe_bar<
+    const BUFFER_CAPACITY: usize,
+    const NUM_CONSUMERS: usize,
+>(
+    subscriptions: &mut [(
+        Subscription<Bar>,
+        IbkrBarProducer<BUFFER_CAPACITY, NUM_CONSUMERS>,
+    )],
+    weak_client: &Weak<Client>,
+    idx: usize
+) { 
+    subscriptions[idx].0.cancel();
+    subscriptions[idx].0 = {
+        let client = weak_client
+            .upgrade()
+            .expect("Expected client to still be alive when subscribing to data");
+        hotpath::measure_block!("ibkr_realtime_bars_subscribe", {
+            client
+                .realtime_bars(
+                    &subscriptions[idx].1.contract,
+                    ibapi::market_data::realtime::BarSize::Sec5,
+                    subscriptions[idx].1.what_to_show,
+                    if subscriptions[idx].1.contract.security_type
+                        == SecurityType::ForexPair
+                    {
+                        ibapi::market_data::TradingHours::Regular
+                    } else {
+                        ibapi::market_data::TradingHours::Extended
+                    },
+                )
+                .expect(
+                    "Expected to be able to make subscription for realtime_bars",
+                )
+        })
+    };
 }
 
 /// Runs once at thread startup, before the steady-state loop. For every
