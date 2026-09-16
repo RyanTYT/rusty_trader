@@ -34,7 +34,7 @@ pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
                         }) => (filled, quantity),
                         OpenOrdersFullKeys::Options(_) => panic!("Shouldn't get Option type"),
                     };
-                    if filled != recorded_filled || quantity != recorded_quantity {
+                    if filled != recorded_filled || quantity != recorded_quantity.abs() {
                         tracing::error!(
                             "Dicrepancy in filled/quantity: Recorded ({recorded_filled}/{recorded_quantity}), Broker ({filled}/{quantity})"
                         );
@@ -58,7 +58,7 @@ pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
                         }) => (filled, quantity),
                         OpenOrdersFullKeys::Stock(_) => panic!("Shouldn't get Option type"),
                     };
-                    if filled != recorded_filled || quantity != recorded_quantity {
+                    if filled != recorded_filled || quantity != recorded_quantity.abs() {
                         tracing::error!(
                             "Dicrepancy in filled/quantity: Recorded ({recorded_filled}/{recorded_quantity}), Broker ({filled}/{quantity})"
                         );

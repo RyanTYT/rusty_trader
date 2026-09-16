@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(feature = "backtest"))]
-use std::sync::Weak;
+use std::{sync::Weak, thread::JoinHandle};
 
 use crate::{
     database::{
@@ -124,31 +124,30 @@ impl OrderEngine {
         let strategy_name = order_ibkr.order.order_ref.clone();
         let total_label = StrategyEnum::metric_label(&strategy_name, "order_submit_total");
         let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
-        std::thread::spawn(move || {
-            hotpath::measure_block!(total_label, {
-                tracing::info!(
-                    "Order submitted to IBKR: {:?} for {:?}",
-                    order_ibkr.order.action,
-                    order_ibkr.contract.symbol
+        hotpath::measure_block!(total_label, {
+            tracing::info!(
+                "Order submitted to IBKR: {:?} for {:?}",
+                order_ibkr.order.action,
+                order_ibkr.contract.symbol
+            );
+            let submit_result = hotpath::measure_block!(wire_label, {
+                client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
+            });
+            if let Err(e) = submit_result {
+                tracing::error!(
+                    message=%format!(
+                        "Failed to place order for {}, order: {}, Error: {}",
+                        order_ibkr.contract.symbol,
+                        order_ibkr.order.action,
+                        e
+                    )
                 );
-                let submit_result = hotpath::measure_block!(wire_label, {
-                    client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
-                });
-                if let Err(e) = submit_result {
-                    tracing::error!(
-                        message=%format!(
-                            "Failed to place order for {}, order: {}, Error: {}",
-                            order_ibkr.contract.symbol,
-                            order_ibkr.order.action,
-                            e
-                        )
-                    );
-                }
-                let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
-                let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
-                let uk =
-                    OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
-                handle.spawn(hotpath::future!(
+            }
+            let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
+            let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
+            let uk =
+                OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
+            handle.spawn(hotpath::future!(
                     async move {
                         let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
                         if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
@@ -157,7 +156,6 @@ impl OrderEngine {
                     },
                     label = "order_submit_db_write"
                 ));
-            });
         });
 
         order_id
