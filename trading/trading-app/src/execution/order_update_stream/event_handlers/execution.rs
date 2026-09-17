@@ -80,7 +80,11 @@ pub fn on_execution_update(
         _ => {}
     }
 
-    let strategy_name = execution_data.execution.order_reference.clone();
+    let strategy_name = if execution_data.execution.order_reference == "" {
+        execution_data.execution.order_reference.clone()
+    } else {
+        "unknown".to_string()
+    };
     let strategy_detail = strategy_details
         .get(&strategy_name)
         .unwrap_or(

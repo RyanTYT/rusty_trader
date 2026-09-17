@@ -39,7 +39,11 @@ impl OrderEngine {
 
         for (buy_contract, ((qty, current_price), shortfall)) in &insufficient_funds {
             let buy_currency = &buy_contract.contract.currency.0;
-            let available = available_funds.get(buy_currency).copied().unwrap_or(0.0);
+            let available = available_funds
+                .get(buy_currency)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0);
             let mut remaining_shortfall = (shortfall - available).max(0.0);
             if remaining_shortfall <= 0.0 {
                 continue;

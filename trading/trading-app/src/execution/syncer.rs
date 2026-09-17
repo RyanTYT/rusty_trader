@@ -741,12 +741,16 @@ fn on_full_open_order_received(
     // 1. Get Associated Strategy if possible, else default strategy
     let symbol = get_local_symbol(unvalidated_contract);
     let strategy = {
-        contract_to_strategy
-            .get(&HashContract {
-                contract: unvalidated_contract.clone(),
-            })
-            .unwrap_or(&default_strategy.clone().unwrap_or("unknown".to_string()))
-            .to_string()
+        if borrowed_order.order_ref == "" {
+            contract_to_strategy
+                .get(&HashContract {
+                    contract: unvalidated_contract.clone(),
+                })
+                .unwrap_or(&default_strategy.clone().unwrap_or("unknown".to_string()))
+                .to_string()
+        } else {
+            borrowed_order.order_ref.clone()
+        }
     };
 
     // 2. Validate and fill all fields of contract - need to check again if this is a necessary
