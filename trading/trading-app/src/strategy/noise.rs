@@ -346,7 +346,7 @@ impl StrategyExecutor for Noise {
         }
     }
 
-    fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract> {
+    fn get_contracts(&mut self, client: Arc<Client>) -> Vec<Contract> {
         let contract = Contract::stock("QQQ")
             .on_exchange("SMART")
             .primary("NASDAQ")
@@ -354,7 +354,8 @@ impl StrategyExecutor for Noise {
             .build();
         #[cfg(not(feature = "backtest"))]
         let res = vec![
-            Consolidator::_validate_contract(client, None, contract, Duration::from_secs(10))
+            Consolidator::_get_contract_details(client, None, contract, Duration::from_secs(10))
+                .map(|v| v.contract)
                 .expect("Expected to be able to get_contracts when init_app"),
         ];
         #[cfg(feature = "backtest")]

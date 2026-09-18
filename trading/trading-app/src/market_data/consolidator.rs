@@ -4,6 +4,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{
     Client,
+    contracts::ContractDetails,
     market_data::historical::ToDuration,
     prelude::{Contract, SecurityType},
 };
@@ -55,7 +56,8 @@ pub struct Consolidator {
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
-    pub(super) memoised_contracts: Arc<Cache<i32, Contract>>,
+    pub(super) memoised_contract_details: Arc<Cache<i32, ContractDetails>>,
+
     #[cfg(not(feature = "backtest"))]
     contract_scheduler: Arc<IbkrContractScheduler>,
 
@@ -161,9 +163,9 @@ impl Consolidator {
             market_data_handler: market_data_handler,
             // contract_coordinator: Arc::new(IbkrContractScheduler::new(client)),
             memoisers: Arc::new(memoisers),
-            memoised_contracts: Arc::new(
+            memoised_contract_details: Arc::new(
                 Cache::builder()
-                    .time_to_live(Duration::from_hours(24))
+                    .time_to_live(Duration::from_hours(24 * 5))
                     .max_capacity(100)
                     .build(),
             ),
@@ -181,7 +183,7 @@ impl Consolidator {
             pool,
             market_data_handler,
             memoisers: Arc::new(HashMap::new()),
-            memoised_contracts: Arc::new(
+            memoised_contract_details: Arc::new(
                 Cache::builder()
                     .time_to_live(Duration::from_hours(24))
                     .max_capacity(100)
@@ -192,25 +194,40 @@ impl Consolidator {
     }
 
     #[cfg(not(feature = "backtest"))]
-    pub fn validate_contract(
+    pub fn get_contract_details(
         &self,
         contract: Contract,
         timeout_duration: Duration,
-    ) -> Option<Contract> {
-        Self::_validate_contract(
+    ) -> Option<ContractDetails> {
+        Self::_get_contract_details(
             self.client.clone(),
-            Some(self.memoised_contracts.clone()),
+            Some(self.memoised_contract_details.clone()),
             contract,
             timeout_duration,
         )
     }
 
-    pub(crate) fn _validate_contract(
-        client: Arc<Client>,
-        memoised_contracts: Option<Arc<Cache<i32, Contract>>>,
+    #[cfg(not(feature = "backtest"))]
+    pub fn validate_contract(
+        &self,
         contract: Contract,
         timeout_duration: Duration,
     ) -> Option<Contract> {
+        Self::_get_contract_details(
+            self.client.clone(),
+            Some(self.memoised_contract_details.clone()),
+            contract,
+            timeout_duration,
+        )
+        .map(|v| v.contract)
+    }
+
+    pub(crate) fn _get_contract_details(
+        client: Arc<Client>,
+        memoised_contracts: Option<Arc<Cache<i32, ContractDetails>>>,
+        contract: Contract,
+        timeout_duration: Duration,
+    ) -> Option<ContractDetails> {
         if contract.contract_id != 0
             && memoised_contracts
                 .as_ref()
@@ -228,14 +245,9 @@ impl Consolidator {
                 if validated_contracts.len() == 0 {
                     return None;
                 }
-                let contract = validated_contracts
-                    .into_iter()
-                    .take(1)
-                    .next()
-                    .unwrap()
-                    .contract;
+                let contract = validated_contracts.into_iter().take(1).next().unwrap();
                 if let Some(v) = memoised_contracts {
-                    v.insert(contract.contract_id, contract.clone());
+                    v.insert(contract.contract.contract_id, contract.clone());
                 }
                 return Some(contract);
             }

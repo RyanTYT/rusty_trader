@@ -77,9 +77,9 @@ impl StrategyExecutor for Manual {
         ]))
     }
 
-    fn get_contracts(&self, client: Arc<Client>) -> Vec<Contract> {
+    fn get_contracts(&mut self, client: Arc<Client>) -> Vec<Contract> {
         vec![
-            Consolidator::_validate_contract(
+            Consolidator::_get_contract_details(
                 client,
                 None,
                 Contract {
@@ -91,6 +91,7 @@ impl StrategyExecutor for Manual {
                 },
                 Duration::from_secs(10),
             )
+            .map(|v| v.contract)
             .expect("Expected forex_momentum contract not to be None"),
         ]
     }
