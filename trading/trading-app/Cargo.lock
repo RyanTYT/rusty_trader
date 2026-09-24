@@ -1138,6 +1138,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "forust-ml"
+version = "0.6.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe53971960b3f03653e5555d344f18ae578c14e306f4e74ca219db67dce702d"
+dependencies = [
+ "log",
+ "rand 0.8.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4337,6 +4351,7 @@ dependencies = [
  "crud_insertable_macro",
  "crud_models",
  "csv",
+ "forust-ml",
  "futures",
  "hotpath",
  "ibapi",
