@@ -498,7 +498,7 @@
       { "stock": "TECH", "primary_exchange": "NASDAQ", "currency": "USD" },
       { "stock": "NTRA", "primary_exchange": "NASDAQ", "currency": "USD" },
       { "stock": "VEEV", "primary_exchange": "NYSE", "currency": "USD" },
-      { "stock": "ILMN", "primary_exchange": "NASDAQ", "currency": "USD" },
+      { "stock": "ILMN", "primary_exchange": "NASDAQ", "currency": "USD" }
     ]
   }
 }
