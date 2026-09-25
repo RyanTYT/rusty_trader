@@ -82,7 +82,13 @@ impl InMemoryReplay {
         // AFTER warmup_end = the backtest window.
         #[cfg(feature = "backtest")]
         let bar_time = match &config.period {
-            BacktestPeriod::TimeRange { start, .. } => *start,
+            BacktestPeriod::TimeRange { .. } => {
+                let n = strategy.warmup_bars_required();
+                bars.get(n)
+                    .and_then(|slot| slot.iter().find_map(|b| b.as_ref()))
+                    .map(|b| b.get_time())
+                    .ok_or_else(|| format!("insufficient bars for the warmup lookback (need {n})"))?
+            }
             BacktestPeriod::NumBars(_) => {
                 return Err(
                     "run_with_warm_up: NumBars period is not supported with warmup_bars (use TimeRange)"
