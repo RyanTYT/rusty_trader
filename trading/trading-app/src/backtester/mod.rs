@@ -47,7 +47,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 
 use crate::backtester::methods::load_bars;
-use crate::backtester::oracle::data_loader::{load_market_data, refresh_continuous_aggregate};
+use crate::backtester::oracle::data_loader::refresh_continuous_aggregate;
 use crate::strategy::strategy::StrategyExecutor;
 
 /// Entry point. Runs each active strategy in `config.strategies` (one
@@ -84,12 +84,13 @@ async fn run_single_route(
             );
             refresh_continuous_aggregate(&pool, *start, *end).await;
         } else {
+            // OFFLINE MODE: no IBKR/Alpaca. Data must be pre-loaded into
+            // market_data.historical_data (e.g. from raw_bars.parquet).
             tracing::info!(
-                "Data not loaded for [{}, {}] — populating via IBKR/Alpaca (with_gateway_retry internally).",
+                "Data not loaded for [{}, {}] — OFFLINE MODE: skipping IBKR/Alpaca load (pre-load data into market_data.historical_data).",
                 *start,
                 *end
             );
-            load_market_data(&config.subscribed_contracts, *start, *end, &pool, &handle).await?;
         }
     }
 

@@ -16,6 +16,8 @@
 //! fills, its OCA siblings are cancelled. At EOD all still-open orders are
 //! cancelled.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ibapi::orders::Action;
 use ibapi::prelude::Contract;
 
@@ -23,6 +25,13 @@ use crate::backtester::execution::fill_model::{
     FillModel, LimitFillModel, MarketFillModel, StopLimitFillModel, StopMarketFillModel,
 };
 use crate::execution::order_engine::OrderIBKR;
+
+/// Globally-unique bracket id source. `parse_brackets`'s positional index is
+/// only unique WITHIN one `EmitOrders` batch (every vp_touch entry is a single
+/// bracket, so the index is always 0); entry↔exit coordination and OCA sibling
+/// cancellation key on `bracket_id`, so it must be unique across the WHOLE book
+/// or one symbol's entry fill arms another symbol's exits.
+static NEXT_BRACKET_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Why a bracket was closed (kept for transaction tagging).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,7 +124,8 @@ pub fn build_resting_orders(
     stop_pct_of_bar: f64,
 ) -> Vec<RestingOrder> {
     let mut out = Vec::new();
-    for (bracket_id, (parent_idx, child_indices)) in parse_brackets(orders).into_iter().enumerate() {
+    for (parent_idx, child_indices) in parse_brackets(orders) {
+        let bracket_id = NEXT_BRACKET_ID.fetch_add(1, Ordering::SeqCst);
         let parent = &orders[parent_idx];
         let contract = parent.contract.clone();
         let entry_action = parent.order.action;
