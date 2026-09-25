@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
 
-use crate::backtester::methods::in_memory::bracket::RestingBracket;
+use crate::backtester::methods::in_memory::bracket::RestingOrder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PositionKey {
@@ -47,7 +47,7 @@ pub struct InMemoryState {
     pub target_positions: RwLock<HashMap<PositionKey, InMemoryPosition>>,
     pub transactions: RwLock<Vec<InMemoryTransaction>>,
     pub strategy_name: String,
-    pub resting_brackets: RwLock<Vec<RestingBracket>>,
+    pub resting_orders: RwLock<Vec<RestingOrder>>,
 }
 
 impl InMemoryState {
@@ -72,7 +72,7 @@ impl InMemoryState {
             target_positions: RwLock::new(HashMap::new()),
             transactions: RwLock::new(Vec::new()),
             strategy_name,
-            resting_brackets: RwLock::new(Vec::new()),
+            resting_orders: RwLock::new(Vec::new()),
         }
     }
 

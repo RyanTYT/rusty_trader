@@ -13,12 +13,13 @@ use ibapi::contracts::Contract;
 use ibapi::orders::Order;
 use ibapi::prelude::SecurityType;
 
+use std::collections::HashSet;
+
 use super::bracket::{
-    BracketFillConfig, CloseReason, RestingBracket, build_resting_bracket, check_bracket,
-    parse_brackets,
+    build_resting_orders, CloseReason, OrderRole, RestingOrder, RestingStatus,
 };
 use super::state::{InMemoryPosition, InMemoryState, InMemoryTransaction, PositionKey};
-use crate::backtester::execution::fill_model::{commission, decide_fill};
+use crate::backtester::execution::fill_model::{commission, decide_fill, BarOhlc, FillEval};
 use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::helpers::contract::get_local_symbol;
@@ -87,75 +88,63 @@ pub fn handle_bar_update_outcome_in_memory(
         let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
         (ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570)
     };
-    check_resting_brackets(config, prices, state, contract, bar, mso, order_id)?;
+    process_resting_orders(config, prices, state, contract, bar, mso, order_id)?;
 
     match outcome {
         BarUpdateOutcome::EmitOrders(orders) => {
-            // ── STEP 2: Parse the EmitOrders into bracket groups ──
-            let bracket_groups = parse_brackets(orders);
-            let bracket_config = BracketFillConfig::from_params(
-                &config
-                    .strategies
-                    .get(&state.strategy_name)
-                    .map(|s| s.params.clone())
-                    .unwrap_or_default(),
-            );
+            // Build the resting-order book from the emitted bracket orders: each
+            // order carries a FillModel (market/midprice fill now; limit/stop-limit
+            // rest). Market entries fill immediately on THIS bar; limit entries rest
+            // and fill on a later crossing bar.
+            let slippage_bps = config.slippage_bps;
+            let stop_pct_of_bar = 0.5; // orb_general legacy market-stop slippage
+            let mut resting = build_resting_orders(orders, slippage_bps, stop_pct_of_bar);
 
-            for (parent_idx, child_indices) in &bracket_groups {
-                // Fill the parent (entry) at the bar's close (MIDPRICE fill).
-                let parent = &orders[*parent_idx];
-                let target_bar = lookup_bar(config, contracts, &parent.contract, bar);
-                fill_order_in_memory(
-                    config,
-                    prices,
-                    state,
-                    &parent.contract,
-                    &parent.order,
-                    target_bar,
-                    order_id,
-                )?;
-
-                // Build + register the resting bracket (the children).
-                let entry_price = match target_bar {
-                    HistoricalDataFullKeys::Stock(v) => v.close,
-                    HistoricalDataFullKeys::Options(v) => v.close,
-                    HistoricalDataFullKeys::DailyStock(v) => v.close,
-                    _ => bar.get_price(),
-                };
-                if let Some(bracket) =
-                    build_resting_bracket(orders, *parent_idx, child_indices, entry_price)
-                {
-                    let mut guard = state
-                        .resting_brackets
-                        .write()
-                        .expect("InMemoryState resting_brackets poisoned");
-                    guard.push(bracket);
+            // Immediate (market/midprice) entries fill NOW, against their own bar.
+            for r in resting.iter_mut() {
+                if !matches!(r.role, OrderRole::Entry) {
+                    continue;
+                }
+                if !r.fill_model.as_ref().map(|m| m.is_immediate()).unwrap_or(false) {
+                    continue; // limit entry — rests
+                }
+                let target_bar = lookup_bar(config, contracts, &r.contract, bar);
+                if let (Some(ohlc), Some(model)) = (BarOhlc::from_bar(target_bar), r.fill_model.as_mut()) {
+                    if let FillEval::Fill { price } = model.evaluate(&ohlc) {
+                        fill_order_at_price(
+                            config, prices, state, &r.contract, r.action, r.qty, price,
+                            target_bar.get_time(), order_id,
+                        )?;
+                        r.status = RestingStatus::Filled;
+                    }
                 }
             }
 
-            // Also fill any non-bracket orders (orders with no children —
-            // e.g. standalone market orders not part of a bracket).
-            let bracket_parent_indices: std::collections::HashSet<usize> =
-                bracket_groups.iter().map(|(p, _)| *p).collect();
-            for (i, order_ibkr) in orders.iter().enumerate() {
-                if !bracket_parent_indices.contains(&i) && order_ibkr.references_parent_order == -1
-                {
-                    // Standalone order — fill immediately.
-                    let target_bar = lookup_bar(config, contracts, &order_ibkr.contract, bar);
-                    fill_order_in_memory(
-                        config,
-                        prices,
-                        state,
-                        &order_ibkr.contract,
-                        &order_ibkr.order,
-                        target_bar,
-                        order_id,
-                    )?;
+            // Activate exits whose entry has already filled (immediate entries).
+            let filled_parents: HashSet<usize> = resting
+                .iter()
+                .filter(|r| matches!(r.role, OrderRole::Entry) && r.status == RestingStatus::Filled)
+                .map(|r| r.bracket_id)
+                .collect();
+            for r in resting.iter_mut() {
+                if matches!(r.role, OrderRole::Exit(_)) && filled_parents.contains(&r.bracket_id) {
+                    r.active = true;
+                }
+            }
+
+            {
+                let mut guard = state
+                    .resting_orders
+                    .write()
+                    .expect("InMemoryState resting_orders poisoned");
+                for r in resting {
+                    if r.status == RestingStatus::Resting {
+                        guard.push(r);
+                    }
                 }
             }
             Ok(())
         }
-
         BarUpdateOutcome::PendingDbQuery(asset_types) => {
             // Slow path: read the mocked targets, compute deltas, build orders.
             // Only Stock is supported (mirrors the Noise strategy's QQQ scope).
@@ -325,7 +314,7 @@ fn fill_order_in_memory(
 ///
 /// At EOD (mso >= 385), force-close any still-open brackets at the bar's
 /// close.
-fn check_resting_brackets(
+fn process_resting_orders(
     config: &BacktestConfig,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
@@ -334,119 +323,142 @@ fn check_resting_brackets(
     mso: i32,
     order_id: &mut i32,
 ) -> Result<(), String> {
-    let bracket_config = BracketFillConfig::from_params(
-        &config
-            .strategies
-            .get(&state.strategy_name)
-            .map(|s| s.params.clone())
-            .unwrap_or_default(),
-    );
-
-    // Snapshot the resting brackets (avoid holding the write lock across fills).
-    let brackets: Vec<RestingBracket> = {
+    let ohlc = BarOhlc::from_bar(bar);
+    let orders: Vec<RestingOrder> = {
         let guard = state
-            .resting_brackets
+            .resting_orders
             .read()
-            .expect("InMemoryState resting_brackets poisoned");
+            .expect("InMemoryState resting_orders poisoned");
         guard.clone()
     };
 
-    let mut updated: Vec<RestingBracket> = Vec::new();
+    let mut remaining: Vec<RestingOrder> = Vec::new();
+    let mut filled_entry_brackets: HashSet<usize> = HashSet::new();
+    let mut filled_exit_brackets: HashSet<usize> = HashSet::new();
 
-    for mut bracket in brackets {
-        if bracket.closed {
-            // Already closed — skip (it'll be removed by not being pushed to `updated`).
+    for mut order in orders {
+        // Keep other instruments' orders untouched.
+        if order.contract.symbol != contract.symbol {
+            remaining.push(order);
             continue;
         }
-
-        let bracket_symbol = &bracket.contract.symbol;
-        if bracket_symbol != &contract.symbol {
-            updated.push(bracket);
-            continue;
+        if order.status != RestingStatus::Resting {
+            continue; // already filled/cancelled — drop
         }
 
-        // If pending (NextBarOpen fill), fill at this bar's open.
-        let trigger = if bracket.pending_close_reason.is_some() {
-            // The pending close — fill at this bar's open.
-            let open_price = match bar {
-                HistoricalDataFullKeys::Stock(v) => v.open,
-                HistoricalDataFullKeys::Options(v) => v.open,
-                HistoricalDataFullKeys::DailyStock(v) => v.open,
-                _ => bar.get_price(),
-            };
-            Some((open_price, bracket.pending_close_reason.unwrap()))
-        } else if mso >= 385 {
-            // EOD force-close: if the bracket has a midpoint-close, fill at close.
-            // Otherwise force-close at the bar's close.
-            let close_price = bar.get_price();
-            Some((close_price, CloseReason::EodForceClose))
-        } else {
-            // Normal check: stop / TP / midpoint-close.
-            check_bracket(&bracket, bar, mso, &bracket_config)
-        };
-
-        if let Some((fill_price, reason)) = trigger {
-            // Check for NextBarOpen sentinel (fill_price == 0.0 and reason is Stop/TP).
-            if fill_price == 0.0
-                && bracket.pending_close_reason.is_none()
-                && (reason == CloseReason::Stop || reason == CloseReason::TakeProfit)
-            {
-                // Mark as pending — fill at next bar's open.
-                bracket.pending_close_reason = Some(reason);
-                updated.push(bracket);
-                continue;
+        // ── EOD (mso >= 385): force-close active exits at close/mid, cancel the rest.
+        if mso >= 385 {
+            if order.active && matches!(order.role, OrderRole::Exit(_)) {
+                if let Some(o) = ohlc {
+                    let price = if order.close_is_mid {
+                        (o.high + o.low) / 2.0
+                    } else {
+                        o.close
+                    };
+                    fill_order_at_price(
+                        config, prices, state, &order.contract, order.action, order.qty,
+                        price, bar.get_time(), order_id,
+                    )?;
+                    filled_exit_brackets.insert(order.bracket_id);
+                }
             }
+            continue; // everything for this contract is dropped at EOD
+        }
 
-            // Fill the close order.
-            let close_order = Order {
-                action: bracket.close_action,
-                total_quantity: bracket.qty,
-                order_ref: state.strategy_name.clone(),
-                ..Default::default()
-            };
-            // Override the fill price — the bracket logic computed it.
-            // We do a direct fill (not via decide_fill) since the price is known.
-            fill_bracket_close(
-                config,
-                prices,
-                state,
-                &bracket.contract,
-                &close_order,
-                fill_price,
-                bar.get_time(),
-                order_id,
-            )?;
+        // Inactive exits wait for their entry to fill.
+        if !order.active {
+            remaining.push(order);
+            continue;
+        }
 
-            bracket.closed = true;
-            bracket.close_price = Some(fill_price);
-            bracket.close_reason = Some(reason);
-            // Closed brackets are NOT pushed to `updated` (they're removed).
-        } else {
-            // No trigger — keep monitoring.
-            updated.push(bracket);
+        // ── Time-gated close ──
+        if order.close_mso.is_some() {
+            let close_mso = order.close_mso.unwrap();
+            if mso >= close_mso {
+                if let Some(o) = ohlc {
+                    let price = if order.close_is_mid {
+                        (o.high + o.low) / 2.0
+                    } else {
+                        o.close
+                    };
+                    fill_order_at_price(
+                        config, prices, state, &order.contract, order.action, order.qty,
+                        price, bar.get_time(), order_id,
+                    )?;
+                    order.status = RestingStatus::Filled;
+                    filled_exit_brackets.insert(order.bracket_id);
+                }
+                continue; // drop (filled)
+            }
+            remaining.push(order);
+            continue;
+        }
+
+        // ── Price-gated (limit / stop-limit / market-stop) ──
+        let Some(o) = ohlc else {
+            remaining.push(order);
+            continue;
+        };
+        let mut did_fill = false;
+        if let Some(model) = order.fill_model.as_mut() {
+            if let FillEval::Fill { price } = model.evaluate(&o) {
+                fill_order_at_price(
+                    config, prices, state, &order.contract, order.action, order.qty,
+                    price, bar.get_time(), order_id,
+                )?;
+                order.status = RestingStatus::Filled;
+                did_fill = true;
+                match order.role {
+                    OrderRole::Entry => {
+                        filled_entry_brackets.insert(order.bracket_id);
+                    }
+                    OrderRole::Exit(_) => {
+                        filled_exit_brackets.insert(order.bracket_id);
+                    }
+                }
+            }
+        }
+        if !did_fill {
+            remaining.push(order);
         }
     }
 
-    // Write back the updated (still-active) brackets.
+    // Cross-order side effects.
+    for order in remaining.iter_mut() {
+        if matches!(order.role, OrderRole::Exit(_)) {
+            if filled_entry_brackets.contains(&order.bracket_id) {
+                order.active = true; // entry filled this bar → arm the exits
+            }
+            if filled_exit_brackets.contains(&order.bracket_id) {
+                order.status = RestingStatus::Cancelled; // an exit filled → cancel siblings
+            }
+        }
+    }
+
     {
         let mut guard = state
-            .resting_brackets
+            .resting_orders
             .write()
-            .expect("InMemoryState resting_brackets poisoned");
-        *guard = updated;
+            .expect("InMemoryState resting_orders poisoned");
+        *guard = remaining
+            .into_iter()
+            .filter(|o| o.status == RestingStatus::Resting)
+            .collect();
     }
 
     Ok(())
 }
 
-/// Fill a bracket's close order at a known price (not via decide_fill —
-/// the bracket logic computed the fill price from the stop/TP/close model).
-fn fill_bracket_close(
+/// Fill an order at a known price (market/limit/stop/mid — the fill model already
+/// resolved the exact price). Updates position + transaction + CASH:SGD, charges
+/// commission, but applies NO extra slippage.
+fn fill_order_at_price(
     config: &BacktestConfig,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     contract: &Contract,
-    order: &Order,
+    action: ibapi::orders::Action,
+    qty: f64,
     fill_price: f64,
     bar_time: DateTime<Utc>,
     order_id: &mut i32,
@@ -467,57 +479,30 @@ fn fill_bracket_close(
             .unwrap_or(1.0)
     };
 
-    let is_buy = matches!(order.action, ibapi::orders::Action::Buy);
-    let qty = order.total_quantity;
+    let is_buy = matches!(action, ibapi::orders::Action::Buy);
     let signed_qty = if is_buy { qty } else { -qty };
     let fees = commission(signed_qty.abs(), fill_price, config.commission_model);
 
-    // Update current positions.
     let key = PositionKey {
         strategy: state.strategy_name.clone(),
         stock: get_local_symbol(contract),
         primary_exchange: contract.primary_exchange.to_string(),
         currency: contract.currency.to_string(),
     };
-    {
-        let mut guard = state
-            .current_positions
-            .write()
-            .expect("InMemoryState current_positions poisoned");
-        let pos = guard.entry(key.clone()).or_insert(InMemoryPosition {
-            quantity: 0.0,
-            avg_price: 0.0,
-        });
-        // Closing: the position goes toward 0.
-        let new_qty = pos.quantity + signed_qty;
-        if new_qty.abs() < 1e-9 {
-            guard.remove(&key);
-        } else {
-            pos.quantity = new_qty;
-            pos.avg_price = fill_price;
-        }
-    }
+    state.update_current_additive(key.clone(), signed_qty, fill_price);
 
-    // Record the transaction.
-    {
-        let mut guard = state
-            .transactions
-            .write()
-            .expect("InMemoryState transactions poisoned");
-        guard.push(InMemoryTransaction {
-            strategy: state.strategy_name.clone(),
-            stock: get_local_symbol(contract),
-            primary_exchange: contract.primary_exchange.to_string(),
-            currency: contract.currency.to_string(),
-            time: bar_time,
-            price: fill_price,
-            quantity: signed_qty,
-            fees,
-            action: format!("{:?}", order.action),
-        });
-    }
+    state.record_transaction(InMemoryTransaction {
+        strategy: key.strategy.clone(),
+        stock: key.stock.clone(),
+        primary_exchange: key.primary_exchange.clone(),
+        currency: key.currency.clone(),
+        time: bar_time,
+        price: fill_price,
+        quantity: signed_qty,
+        fees,
+        action: format!("{:?}", action),
+    });
 
-    // Update CASH:SGD.
     let sgd_value = signed_qty * fill_price * fx_rate;
     let cash_key = PositionKey {
         strategy: state.strategy_name.clone(),
@@ -530,7 +515,7 @@ fn fill_bracket_close(
             .current_positions
             .write()
             .expect("InMemoryState current_positions poisoned");
-        let cash = guard.entry(cash_key).or_insert(InMemoryPosition {
+        let cash = guard.entry(cash_key.clone()).or_insert(InMemoryPosition {
             quantity: 0.0,
             avg_price: 1.0,
         });
@@ -540,3 +525,4 @@ fn fill_bracket_close(
     *order_id += 1;
     Ok(())
 }
+

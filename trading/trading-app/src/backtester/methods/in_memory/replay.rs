@@ -76,10 +76,10 @@ impl InMemoryReplay {
         let cache = Arc::new(bar_cache::BarCache::new(bars.clone()));
         bar_cache::set(cache.clone());
 
-        // bar_time = the backtest window start. The warmup reads the N bars
-        // BEFORE this (read_last_n now=Some(bar_time)) + returns warmup_end
-        // (the bar just before the window). The replayer then plays bars
-        // AFTER warmup_end = the backtest window.
+        // bar_time = the first TEST timestamp (config.start + warmup_bars_required
+        // bars forward). warm_up_data reads its lookback FORWARD from the dataset
+        // start (read_last_n now=Some(bar_time)), and the replay begins right after
+        // bar_time. config.start is the dataset start, not the test start.
         #[cfg(feature = "backtest")]
         let bar_time = match &config.period {
             BacktestPeriod::TimeRange { .. } => {
