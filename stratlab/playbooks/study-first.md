@@ -1,15 +1,18 @@
 # Study-first routing — where new code goes
 
 The default reflex for a research question ("sweep X", "is the signal
-sensitive to Y", "decompose the Sharpe") must NOT be spawning a new
-one-off script. The sanctioned path is the study notebook: append a cell,
-not a file.
+sensitive to Y", "decompose the Sharpe") must NOT be `touch
+strategies/<name>.py`. That path is what filled `strategies/` with one-off
+scripts. The sanctioned path is the study notebook: append a cell, not a
+file.
 
 ## The decision table
 
 | You're adding... | it goes in... | how |
 |---|---|---|
 | a research question / experiment / sweep / diagnostic | `studies/<slug>/run.py` (a cell) | `stratlab study append <slug> --question "..."` |
+| a reusable model function (feature extraction, training, walk-forward) | `stratlab/models/<pkg>/` | new module under the right package |
+| a new strategy | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
 | a one-off diagnostic / analysis | `studies/<slug>/run.py` (a cell) | `stratlab study append` |
 
 ## The workflow for a research question
@@ -36,6 +39,11 @@ not a file.
 - **`run.py` is the source; `run.ipynb` is a rendered output.** Edit
   `run.py`, then render. The `.ipynb` is regenerated, not hand-edited — its
   diffs would be noise, and `validate` on `run.py` is the gate.
+- **Never create a `.py` under `stratlab/strategies/` for a research
+  question.** That folder holds `PrecomputedStrategy` subclasses only.
+- **A reusable function that emerges from a study cell → promote to
+  `stratlab/models/<pkg>/`** (like `models/vbo_xgb/`), then import it back
+  into the cell. One-off code stays a cell.
 - **Every research question carries a Why + Alternatives + Assumptions.** The
   `stratlab study append` block prompts for them; `validate` gates the four
   canonical sections. Don't leave the prompts blank — the comments are the
