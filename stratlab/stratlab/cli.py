@@ -123,19 +123,11 @@ def _cmd_study(args) -> int:
         path = scaffold(args.slug, args.title)
         print(path)
         return 0
-    if args.study_command == "append":
-        from stratlab.study import append_question
-        path = append_question(args.slug, args.question)
-        print(path)
-        return 0
     if args.study_command == "validate":
-        from stratlab.study import markdown_from_runpy, validate, validate_ipynb
-        if args.path.endswith(".ipynb"):
-            problems = validate_ipynb(args.path)
-        else:
-            with open(args.path) as f:
-                src = f.read()
-            problems = validate(markdown_from_runpy(src))
+        from stratlab.study import markdown_from_runpy, validate
+        with open(args.path) as f:
+            src = f.read()
+        problems = validate(markdown_from_runpy(src))
         if problems:
             for p in problems:
                 print(f"FAIL  {p}")
@@ -189,16 +181,13 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--timeframe", required=True, help="15m | 30m | 1h | 1d | 1w | 1mo | 1y")
     rs.add_argument("--out", required=True)
 
-    st = sub.add_parser("study", help="scaffold/append/validate/render a research study")
+    st = sub.add_parser("study", help="scaffold/validate a research study")
     st_sub = st.add_subparsers(dest="study_command", required=True)
     st_new = st_sub.add_parser("new", help="scaffold a labelled study")
     st_new.add_argument("slug")
     st_new.add_argument("--title", default=None)
-    st_append = st_sub.add_parser("append", help="append a labelled question block to a study's run.py")
-    st_append.add_argument("slug")
-    st_append.add_argument("--question", required=True, help="the research question (one line)")
-    st_val = st_sub.add_parser("validate", help="gate the study's labels (run.py or rendered .ipynb)")
-    st_val.add_argument("path", help="path to run.py or run.ipynb")
+    st_val = st_sub.add_parser("validate", help="gate the study's labels")
+    st_val.add_argument("path", help="path to run.py")
     st_render = st_sub.add_parser("render", help="render run.py to a .ipynb notebook")
     st_render.add_argument("path", help="path to run.py")
     st_render.add_argument("--out", default=None, help="output .ipynb (default: run.ipynb)")

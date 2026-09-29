@@ -37,23 +37,12 @@ with a *reason* in a `study/` (see `playbooks/validation.md`).
 
 | phase | playbook |
 |---|---|
-| starting / growing a study | `playbooks/study-first.md` |
 | building/verifying features | `playbooks/features.md` |
 | combining features → signal | `playbooks/signal.md` |
 | orders, fills, cost, timing | `playbooks/execution.md` |
 | H1/H2, walk-forward, robustness | `playbooks/validation.md` |
 | hunting look-ahead / overfit | `playbooks/bias.md` |
 | matching the Rust backtester | `playbooks/parity.md` |
-
-## Where does new code go?
-
-| You're adding... | it goes in... | how |
-|---|---|---|
-| a research question / experiment / sweep / diagnostic | `studies/<slug>/run.py` (a cell) | `stratlab study append <slug> --question "..."` |
-| a one-off diagnostic / analysis | `studies/<slug>/run.py` (a cell) | `stratlab study append` |
-
-See `playbooks/study-first.md` for the full workflow. `run.py` is the source;
-`run.ipynb` is rendered output.
 
 ## CLI
 
