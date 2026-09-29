@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stratlab"
+version = "0.1.0"
+description = "Causal research + backtesting toolkit for raw_bars.parquet, parity-ported from the Rust trading-app backtester."
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "pandas>=2.2"]
+
+[project.optional-dependencies]
+render = ["jupytext>=1.16", "nbformat>=5.10"]
+
+[project.scripts]
+stratlab = "stratlab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stratlab*"]
