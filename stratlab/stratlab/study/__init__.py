@@ -34,6 +34,7 @@ __all__ = [
     "SECTIONS",
     "Study",
     "alternatives",
+    "append_question",
     "assumptions",
     "dsl",
     "execution_model",
@@ -46,6 +47,7 @@ __all__ = [
     "scaffold",
     "signal_rule",
     "validate",
+    "validate_ipynb",
     "validate_runpy",
     "validation_check",
 ]
@@ -145,3 +147,72 @@ def scaffold(slug: str, title: str | None = None, directory: str = "study") -> s
     with open(path, "w") as f:
         f.write(_RUNPY_TEMPLATE.format(title=title or slug.replace("-", " ").title()))
     return path
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Append a research question (the sanctioned way to grow a study)
+# ────────────────────────────────────────────────────────────────────────────
+def append_question(slug: str, question: str, directory: str = "study") -> str:
+    """Append a labelled question block to ``<directory>/<slug>/run.py`` and
+    return its path. The block is a 3-cell unit the LLM then fills in:
+
+        markdown(question + hypothesis + why + alternatives + assumptions)
+        -> code(experiment stub)
+        -> markdown(finding + interpretation)
+
+    Auto-numbers ``Q<n>`` by counting existing ``### Q`` headers. Raises
+    ``FileNotFoundError`` with a remediation hint if run.py doesn't exist yet.
+    """
+    import re
+
+    path = os.path.join(directory, slug, "run.py")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} does not exist — run `stratlab study new {slug}` first."
+        )
+    with open(path) as f:
+        src = f.read()
+    existing = re.findall(r"^### Q(\d+)\b", src, re.MULTILINE)
+    n = max((int(x) for x in existing), default=0) + 1
+    block = (
+        "\n"
+        f"# %% [markdown]\n"
+        f"# ### Q{n} — {question}\n"
+        f"#\n"
+        f"# **Hypothesis:** <one sentence — the falsifiable claim>.\n"
+        f"# **Why:** <why this question matters; what you expect to learn>.\n"
+        f"# **Alternatives considered:**\n"
+        f"# - …\n"
+        f"# **Assumptions:**\n"
+        f"# - …\n"
+        f"#\n"
+        f"# %%\n"
+        f"# <experiment code — fill me in>\n"
+        f"#\n"
+        f"# %% [markdown]\n"
+        f"# **Finding:** <paste the key number / result>.\n"
+        f"# **Interpretation:** <what it means; does it support the hypothesis?>\n"
+    )
+    if not src.endswith("\n"):
+        block = "\n" + block
+    with open(path, "a") as f:
+        f.write(block)
+    return path
+
+
+def validate_ipynb(path: str) -> list[str]:
+    """Validate a rendered ``.ipynb`` notebook directly — extract its markdown
+    cells and run the same ``validate()`` used on run.py. Lets you check the
+    rendered output (what a human reviews) without round-tripping to run.py."""
+    import json
+
+    with open(path) as f:
+        nb = json.load(f)
+    md_parts: list[str] = []
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") == "markdown":
+            src = cell.get("source", "")
+            if isinstance(src, list):
+                src = "".join(src)
+            md_parts.append(src)
+    return validate("\n\n".join(md_parts))
