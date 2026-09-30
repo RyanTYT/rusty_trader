@@ -1,26 +1,19 @@
 services:
   tws:
-    image: ib-gateway
+    image: ib-gateway-ibc
     platform: linux/amd64
-    restart: always
+    restart: "no"
     build:
-      context: ./infra/ib-gateway
-    stdin_open: true
-    tty: true
-    privileged: true
-    security_opt:
-      - seccomp:./infra/ib-gateway/config/chrome.json
-    devices:
-      - /dev/snd/:/dev/snd/
-    ipc: host
+      context: .
+      dockerfile: infra/ib-gateway/Dockerfile.ibc
     network_mode: host
+    user: "root"
+    environment:
+      - TRADING_MODE=paper
+      - TZ=US/Eastern
+      - DISPLAY=host.docker.internal:0
     volumes:
-      - /tmp/.X11-unix/:/tmp/.X11-unix/:ro
-      - ~/.Xauthority:/home/tws/.Xauthority:rw
-      - /var/lib/usbmux:/var/lib/usbmux
-      - /var/run/user/501/pulse:/run/user/501/pulse
-      - /etc/asound.conf:/etc/asound.conf
-      - ib-volume:/home/tws
+      - ./infra/ib-gateway/entrypoint-ibc.sh:/home/tws/entrypoint-ibc.sh:ro
 
   trading-bot:
     restart: always
@@ -43,6 +36,11 @@ services:
       # - HOST=127.0.0.1
       # - SERVER_HOST=127.0.0.1
       # - PORT=8000
+      # hotpath Prometheus exporter (0.25+, hotpath-prometheus feature).
+      # Bind 0.0.0.0 so the prometheus sibling container can reach :6772
+      # through the Docker bridge (default 127.0.0.1 is unreachable cross-container).
+      - HOTPATH_PROMETHEUS_HOST=0.0.0.0
+      - HOTPATH_PROMETHEUS_PORT=6772
       - DISPLAY=:99
       # - DISPLAY=192.168.1.90:0
       # - RUST_BACKEND_URL=http://backend:4875
@@ -78,6 +76,70 @@ services:
       trading-bot:
         condition: service_started
 
+  # ── Prometheus ──────────────────────────────────────────────────────────
+  # Scrapes trading-bot:6772/metrics (hotpath's native Prom exporter, 0.25+).
+  # Retains 30d; native histograms left off by default (classic FAST_BUCKETS
+  # 250ns..10s already covers the Rust hot-path µs range well enough).
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    depends_on:
+      trading-bot:
+        condition: service_started
+
+  # ── AlertManager ──────────────────────────────────────────────────────────
+  # Lightweight (~30MB RAM) alerter — evaluates + routes alerts to Telegram.
+  # Alert RULES live in Prometheus (infra/prometheus/rules.yml); AlertManager
+  # only handles notification routing (the Telegram bot token + chat ID).
+  # Config: infra/alertmanager/alertmanager.yml — fill in your bot token.
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: always
+    ports:
+      - 9093:9093  # optional UI (localhost:9093) for viewing silence state
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  # ── Grafana (OPTIONAL — for the Tauri app's "Grafana" iframe view) ───────
+  # Uncomment to enable the Grafana iframe toggle in the Tauri monitoring page.
+  # NOT required for alerting (AlertManager handles that) — this is purely
+  # for the optional Grafana dashboard view. ~100-200MB RAM.
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   restart: always
+  #   ports:
+  #     - 3001:3000
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #     - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+  #     - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+  #     - GF_AUTH_ANONYMOUS_ENABLED=true
+  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+  #     - GF_SECURITY_ALLOW_EMBEDDING=true  # removes X-Frame-Options:DENY (correct section — [security], not [server])
+  #     - GF_SECURITY_COOKIE_SAMESITE=none  # let auth cookies work in the iframe (anonymous view doesn't need this)
+  #     - GF_SERVER_CSP_CONTENT_SECURITY_POLICY=frame-ancestors 'self' http://localhost:1420 tauri://localhost  # relax CSP frame-ancestors for the Tauri webview origin
+  #   depends_on:
+  #     prometheus:
+  #       condition: service_started
+
   backend:
     build:
       context: ./api/backend # assumes Dockerfile is in the root directory
@@ -93,6 +155,7 @@ services:
       - RUST_BACKTRACE=full
       - LLM_SERVICE_URL=http://llm_service:8001
       - TRADING_BOT_URL=${TRADING_BOT_URL}
+      - PROMETHEUS_URL=http://prometheus:9090
       - ALPACA_API_KEY=${ALPACA_API_KEY}
       - ALPACA_API_SECRET=${ALPACA_API_SECRET}
     ports:
@@ -217,7 +280,7 @@ services:
 
   optimizer:
     restart: "no"
-    build: 
+    build:
       context: .
       dockerfile: ./trading/optimizer/Dockerfile
     platform: linux/amd64
@@ -304,6 +367,33 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # ── 1-min bar puller (multi-resolution backtest data) ─────────────────────
+  # One-shot: connects to the `tws` IB Gateway (paper, port 4002) and writes
+  # 1-min RTH bars to /data/raw_1min_bars.parquet (matching raw_bars.parquet's
+  # format) — for the multi-resolution backtest (resolve the ORB's intrabar
+  # path on 1-min data instead of 5-min OHLC). Resumable (skips already-pulled
+  # chunks). Run: `docker compose run --rm pull-1min`
+  pull-1min:
+    restart: "no"
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.pull_1min
+    network_mode: host  # reach the tws IB Gateway on localhost:4002
+    environment:
+      - IB_HOST=127.0.0.1
+      - IB_PORT=4002
+      - IB_CLIENT_ID=15
+      - START_DATE=${PULL_START:-2024-01-01}
+      - END_DATE=${PULL_END:-2026-06-30}
+      - CHUNK_DAYS=60
+      - THROTTLE=0.5
+      - OUTPUT=/data/backtest-results/stats/raw_1min_bars.parquet
+    volumes:
+      - ./data:/data
+    depends_on:
+      tws:
+        condition: service_started
+
 volumes:
   ib-volume:
     driver: local
@@ -322,4 +412,13 @@ volumes:
   llm_settings:
     driver: local
   playwright_cache:
+    driver: local
+  # AlertManager state (silences, notification log)
+  alertmanager-data:
+    driver: local
+  # Grafana (optional — uncomment the grafana service above to use)
+  grafana-data:
+    driver: local
+  # Prometheus TSDB
+  prometheus-data:
     driver: local

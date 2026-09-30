@@ -3,6 +3,8 @@
 trading/trading-app/target
 trading/trading-app/.env
 trading/trading-app/**/target
+# IBC config holds IBKR credentials — NEVER commit it (use config.ini.example)
+trading/trading-app/IBCMacos-3.20.0/config.ini
 api/backend/target
 api/backend/**/target
 data/postgres-data/*
@@ -15,3 +17,19 @@ output.log
 target
 gen
 .venv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large log / output files (should never be in git)
+opt_logs.txt
+bot.txt
+holdout_logs.txt
+optimizer_logs.txt
+
+# Generated backtest artifacts (json/csv/png outputs)
+data/backtest-results/
+
+# Research scratch — 238 files. Comment out if you actually track research/
+research/

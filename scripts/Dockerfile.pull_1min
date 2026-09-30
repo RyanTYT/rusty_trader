@@ -1,0 +1,12 @@
+# Puller: connects to the `tws` IB Gateway (port 4002 = paper) and writes
+# 1-min bars to /data/raw_1min_bars.parquet. Run via the `pull-1min` service
+# in docker-compose.yml (network_mode: host so it can reach localhost:4002).
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir ib_async pandas pyarrow
+
+COPY pull_1min_bars.py /app/pull_1min_bars.py
+WORKDIR /app
+
+# all knobs via env (ASSETS, START_DATE, END_DATE, CHUNK_DAYS, OUTPUT, etc.)
+ENTRYPOINT ["python", "-u", "pull_1min_bars.py"]
