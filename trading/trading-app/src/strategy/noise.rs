@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 use chrono::{DateTime, Datelike, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::America::New_York;
 use chrono_tz::Tz;
+use ibapi::orders::ExecutionData;
 use ibapi::{Client, prelude::Contract};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
@@ -331,7 +332,7 @@ impl StrategyExecutor for Noise {
     }
 
     fn get_strategy_details(&self) -> StrategyDetails {
-        StrategyDetails::new(1, self.name.clone(), false)
+        StrategyDetails::new(1, self.name.clone(), false, false)
     }
 
     fn on_bar_update(
@@ -494,6 +495,10 @@ impl StrategyExecutor for Noise {
         self.data = Some(data);
 
         Ok(warmup_end)
+    }
+
+    fn on_fill(&mut self, _: ExecutionData) -> Result<(), String> {
+        Ok(())
     }
 }
 

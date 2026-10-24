@@ -3,6 +3,7 @@ use std::{cmp::Ordering, sync::Arc, time::Duration};
 use chrono::{DateTime, Utc};
 use ibapi::{
     Client,
+    orders::ExecutionData,
     prelude::{Contract, Symbol},
 };
 use sqlx::PgPool;
@@ -61,7 +62,7 @@ impl StrategyExecutor for Manual {
     }
 
     fn get_strategy_details(&self) -> StrategyDetails {
-        StrategyDetails::new(1, self.name.clone(), false)
+        StrategyDetails::new(1, self.name.clone(), false, false)
     }
 
     fn on_bar_update(
@@ -106,5 +107,9 @@ impl StrategyExecutor for Manual {
         #[cfg(feature = "backtest")] _bar_time: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, String> {
         Ok(Utc::now())
+    }
+
+    fn on_fill(&mut self, _: ExecutionData) -> Result<(), String> {
+        Ok(())
     }
 }

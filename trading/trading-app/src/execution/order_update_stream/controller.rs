@@ -8,7 +8,11 @@ use std::{
     time::Duration,
 };
 
-use ibapi::{Client, orders::OrderUpdate};
+use ibapi::{
+    Client,
+    orders::{ExecutionData, OrderUpdate},
+};
+use spmc_ring::ring_buffer::spmc_ring_buffer::{SpmcRingBuffer, SpmcRingBufferProducer};
 use sqlx::PgPool;
 use tracing::{info, warn};
 
@@ -106,6 +110,7 @@ impl OrderUpdateStreamController {
         consolidator: Weak<Consolidator>,
         weak_client: Weak<Client>,
         strategy_details: Arc<HashMap<String, StrategyDetails>>,
+        execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>>,
         default_strategy: Option<String>,
         handle: tokio::runtime::Handle,
         backed_up_orders: Arc<OrderStore>,
@@ -206,6 +211,7 @@ impl OrderUpdateStreamController {
                         tracing::info!("Received order update in tokio runtime");
                         if let Err(e) = on_order_update_received(
                             strategy_details.clone(),
+                            execution_events_queue.clone(),
                             pool.clone(),
                             order_update,
                             def_strat.as_str(),
@@ -238,6 +244,7 @@ impl OrderUpdateStreamController {
 /// Async only because it has to await open order handle
 async fn on_order_update_received(
     strategy_details: Arc<HashMap<String, StrategyDetails>>,
+    execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>>,
     pool: PgPool,
     order_update: OrderUpdate,
     default_strategy: &str,
@@ -325,6 +332,7 @@ async fn on_order_update_received(
                 &consolidator,
                 pool.clone(),
                 execution_data,
+                execution_events_queue,
                 &strategy_details,
                 default_strategy,
                 handle,

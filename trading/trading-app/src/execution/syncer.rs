@@ -10,9 +10,10 @@ use ibapi::{
     Client,
     accounts::{PositionUpdateMulti, types::AccountId},
     contracts::SecurityType,
-    orders::{Action, ExecutionFilter, Executions, Order, OrderStatus},
+    orders::{Action, ExecutionData, ExecutionFilter, Executions, Order, OrderStatus},
     prelude::Contract,
 };
+use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
 use crate::{
@@ -99,6 +100,9 @@ pub trait SyncOps {
     fn sync_executions(
         &self,
         client: &Arc<Client>,
+        execution_event_producers: Arc<
+            HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>,
+        >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
@@ -125,6 +129,9 @@ impl SyncOps for SyncerEngine {
     fn sync_executions(
         &self,
         client: &Arc<Client>,
+        execution_event_producers: Arc<
+            HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>,
+        >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
@@ -161,6 +168,7 @@ impl SyncOps for SyncerEngine {
                             consolidator,
                             self.pool.clone(),
                             execution_data,
+                            execution_event_producers.clone(),
                             &self.strategy_details,
                             &def_strat,
                             self.handle.clone(),

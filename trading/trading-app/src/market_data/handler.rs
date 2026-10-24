@@ -189,7 +189,7 @@ impl MarketDataHandler {
                 new_producers.push(IbkrBarProducer::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(
                     subscription.contract.clone(),
                     subscription.what_to_show.clone(),
-                    ring_buffer.get_new_producer().expect("Expected to be able to get_new_consumer() -> i.e. no. of consumers exceeded!"),
+                    ring_buffer.get_new_producer().expect("Expected to be able to get_new_consumer() -> i.e. no. of producers exceeded!"),
                 ));
                 new_consumers.push(IbkrBarConsumer::<BUFFER_SIZE, MAX_NO_OF_CONSUMERS>::new(
                     subscription.contract.clone(),

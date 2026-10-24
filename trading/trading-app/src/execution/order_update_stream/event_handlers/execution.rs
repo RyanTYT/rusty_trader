@@ -5,6 +5,7 @@ use std::{
 };
 
 use ibapi::{Client, orders::ExecutionData};
+use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
 use crate::{
@@ -43,6 +44,7 @@ pub fn on_execution_update(
     consolidator: &Weak<Consolidator>,
     pool: PgPool,
     mut execution_data: ExecutionData,
+    execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>>,
     strategy_details: &Arc<HashMap<String, StrategyDetails>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
@@ -80,11 +82,12 @@ pub fn on_execution_update(
         _ => {}
     }
 
-    let strategy_name = if execution_data.execution.order_reference == "" {
+    let strategy_name = if execution_data.execution.order_reference != "" {
         execution_data.execution.order_reference.clone()
     } else {
         "unknown".to_string()
     };
+
     let strategy_detail = strategy_details
         .get(&strategy_name)
         .unwrap_or(
@@ -111,6 +114,20 @@ pub fn on_execution_update(
             Err(e) => {
                 tracing::error!("{e:?}");
                 return;
+            }
+        }
+
+        if strategy_detail.hooks_execution {
+            match execution_events_queue.get(&strategy_name) {
+                Some(execution_events_producer) => {
+                    if let Err(e) = execution_events_producer.try_push(execution_data.clone()) {
+                        tracing::error!("Failed to push execution event for {strategy_name}: {e:?}");
+                    };
+                }
+                None => {
+                    let symbol = &execution_data.contract.symbol;
+                    tracing::warn!("Unknown strategy's order received: {strategy_name}, {symbol}");
+                }
             }
         }
 

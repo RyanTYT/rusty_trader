@@ -9,6 +9,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use ibapi::Client;
 use ibapi::market_data::realtime::Bar;
+use ibapi::orders::ExecutionData;
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferConsumer;
 
@@ -161,6 +162,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     pub fn hook_strategy(
         &mut self,
         mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
+        execution_events_consumer: SpmcRingBufferConsumer<ExecutionData, 50, 1>,
         mut strategy: StrategyEnum,
 
         order_engine: OrderEngine,
@@ -184,15 +186,15 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
                 let strategy_detail = strategy.get_strategy_details();
                 let strategy_name = strategy.get_name();
-                let mut strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
-                    strategy.on_bar_update(
-                        contract,
-                        &bar,
-                        &consolidator
-                            .upgrade()
-                            .expect("Expected Consolidator to still be alive on_bar_update"),
-                    )
-                };
+                // let mut strategy_on_bar_update = |contract: &Contract, bar: HistoricalDataFullKeys| {
+                //     strategy.on_bar_update(
+                //         contract,
+                //         &bar,
+                //         &consolidator
+                //             .upgrade()
+                //             .expect("Expected Consolidator to still be alive on_bar_update"),
+                //     )
+                // };
                 let handle_bar_update_outcome = |bar_update_outcome: BarUpdateOutcome| {
                     let order_store_arc =
                         match order_store
@@ -253,7 +255,32 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     let mut received = vec![false; active.len()];
 
                     hotpath::measure_block!("sleep_until_deadline", {
-                        sleep_until_system_time(next_deadline, &strategy_name);
+                        // sleep_until_system_time(next_deadline, &strategy_name);
+                        match next_deadline.duration_since(SystemTime::now()) {
+                            Ok(duration) => {
+                                if !strategy_detail.hooks_execution {
+                                    std::thread::sleep(duration);
+                                } else {
+                                    // drain execution event queue when have time
+                                    while let Some(execution_event) = execution_events_consumer.try_pop() {
+                                        if let Err(e) = strategy.on_fill(execution_event) {
+                                            tracing::warn!("Strategy on_fill branch failed: {e:?}");
+                                        };
+                                    }
+                                    match next_deadline.duration_since(SystemTime::now()) {
+                                        Ok(duration) => {
+                                            std::thread::sleep(duration);
+                                        }
+                                        Err(_) => tracing::warn!("Missed target due to execution event processing!")
+                                    }
+                                }
+                            },
+                            Err(_) => {
+                                tracing::warn!(
+                                    "Missed target - strategy {strategy_name} is running behind time - too slow (not catching up to 5s intervals)"
+                                );
+                            }
+                        }
                     });
 
                     let spin_deadline = Instant::now() + HOT_WINDOW; // one window either side of the boundary
@@ -281,7 +308,8 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
                                             received[slot] = true;
                                             if let Err(e) = Self::dispatch_bar(
-                                                &strategy_name,
+                                                &mut strategy,
+                                                &consolidator,
                                                 &consumers[idx].contract,
                                                 &consumers[idx].what_to_show,
                                                 &mut small_bars,
@@ -294,7 +322,6 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                                                     }
                                                 },
                                                 idx,
-                                                &mut strategy_on_bar_update,
                                                 handle_bar_update_outcome,
                                             ) {
                                                 tracing::error!(
@@ -349,18 +376,18 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
         self.thread_handles.push(thread_handle);
     }
 
-    fn dispatch_bar<OnBarUpdate, HandleBarUpdate>(
-        strategy: &str,
+    fn dispatch_bar<HandleBarUpdate>(
+        // strategy: &str,
+        strategy: &mut StrategyEnum,
+        consolidator: &Weak<Consolidator>,
         contract: &Contract,
         what_to_show: &WhatToShow,
         small_bars: &mut Vec<VecDeque<Bar>>,
         buffer_bars: &mut HashMap<DateTime<Utc>, HistoricalDataFullKeys>,
         current_idx: usize,
-        mut strategy_on_bar_update: OnBarUpdate,
         handle_bar_update_outcome: HandleBarUpdate,
     ) -> Result<(), String>
     where
-        OnBarUpdate: FnMut(&Contract, HistoricalDataFullKeys) -> Result<BarUpdateOutcome, String>,
         HandleBarUpdate: Fn(BarUpdateOutcome),
     {
         match AssetType::from_str(&contract.security_type) {
@@ -405,10 +432,18 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
                     let full_bar =
                         HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
-                    let bar_update_name: &'static str =
-                        Box::leak(format!("{}_strat_bar_update", strategy).into_boxed_str());
+                    let bar_update_name: &'static str = Box::leak(
+                        format!("{}_strat_bar_update", strategy.get_name()).into_boxed_str(),
+                    );
                     hotpath::measure_block!(bar_update_name, {
-                        let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
+                        // let bar_update_outcome = strategy_on_bar_update(&contract, full_bar)?;
+                        let bar_update_outcome = strategy.on_bar_update(
+                            contract,
+                            &full_bar,
+                            &consolidator
+                                .upgrade()
+                                .expect("Expected Consolidator to still be alive on_bar_update"),
+                        )?;
                         handle_bar_update_outcome(bar_update_outcome);
                     });
                 }
@@ -418,7 +453,13 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let big_bars =
                     aggregate_bars(contract, what_to_show, &mut small_bars[current_idx], 300);
                 for bar in big_bars {
-                    let bar_update_outcome = strategy_on_bar_update(&contract, bar)?;
+                    let bar_update_outcome = strategy.on_bar_update(
+                        contract,
+                        &bar,
+                        &consolidator
+                            .upgrade()
+                            .expect("Expected Consolidator to still be alive on_bar_update"),
+                    )?;
                     handle_bar_update_outcome(bar_update_outcome);
                 }
             }
