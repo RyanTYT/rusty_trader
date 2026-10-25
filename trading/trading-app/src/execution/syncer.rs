@@ -101,7 +101,7 @@ pub trait SyncOps {
         &self,
         client: &Arc<Client>,
         execution_event_producers: Arc<
-            HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>,
+            HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
@@ -130,7 +130,7 @@ impl SyncOps for SyncerEngine {
         &self,
         client: &Arc<Client>,
         execution_event_producers: Arc<
-            HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>,
+            HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,

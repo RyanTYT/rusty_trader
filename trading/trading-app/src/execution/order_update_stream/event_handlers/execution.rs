@@ -44,7 +44,7 @@ pub fn on_execution_update(
     consolidator: &Weak<Consolidator>,
     pool: PgPool,
     mut execution_data: ExecutionData,
-    execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 50, 1>>>,
+    execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>>,
     strategy_details: &Arc<HashMap<String, StrategyDetails>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,

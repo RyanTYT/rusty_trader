@@ -162,7 +162,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     pub fn hook_strategy(
         &mut self,
         mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
-        execution_events_consumer: SpmcRingBufferConsumer<ExecutionData, 50, 1>,
+        execution_events_consumer: SpmcRingBufferConsumer<ExecutionData, 64, 1>,
         mut strategy: StrategyEnum,
 
         order_engine: OrderEngine,
