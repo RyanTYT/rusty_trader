@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use arc_swap::ArcSwapOption;
 use atomic_float::AtomicF64;
 use ibapi::contracts::Contract;
-use ibapi::orders::Order;
+use ibapi::orders::{Order, ExecutionData};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
@@ -38,7 +38,10 @@ use crate::database::models_crud::transactions::transactions::{
 };
 use crate::helpers::contract::get_local_symbol;
 
-use crate::backtester::execution::fill_model::{commission, decide_fill};
+use crate::backtester::execution::{
+    execution_report::synthetic_execution,
+    fill_model::{commission, decide_fill}
+};
 use crate::backtester::setup::config::BacktestConfig;
 
 pub struct BacktestBroker {
@@ -58,6 +61,7 @@ pub struct BacktestBroker {
     /// (contract.currency → SGD) when settling non-SGD fills into CASH:SGD.
     prices:
         std::sync::Arc<dyn crate::market_data::traits::current_price::PriceSupplier + Send + Sync>,
+    execution_backlog: std::sync::Mutex<Vec<ExecutionData>>,
 }
 
 impl BacktestBroker {
@@ -78,6 +82,7 @@ impl BacktestBroker {
             current_bar: ArcSwapOption::new(None),
             cash: AtomicF64::new(starting_cash),
             prices,
+            execution_backlog: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -98,6 +103,17 @@ impl BacktestBroker {
     /// Lock-free atomic store (`ArcSwapOption`).
     pub fn set_current_bar(&self, bar: HistoricalDataFullKeys) {
         self.current_bar.store(Some(Arc::new(bar)));
+    }
+
+    /// Drain-and-clear the synthesized execution reports. Mirrors the
+    /// consumer contract of the prod ring's `try_pop` drain loop.
+    pub fn take_execution_backlog(&self) -> Vec<ExecutionData> {
+        std::mem::take(
+            &mut *self
+                .execution_backlog
+                .lock()
+                .expect("backtest execution backlog poisoned"),
+        )
     }
 }
 
@@ -230,6 +246,13 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
             if let Err(e) = tx_crud.create(&tx_fk).await {
                 tracing::error!("BacktestBroker: write transaction failed: {e:?}");
             }
+            self.execution_backlog
+                .lock()
+                .expect("backtest execution backlog poisoned")
+                .push(synthetic_execution(
+                    order_id, &contract_owned, &order.action, 
+                    fill_qty, fill_price, time, &strat,
+                ));
 
             // 2. Update current_positions additively (weighted-avg; same path
             //    as the prod execution handler). Note: this reuses prod's

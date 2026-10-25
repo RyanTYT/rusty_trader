@@ -15,16 +15,18 @@ use ibapi::prelude::SecurityType;
 
 use std::collections::HashSet;
 
-use super::bracket::{
-    build_resting_orders, CloseReason, OrderRole, RestingOrder, RestingStatus,
-};
+use super::bracket::{CloseReason, OrderRole, RestingOrder, RestingStatus, build_resting_orders};
 use super::state::{InMemoryPosition, InMemoryState, InMemoryTransaction, PositionKey};
-use crate::backtester::execution::fill_model::{commission, decide_fill, BarOhlc, FillEval};
+use crate::backtester::execution::{
+    execution_report::synthetic_execution,
+    fill_model::{BarOhlc, FillEval, commission, decide_fill},
+};
 use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::helpers::contract::get_local_symbol;
 use crate::market_data::traits::current_price::PriceSupplier;
-use crate::strategy::strategy::BarUpdateOutcome;
+use crate::strategy::strategy::StrategyExecutor;
+use crate::strategy::strategy::{BarUpdateOutcome, StrategyEnum};
 
 /// Resolve the bar for `target_contract` at the current timestamp. The
 /// `contracts` slice is the timestamp-row (all subscribed instruments' bars
@@ -74,6 +76,7 @@ fn lookup_bar<'a>(
 /// - `NoAction` — no-op.
 pub fn handle_bar_update_outcome_in_memory(
     config: &BacktestConfig,
+    strategy: Option<&mut StrategyEnum>,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     outcome: &BarUpdateOutcome,
@@ -88,7 +91,9 @@ pub fn handle_bar_update_outcome_in_memory(
         let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
         (ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570)
     };
-    process_resting_orders(config, prices, state, contract, bar, mso, order_id)?;
+    let strategy = process_resting_orders(
+        config, strategy, prices, state, contract, bar, mso, order_id,
+    )?;
 
     match outcome {
         BarUpdateOutcome::EmitOrders(orders) => {
@@ -101,19 +106,35 @@ pub fn handle_bar_update_outcome_in_memory(
             let mut resting = build_resting_orders(orders, slippage_bps, stop_pct_of_bar);
 
             // Immediate (market/midprice) entries fill NOW, against their own bar.
+            let mut new_strategy = strategy;
             for r in resting.iter_mut() {
                 if !matches!(r.role, OrderRole::Entry) {
                     continue;
                 }
-                if !r.fill_model.as_ref().map(|m| m.is_immediate()).unwrap_or(false) {
+                if !r
+                    .fill_model
+                    .as_ref()
+                    .map(|m| m.is_immediate())
+                    .unwrap_or(false)
+                {
                     continue; // limit entry — rests
                 }
                 let target_bar = lookup_bar(config, contracts, &r.contract, bar);
-                if let (Some(ohlc), Some(model)) = (BarOhlc::from_bar(target_bar), r.fill_model.as_mut()) {
+                if let (Some(ohlc), Some(model)) =
+                    (BarOhlc::from_bar(target_bar), r.fill_model.as_mut())
+                {
                     if let FillEval::Fill { price } = model.evaluate(&ohlc) {
-                        fill_order_at_price(
-                            config, prices, state, &r.contract, r.action, r.qty, price,
-                            target_bar.get_time(), order_id,
+                        new_strategy = fill_order_at_price(
+                            config,
+                            new_strategy,
+                            prices,
+                            state,
+                            &r.contract,
+                            r.action,
+                            r.qty,
+                            price,
+                            target_bar.get_time(),
+                            order_id,
                         )?;
                         r.status = RestingStatus::Filled;
                     }
@@ -181,6 +202,7 @@ pub fn handle_bar_update_outcome_in_memory(
                 });
             };
 
+            let mut new_strategy = strategy;
             for (key, target_pos) in targets_map.iter() {
                 // skip CASH positions
                 if key.stock.strip_prefix("CASH:").is_some() {
@@ -212,8 +234,15 @@ pub fn handle_bar_update_outcome_in_memory(
                     &key.currency,
                 );
                 let target_bar = lookup_bar(config, contracts, &contract, bar);
-                fill_order_in_memory(
-                    config, prices, state, &contract, &order, target_bar, order_id,
+                new_strategy = fill_order_in_memory(
+                    config,
+                    new_strategy,
+                    prices,
+                    state,
+                    &contract,
+                    &order,
+                    target_bar,
+                    order_id,
                 )?;
             }
             Ok(())
@@ -226,15 +255,16 @@ pub fn handle_bar_update_outcome_in_memory(
 /// pure logic the broker uses), compute the commission, + update
 /// `InMemoryState` (current positions, transactions, CASH:SGD with FX). No DB,
 /// no broker. Shared by both the `EmitOrders` + `PendingDbQuery` arms.
-fn fill_order_in_memory(
+fn fill_order_in_memory<'a>(
     config: &BacktestConfig,
+    strategy: Option<&'a mut StrategyEnum>,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     contract: &Contract,
     order: &Order,
     bar: &HistoricalDataFullKeys,
     order_id: &mut i32,
-) -> Result<(), String> {
+) -> Result<Option<&'a mut StrategyEnum>, String> {
     // FX rate: contract.currency → SGD (for settling CASH:SGD). Same logic as
     // the broker's `submit_order`.
     let fx_rate = if contract.currency.to_string() == "SGD" {
@@ -259,7 +289,7 @@ fn fill_order_in_memory(
             "InMemory fill_order: no fill for {} (limit not crossed or unsupported asset)",
             contract.symbol
         );
-        return Ok(());
+        return Ok(strategy);
     }
     let fees = commission(fill.fill_qty, fill.fill_price, config.commission_model);
 
@@ -286,6 +316,23 @@ fn fill_order_in_memory(
         fees,
         action: format!("{:?}", order.action),
     });
+    let new_strategy = if let Some(strat) = strategy {
+        let execution_data = synthetic_execution(
+            *order_id,
+            contract,
+            &order.action,
+            fill.fill_qty, // +buy / -sell, as decided by decide_fill
+            fill.fill_price,
+            bar.get_time(),
+            &key.strategy,
+        );
+        if let Err(e) = strat.on_fill(execution_data) {
+            tracing::warn!("backtest on_fill failed: {e:?}");
+        }
+        Some(strat)
+    } else {
+        None
+    };
 
     // Settle CASH:SGD (with FX, same as the broker).
     let cash_sgd_delta = -(fill.fill_qty * fill.fill_price + fees) * fx_rate;
@@ -305,7 +352,7 @@ fn fill_order_in_memory(
     //     fill.fill_price,
     //     state.strategy_name,
     // );
-    Ok(())
+    Ok(new_strategy)
 }
 
 /// Check all resting brackets against the current bar. If any child
@@ -314,15 +361,16 @@ fn fill_order_in_memory(
 ///
 /// At EOD (mso >= 385), force-close any still-open brackets at the bar's
 /// close.
-fn process_resting_orders(
+fn process_resting_orders<'a>(
     config: &BacktestConfig,
+    strategy_opt: Option<&'a mut StrategyEnum>,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     contract: &Contract,
     bar: &HistoricalDataFullKeys,
     mso: i32,
     order_id: &mut i32,
-) -> Result<(), String> {
+) -> Result<Option<&'a mut StrategyEnum>, String> {
     let ohlc = BarOhlc::from_bar(bar);
     let orders: Vec<RestingOrder> = {
         let guard = state
@@ -336,6 +384,7 @@ fn process_resting_orders(
     let mut filled_entry_brackets: HashSet<usize> = HashSet::new();
     let mut filled_exit_brackets: HashSet<usize> = HashSet::new();
 
+    let mut strategy = strategy_opt;
     for mut order in orders {
         // Keep other instruments' orders untouched.
         if order.contract.symbol != contract.symbol {
@@ -355,9 +404,17 @@ fn process_resting_orders(
                     } else {
                         o.close
                     };
-                    fill_order_at_price(
-                        config, prices, state, &order.contract, order.action, order.qty,
-                        price, bar.get_time(), order_id,
+                    strategy = fill_order_at_price(
+                        config,
+                        strategy,
+                        prices,
+                        state,
+                        &order.contract,
+                        order.action,
+                        order.qty,
+                        price,
+                        bar.get_time(),
+                        order_id,
                     )?;
                     filled_exit_brackets.insert(order.bracket_id);
                 }
@@ -381,9 +438,17 @@ fn process_resting_orders(
                     } else {
                         o.close
                     };
-                    fill_order_at_price(
-                        config, prices, state, &order.contract, order.action, order.qty,
-                        price, bar.get_time(), order_id,
+                    strategy = fill_order_at_price(
+                        config,
+                        strategy,
+                        prices,
+                        state,
+                        &order.contract,
+                        order.action,
+                        order.qty,
+                        price,
+                        bar.get_time(),
+                        order_id,
                     )?;
                     order.status = RestingStatus::Filled;
                     filled_exit_brackets.insert(order.bracket_id);
@@ -402,9 +467,17 @@ fn process_resting_orders(
         let mut did_fill = false;
         if let Some(model) = order.fill_model.as_mut() {
             if let FillEval::Fill { price } = model.evaluate(&o) {
-                fill_order_at_price(
-                    config, prices, state, &order.contract, order.action, order.qty,
-                    price, bar.get_time(), order_id,
+                strategy = fill_order_at_price(
+                    config,
+                    strategy,
+                    prices,
+                    state,
+                    &order.contract,
+                    order.action,
+                    order.qty,
+                    price,
+                    bar.get_time(),
+                    order_id,
                 )?;
                 order.status = RestingStatus::Filled;
                 did_fill = true;
@@ -446,14 +519,15 @@ fn process_resting_orders(
             .collect();
     }
 
-    Ok(())
+    Ok(strategy)
 }
 
 /// Fill an order at a known price (market/limit/stop/mid — the fill model already
 /// resolved the exact price). Updates position + transaction + CASH:SGD, charges
 /// commission, but applies NO extra slippage.
-fn fill_order_at_price(
+fn fill_order_at_price<'a>(
     config: &BacktestConfig,
+    strategy: Option<&'a mut StrategyEnum>,
     prices: &dyn PriceSupplier,
     state: &InMemoryState,
     contract: &Contract,
@@ -462,7 +536,7 @@ fn fill_order_at_price(
     fill_price: f64,
     bar_time: DateTime<Utc>,
     order_id: &mut i32,
-) -> Result<(), String> {
+) -> Result<Option<&'a mut StrategyEnum>, String> {
     // FX rate: contract.currency → SGD.
     let fx_rate = if contract.currency.to_string() == "SGD" {
         1.0
@@ -502,6 +576,23 @@ fn fill_order_at_price(
         fees,
         action: format!("{:?}", action),
     });
+    let new_strategy = if let Some(strategy_inner) = strategy {
+        let execution_data = synthetic_execution(
+            *order_id,
+            contract,
+            &action,
+            signed_qty, // +buy / -sell, as decided by decide_fill
+            fill_price,
+            bar_time,
+            &key.strategy,
+        );
+        if let Err(e) = strategy_inner.on_fill(execution_data) {
+            tracing::warn!("backtest on_fill failed: {e:?}");
+        }
+        Some(strategy_inner)
+    } else {
+        None
+    };
 
     let sgd_value = signed_qty * fill_price * fx_rate;
     let cash_key = PositionKey {
@@ -523,6 +614,5 @@ fn fill_order_at_price(
     }
 
     *order_id += 1;
-    Ok(())
+    Ok(new_strategy)
 }
-

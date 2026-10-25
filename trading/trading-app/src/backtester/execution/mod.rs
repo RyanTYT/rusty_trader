@@ -2,6 +2,7 @@
 
 pub mod broker;
 pub mod fill_model;
+pub mod execution_report;
 
 pub use broker::BacktestBroker;
 pub use fill_model::CommissionModel;

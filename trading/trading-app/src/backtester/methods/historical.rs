@@ -124,6 +124,22 @@ impl BacktestMethod for HistoricalReplay {
                     &ctx.strategy_details,
                     &ctx.order_store,
                 );
+                // --- Strategy fill hooks ---
+                // Fills materialized by this bar's reconciliation (inside
+                // `handle_bar_update_outcome` → `BacktestBroker::submit_order`) are
+                // delivered here, BEFORE the next bar's on_bar_update — same
+                // fills-before-signals guarantee the in-memory engine gets by calling
+                // `strategy.on_fill` inside reconcile.
+                if ctx.strategy_details.hooks_execution {
+                    for execution_data in ctx.broker.take_execution_backlog() {
+                        if let Err(e) = strategy.on_fill(execution_data) {
+                            tracing::error!("on_fill error: {e:?}");
+                        }
+                    }
+                } else {
+                    // drain - since push is ungated
+                    ctx.broker.take_execution_backlog();
+                }
             }
             // 4. Equity snapshot.
             let snap = ctx

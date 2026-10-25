@@ -23,7 +23,7 @@ use ibapi::contracts::Contract;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::market_data::consolidator::Consolidator;
 use crate::market_data::traits::current_price::PriceSupplier;
-use crate::strategy::strategy::{StrategyEnum, StrategyExecutor};
+use crate::strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor};
 
 use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
 use crate::backtester::output::equity::EquityCurve;
@@ -49,6 +49,7 @@ pub struct InMemoryRunContext<'a> {
     pub clock: &'a BacktestClock,
     pub prices: &'a BacktestPriceSupplier,
     pub consolidator: &'a Arc<Consolidator>,
+    pub strategy_details: &'a StrategyDetails,
 }
 
 /// In-memory backtest method. Unit struct — no state; the `InMemoryState` is
@@ -87,7 +88,9 @@ impl InMemoryReplay {
                 bars.get(n)
                     .and_then(|slot| slot.iter().find_map(|b| b.as_ref()))
                     .map(|b| b.get_time())
-                    .ok_or_else(|| format!("insufficient bars for the warmup lookback (need {n})"))?
+                    .ok_or_else(|| {
+                        format!("insufficient bars for the warmup lookback (need {n})")
+                    })?
             }
             BacktestPeriod::NumBars(_) => {
                 return Err(
@@ -98,6 +101,7 @@ impl InMemoryReplay {
         };
 
         let mut strategy = strategy;
+        let strategy_details = strategy.get_strategy_details();
         let warmup_end = handle
             .block_on(strategy.warm_up_data(
                 &light.consolidator,
@@ -131,6 +135,7 @@ impl InMemoryReplay {
             clock: light.clock.as_ref(),
             prices: light.prices.as_ref(),
             consolidator: &light.consolidator,
+            strategy_details: &strategy_details,
         };
         let result = self.run_with_bars(in_mem_ctx, trimmed);
 
@@ -200,6 +205,9 @@ impl InMemoryReplay {
                 // --- NEW in-memory reconcile (no DB, no broker) ---
                 if let Err(e) = handle_bar_update_outcome_in_memory(
                     ctx.config,
+                    ctx.strategy_details
+                        .hooks_execution
+                        .then_some(&mut strategy),
                     ctx.prices as &dyn PriceSupplier,
                     &state,
                     &outcome,
