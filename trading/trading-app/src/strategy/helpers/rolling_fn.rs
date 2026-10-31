@@ -408,38 +408,87 @@ impl RollingSum {
 #[derive(Debug, Clone)]
 pub struct RollingMean {
     window: usize,
+    min_periods: usize,
+    /// If true, a NaN push (or NaN replace_last) PANICS (legacy behavior —
+    /// NaN input is a caller bug in live strategies). If false, the NaN
+    /// occupies the window position as an absent slot (pandas semantics).
+    panic_on_nan: bool,
+    /// If true, a mean QUERY with observed < min_periods PANICS instead of
+    /// silently returning None (silent None propagates NaN downstream).
+    panic_on_min_periods: bool,
     rolling_sum: Decimal,
-    deq: VecDeque<Decimal>, // (value), increasing
+    deq: VecDeque<Option<Decimal>>, // None = NaN/absent position (pandas window semantics)
 }
 
 impl RollingMean {
+    /// Legacy constructor: min_periods = window, panic_on_nan = true,
+    /// panic_on_min_periods = false (identical legacy behavior — NaN pushes
+    /// panic; None until the window is full; full no-NaN mean exactly as
+    /// the old window-denominator form).
     pub fn new(window: usize) -> Self {
+        Self::with_flags(window, window, true, false)
+    }
+
+    /// pandas-style constructor: `rolling(window, min_periods)` — no panics:
+    /// NaN pushes occupy window POSITIONS but are never observations; the
+    /// mean returns None until min_periods observations are present.
+    pub fn with_min_periods(window: usize, min_periods: usize) -> Self {
+        Self::with_flags(window, min_periods, false, false)
+    }
+
+    /// Explicit flags constructor. `panic_on_nan`: NaN input panics (live
+    /// strictness) instead of taking the window slot. `panic_on_min_periods`:
+    /// a query below min_periods observations panics instead of returning
+    /// None (surfacing silent-None propagation).
+    pub fn with_flags(
+        window: usize,
+        min_periods: usize,
+        panic_on_nan: bool,
+        panic_on_min_periods: bool,
+    ) -> Self {
         assert!(window > 0);
+        assert!(min_periods >= 1 && min_periods <= window);
         Self {
             window,
+            min_periods,
+            panic_on_nan,
+            panic_on_min_periods,
             rolling_sum: dec!(0.0),
             deq: VecDeque::new(),
         }
     }
 
-    /// Push a new value.
-    /// Returns avg once the window is full, otherwise None.
-    pub fn push_dec(&mut self, value: Decimal) -> Option<Decimal> {
-        self.deq.push_back(value);
-        self.rolling_sum += value;
+    fn push_slot(&mut self, slot: Option<Decimal>) -> Option<Decimal> {
+        self.deq.push_back(slot);
+        if let Some(v) = slot {
+            self.rolling_sum += v;
+        }
         if self.deq.len() > self.window {
-            self.rolling_sum -= self.deq.pop_front().unwrap();
+            if let Some(Some(v)) = self.deq.pop_front() {
+                self.rolling_sum -= v;
+            }
         }
         self.rolling_mean_dec()
     }
 
-    /// Push a new value.
-    /// Returns avg once the window is full, otherwise None.
+    /// Push a new value. With panic_on_nan (legacy default), a NaN PANICS
+    /// (caller bug); otherwise it occupies a window position as an absent
+    /// slot. Returns avg once observed >= min_periods (panics instead if
+    /// panic_on_min_periods), otherwise None.
     pub fn push(&mut self, value_f64: f64) -> Option<f64> {
-        self.push_dec(
-            Decimal::from_f64(value_f64)
-                .expect("Expected to be able to represent value in rust decimal for rolling_sum"),
-        )
+        if value_f64.is_nan() {
+            if self.panic_on_nan {
+                // Preserve the legacy panic site/message byte-identically.
+                Decimal::from_f64(value_f64).expect(
+                    "Expected to be able to represent value in rust decimal for rolling_sum",
+                );
+            }
+            self.push_slot(None)
+        } else {
+            self.push_dec(Decimal::from_f64(value_f64).expect(
+                "Expected to be able to represent value in rust decimal for rolling_sum",
+            ))
+        }
         .map(|dec_val| {
             dec_val
                 .to_f64()
@@ -447,19 +496,34 @@ impl RollingMean {
         })
     }
 
+    /// Push a new value (Decimal path — never absent; see `push` for NaN).
+    /// Returns avg once observed >= min_periods, otherwise None.
+    pub fn push_dec(&mut self, value: Decimal) -> Option<Decimal> {
+        self.push_slot(Some(value))
+    }
+
     /// Replace the last pushed value (same index).
     ///
-    /// Returns Some(in) once the window is full, otherwise None.
+    /// Returns Some(avg) once observed >= min_periods, otherwise None.
     ///
     /// If no value has been pushed yet, returns None.
     pub fn replace_last_dec(&mut self, value: Decimal) -> Option<Decimal> {
-        if self.deq.is_empty() {
-            return None;
-        }
+        self.replace_last_slot(Some(value))
+    }
 
-        let prev_val = self.deq.pop_back().unwrap();
-        self.rolling_sum -= prev_val;
-        self.rolling_sum += value;
+    /// Replace the last pushed slot; `None` quashes the last position
+    /// (NaN-reinterpretation of the trailing point).
+    pub fn replace_last_slot(&mut self, value: Option<Decimal>) -> Option<Decimal> {
+        match self.deq.pop_back() {
+            None => return None, // nothing pushed yet
+            Some(Some(prev_val)) => {
+                self.rolling_sum -= prev_val;
+            }
+            Some(None) => {}
+        }
+        if let Some(v) = value {
+            self.rolling_sum += v;
+        }
         self.deq.push_back(value);
 
         self.rolling_mean_dec()
@@ -467,44 +531,67 @@ impl RollingMean {
 
     /// Replace the last pushed value (same index).
     ///
-    /// Returns Some(in) once the window is full, otherwise None.
+    /// Returns Some(avg) once observed >= min_periods, otherwise None.
     ///
     /// If no value has been pushed yet, returns None.
     pub fn replace_last(&mut self, value: f64) -> Option<f64> {
-        self.replace_last_dec(Decimal::from_f64(value).expect(
-            "Expected to be able to represent value passed to replace_last\
-                    in rust decimal for rolling_sum",
-        ))
-        .map(|dec_val| {
-            dec_val
-                .to_f64()
-                .expect("Expected to be able to represent rolling_sum as f64")
-        })
+        let slot = if value.is_nan() {
+            if self.panic_on_nan {
+                // Preserve the legacy panic site/message byte-identically.
+                Decimal::from_f64(value).expect(
+                    "Expected to be able to represent value passed to replace_last\
+                        in rust decimal for rolling_sum",
+                );
+            }
+            None
+        } else {
+            Some(Decimal::from_f64(value).expect(
+                "Expected to be able to represent value passed to replace_last\
+                        in rust decimal for rolling_sum",
+            ))
+        };
+        self.replace_last_slot(slot)
+            .map(|dec_val| {
+                dec_val
+                    .to_f64()
+                    .expect("Expected to be able to represent rolling_sum as f64")
+            })
     }
 
     pub fn rolling_mean(&self) -> Option<f64> {
-        if self.deq.len() == self.window {
-            Some(
-                self.rolling_sum
+        self.rolling_mean_dec()
+            .map(|dec_val| {
+                dec_val
                     .to_f64()
                     .expect("Expected to be able to represent rolling_sum in f64")
-                    / self.window as f64,
-            )
-        } else {
-            None
-        }
+            })
     }
 
+    /// Mean over the OBSERVED (non-NaN) cells, gated at min_periods observed.
+    /// If observed < min_periods: panics when panic_on_min_periods, else
+    /// returns None. Legacy paths (min_periods == window, no NaN pushes) are
+    /// byte-identical to the old window-denominator form.
     pub fn rolling_mean_dec(&self) -> Option<Decimal> {
-        if self.deq.len() == self.window {
-            Some(
-                self.rolling_sum
-                    / Decimal::from_usize(self.window)
-                        .expect("Expected window of RollingMean to be representable as a Decimal"),
-            )
-        } else {
-            None
+        let observed = self.deq.iter().filter(|s| s.is_some()).count();
+        if observed < self.min_periods {
+            if self.panic_on_min_periods {
+                panic!(
+                    "RollingMean query below min_periods: observed {} < min_periods {} \
+                     (panic_on_min_periods)",
+                    observed, self.min_periods
+                );
+            }
+            return None;
         }
+        if observed == 0 {
+            return None;
+        }
+        Some(
+            self.rolling_sum
+                / Decimal::from_usize(observed).expect(
+                    "Expected observed count of RollingMean to be representable as a Decimal",
+                ),
+        )
     }
 }
 
@@ -831,6 +918,16 @@ pub struct EwmMean {
     alpha: Decimal,
     prev: Option<Decimal>,      // ewma_t
     prev_prev: Option<Decimal>, // ewma_{t-1}
+
+    // --- pandas mode (f64 verbatim aggregations.pyx kernel; disjoint state) ---
+    pandas: bool,
+    old_wt_factor: f64,
+    new_wt: f64,
+    adjust: bool,
+    min_periods: usize,
+    weighted: Option<f64>,
+    old_wt: f64,
+    nobs: usize,
 }
 
 impl EwmMean {
@@ -845,12 +942,53 @@ impl EwmMean {
             alpha,
             prev: None,
             prev_prev: None,
+            pandas: false,
+            old_wt_factor: 0.0,
+            new_wt: 0.0,
+            adjust: false,
+            min_periods: 1,
+            weighted: None,
+            old_wt: 1.0,
+            nobs: 0,
         }
     }
 
+    /// pandas `ewm(alpha=…, adjust, min_periods)` — the SAME struct as the
+    /// legacy Decimal mode, flag-switched. Kernel state is disjoint:
+    /// `weighted/nobs/old_wt` (f64) never mix with `prev/prev_prev` (Decimal).
+    /// Verbatim port of pandas `_libs/window/aggregations.pyx ewm()` — NaN
+    /// gap-decay with ignore_na=False, old_wt carry, adjust both modes.
+    pub fn pandas_alpha(alpha: f64, adjust: bool, min_periods: usize) -> Self {
+        Self {
+            idx: 0,
+            alpha: dec!(0.0),
+            prev: None,
+            prev_prev: None,
+            pandas: true,
+            old_wt_factor: 1.0 - alpha,
+            new_wt: if adjust { 1.0 } else { alpha },
+            adjust,
+            min_periods,
+            weighted: None,
+            old_wt: 1.0,
+            nobs: 0,
+        }
+    }
+
+    pub fn pandas_span(span: usize, adjust: bool, min_periods: usize) -> Self {
+        Self::pandas_alpha(2.0 / (span as f64 + 1.0), adjust, min_periods)
+    }
+
     /// Push a new value.
-    /// Returns Some(ewm) once initialized (immediately after first push), otherwise None.
+    /// Returns Some(ewm) once initialized (immediately after first push),
+    /// otherwise None.
+    /// pandas mode: NaN = missing slot (state accrues `old_wt *= (1−α)`,
+    /// nobs unchanged); Some(weighted) once ≥ min_periods observations.
+    /// Decimal mode: NaN input panics (legacy semantics preserved).
     pub fn push(&mut self, value_f64: f64) -> Option<f64> {
+        if self.pandas {
+            return self.push_pandas(value_f64);
+        }
         self.push_dec(
             Decimal::from_f64(value_f64)
                 .expect("Expected to be able to represent vlue passed to EWMean as Decimal"),
@@ -863,6 +1001,13 @@ impl EwmMean {
     }
 
     pub fn push_dec(&mut self, value: Decimal) -> Option<Decimal> {
+        if self.pandas {
+            let x = value
+                .to_f64()
+                .expect("Expected to be able to represent value passed to EWMean as f64");
+            let _ = self.push_pandas(x);
+            return self.weighted.and_then(|w| Decimal::from_f64(w));
+        }
         self.idx += 1;
 
         let current = match self.prev {
@@ -875,10 +1020,51 @@ impl EwmMean {
         Some(current)
     }
 
+    /// pandas-mode kernel — op order VERBATIM from aggregations.pyx ewm().
+    fn push_pandas(&mut self, x: f64) -> Option<f64> {
+        let is_obs = !x.is_nan();
+        if is_obs {
+            self.nobs += 1;
+        }
+        match self.weighted {
+            Some(w) => {
+                // ignore_na=False (pandas default): accrue EVERY position
+                self.old_wt *= self.old_wt_factor;
+                if is_obs {
+                    if w != x {
+                        self.weighted = Some(
+                            (self.old_wt * w + self.new_wt * x) / (self.old_wt + self.new_wt),
+                        );
+                    }
+                    if self.adjust {
+                        self.old_wt += self.new_wt;
+                    } else {
+                        self.old_wt = 1.0;
+                    }
+                }
+            }
+            None => {
+                if is_obs {
+                    self.weighted = Some(x);
+                }
+            }
+        }
+        if self.nobs >= self.min_periods {
+            self.weighted
+        } else {
+            None
+        }
+    }
+
     /// Replace the last pushed raw value (same index) and recompute ewma_t.
     ///
     /// If no value has been pushed yet, returns None.
+    /// (Pandas mode returns None — the kernel has no replace semantic; the
+    /// pinned parity tests hold over append-only pushes.)
     pub fn replace_last(&mut self, value_f64: f64) -> Option<f64> {
+        if self.pandas {
+            return None;
+        }
         let value = Decimal::from_f64(value_f64)
             .expect("Expected to be able to represent vlue passed to EWMean as Decimal");
         if self.idx == 0 {
@@ -910,6 +1096,12 @@ impl EwmMean {
 
     /// Returns the last computed EWM mean (if any)
     pub fn value(&self) -> Option<f64> {
+        if self.pandas {
+            if self.nobs >= self.min_periods {
+                return self.weighted;
+            }
+            return None;
+        }
         self.prev.map(|dec_val| {
             dec_val
                 .to_f64()
@@ -1266,3 +1458,163 @@ impl RollingFracDiff {
         self.weights.len()
     }
 }
+
+// ===========================================================================
+// pandas-EWM state machine — verbatim port of the pandas Cython `ewm()`
+// kernel (pandas/_libs/window/aggregations.pyx, v2.3.3). The earlier powi
+// recursions were removed after a 1-ulp mismatch: pandas accrues decay via a
+// RUNNING PRODUCT `old_wt *= (1−α)` on EVERY position (NaN included), blends
+// with the exact op order `(old_wt*weighted + new_wt*x)/(old_wt+new_wt)`
+// behind a constant-series guard (`weighted != x`), and RESETS old_wt to 1.0
+// after every observation in adjust=False mode.
+// Fields mirror the Cython locals: old_wt, old_wt_factor = 1−α,
+// new_wt = 1 (adjust) | α (no adjust), weighted, nobs.
+// ===========================================================================
+
+/// pandas `rolling(window, min_periods).median()` — position-sliding window
+/// median in f64 (even count = mean of the two central values, numpy
+/// semantics). NaN values occupy WINDOW POSITIONS but are never observations
+/// (pandas dense-series semantics). Added to the SAME shared library — no
+/// per-strategy duplicates allowed (see stratlab SKILL.md).
+#[derive(Debug, Clone)]
+pub struct RollingMedian {
+    window: usize,
+    min_periods: usize,
+    buf: std::collections::VecDeque<f64>,
+}
+
+impl RollingMedian {
+    pub fn new(window: usize, min_periods: usize) -> Self {
+        assert!(window > 0);
+        Self {
+            window,
+            min_periods,
+            buf: std::collections::VecDeque::with_capacity(window),
+        }
+    }
+
+    /// Push one position. Returns Some(median) once the OBSERVED (non-NaN)
+    /// values within the last `window` positions ≥ min_periods.
+    pub fn push(&mut self, x: f64) -> Option<f64> {
+        self.buf.push_back(x);
+        if self.buf.len() > self.window {
+            self.buf.pop_front();
+        }
+        let median = median_of(self.buf.iter().copied().collect());
+        median.filter(|_| self.buf.iter().filter(|v| !v.is_nan()).count() >= self.min_periods)
+    }
+
+    pub fn value(&self) -> Option<f64> {
+        median_of(self.buf.iter().copied().collect())
+    }
+}
+
+fn median_of(mut v: Vec<f64>) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    Some(if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    })
+}
+
+#[cfg(test)]
+mod rolling_mean_flag_tests {
+    use super::RollingMean;
+
+    /// Legacy default: NaN push panics (the original from_f64 expect).
+    #[test]
+    #[should_panic(expected = "Expected to be able to represent value in rust decimal for rolling_sum")]
+    fn legacy_nan_push_panics() {
+        let mut rm = RollingMean::new(3);
+        rm.push(1.0);
+        rm.push(f64::NAN);
+    }
+
+    /// pandas-style: NaN occupies a position, is not an observation, and
+    /// min_periods gates on OBSERVED count.
+    #[test]
+    fn pandas_mode_nan_slots_and_min_periods() {
+        let mut rm = RollingMean::with_min_periods(3, 2);
+        assert_eq!(rm.push(1.0), None); // observed 1 < 2
+        assert_eq!(rm.push(f64::NAN), None); // observed 1 < 2
+        assert_eq!(rm.push(3.0), Some(2.0)); // observed 2 → mean(1,3)
+        assert_eq!(rm.push(5.0), Some(4.0)); // observed 3 → mean(1,3,5)
+    }
+
+    /// panic_on_min_periods: a query below min_periods observations panics
+    /// instead of silently returning None. push() dispatches the mean, so the
+    /// panic fires on the second push (observed 1 < 2).
+    #[test]
+    #[should_panic(expected = "RollingMean query below min_periods")]
+    fn strict_min_periods_panics_on_query() {
+        let mut rm = RollingMean::with_flags(3, 2, false, true);
+        rm.push(1.0);
+        rm.push(3.0);
+    }
+}
+
+#[cfg(test)]
+mod pandas_ewm_tests {
+    use super::{EwmMean, RollingMedian};
+
+    /// Pinned against pandas 2.x on 2026-10-25 (see stratlab plan P4 ref):
+    /// x = [1, 2, NaN, 4, 5, NaN, NaN, 8, 9, 10], alpha = 1/14.
+    #[test]
+    fn pandas_gap_semantics_pinned() {
+        let xs = [1.0, 2.0, f64::NAN, 4.0, 5.0, f64::NAN, f64::NAN, 8.0, 9.0, 10.0];
+        let mut af = EwmMean::pandas_alpha(1.0 / 14.0, false, 1);
+        let mut at = EwmMean::pandas_alpha(1.0 / 14.0, true, 1);
+        let mut at3 = EwmMean::pandas_alpha(1.0 / 14.0, true, 3);
+        let af_pin: Vec<Option<f64>> = [
+            "1.0", "1.0714285714285714", "1.0714285714285714", "1.295472287275566",
+            "1.5600814096130255", "1.5600814096130255", "1.5600814096130255",
+            "2.0875465344420463", "2.5812932105533286", "3.111200838370948",
+        ]
+        .iter()
+        .map(|s| Some(s.parse::<f64>().unwrap()))
+        .collect();
+        let at_pin: Vec<Option<f64>> = [
+            "1.0", "1.5185185185185186", "1.5185185185185186", "2.450390036950869",
+            "3.1845780206435945", "3.1845780206435945", "3.1845780206435945",
+            "4.458353287624601", "5.46528054048467", "6.339320255579501",
+        ]
+        .iter()
+        .map(|s| Some(s.parse::<f64>().unwrap()))
+        .collect();
+        for (i, &x) in xs.iter().enumerate() {
+            let y_af = af.push_pandas(x);
+            let y_at = at.push_pandas(x);
+            let y_at3 = at3.push_pandas(x);
+            assert_eq!(y_af.map(|v| v.to_string()), af_pin[i].map(|v| v.to_string()), "adjust=false @{i}");
+            assert_eq!(y_at.map(|v| v.to_string()), at_pin[i].map(|v| v.to_string()), "adjust=true @{i}");
+            let want3 = if i < 3 { None } else { y_at };
+            assert_eq!(y_at3, want3, "min_periods=3 @{i}");
+        }
+    }
+
+    #[test]
+    fn rolling_median_pinned() {
+        let xs = [5.0, 3.0, 8.0, 1.0, 9.0, 2.0, 7.0];
+        let mut m = RollingMedian::new(3, 3);
+        let want: Vec<Option<f64>> = [None, None, Some(5.0), Some(3.0), Some(8.0), Some(2.0), Some(7.0)]
+            .into_iter()
+            .collect();
+        for (i, x) in xs.iter().enumerate() {
+            assert_eq!(m.push(*x), want[i], "median @{i}");
+        }
+        let mut e = RollingMedian::new(2, 2);
+        assert_eq!(e.push(1.0), None);
+        assert_eq!(e.push(2.0), Some(1.5));
+        assert_eq!(e.push(3.0), Some(2.5));
+        assert_eq!(e.push(4.0), Some(3.5));
+    }
+}
+// (end of the pandas_ewm_tests module; the former TEMPORARY
+// probe_coin_tr_ewm differential probe was removed after the
+// COIN ATR differential was localized and fixed — the battery-faithful
+// TR column remains reproducible via APP/_wmap_decomp.py if needed.)
