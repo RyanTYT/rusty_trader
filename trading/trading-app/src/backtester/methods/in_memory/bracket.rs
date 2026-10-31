@@ -31,7 +31,7 @@ use crate::execution::order_engine::OrderIBKR;
 /// bracket, so the index is always 0); entry↔exit coordination and OCA sibling
 /// cancellation key on `bracket_id`, so it must be unique across the WHOLE book
 /// or one symbol's entry fill arms another symbol's exits.
-static NEXT_BRACKET_ID: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static NEXT_BRACKET_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Why a bracket was closed (kept for transaction tagging).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,6 +64,11 @@ pub struct RestingOrder {
     /// The side this order transacts (Buy or Sell).
     pub action: Action,
     pub qty: f64,
+    /// Owning strategy's name (engine account). §8 pooled emission: fills
+    /// settle into the OWNING sleeve's account — the reconcile resolves the
+    /// settlement state + realized-fill mailbox by this field
+    /// (`state::routed_state`).
+    pub order_ref: String,
     /// OCA group (siblings to cancel when one exits) — empty for the entry.
     pub oca_group: String,
     /// Links an entry to its exit orders.
@@ -150,6 +155,7 @@ pub fn build_resting_orders(
             contract: contract.clone(),
             action: entry_action,
             qty,
+            order_ref: parent.order.order_ref.clone(),
             oca_group: String::new(),
             bracket_id,
             role: OrderRole::Entry,
@@ -180,6 +186,7 @@ pub fn build_resting_orders(
                         contract: contract.clone(),
                         action: child.order.action,
                         qty: child.order.total_quantity,
+                        order_ref: parent.order.order_ref.clone(),
                         oca_group: child.order.oca_group.clone(),
                         bracket_id,
                         role: OrderRole::Exit(CloseReason::Stop),
@@ -197,6 +204,7 @@ pub fn build_resting_orders(
                             contract: contract.clone(),
                             action: child.order.action,
                             qty: child.order.total_quantity,
+                            order_ref: parent.order.order_ref.clone(),
                             oca_group: child.order.oca_group.clone(),
                             bracket_id,
                             role: OrderRole::Exit(CloseReason::TakeProfit),
@@ -214,6 +222,7 @@ pub fn build_resting_orders(
                         contract: contract.clone(),
                         action: child.order.action,
                         qty: child.order.total_quantity,
+                        order_ref: parent.order.order_ref.clone(),
                         oca_group: child.order.oca_group.clone(),
                         bracket_id,
                         role: OrderRole::Exit(CloseReason::MidpointClose),

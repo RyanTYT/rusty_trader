@@ -184,3 +184,142 @@ async fn run_single_route(
     }
     Ok(())
 }
+
+/// §8/P1b: run ALL active strategies in ONE replay pass — per-strategy
+/// in-memory accounts (transfer-seeded), per-strategy results files + a
+/// rollup curve (`backtest_results_blended5_multi.json`). InMemory mode only
+/// (the multi state model is an in-memory construct).
+///
+/// The strategies see one shared market surface (clock/prices/consolidator)
+/// and their own accounts; fills attribute to the owning strategy by
+/// construction (`PositionKey.strategy` = the account's strategy name).
+pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
+    if config.mode != BacktestMode::InMemory {
+        return Err("run_multi_route: only BacktestMode::InMemory is supported".into());
+    }
+    let handle = tokio::runtime::Handle::current();
+
+    // 1. Load market data for the union of all active strategies' contracts
+    //    (same check as run_single_route).
+    if let BacktestPeriod::TimeRange { start, end } = &config.period {
+        let bars_per_contract = load_bars(&config, &pool, 0)
+            .await
+            .map_err(|e| format!("load_bars check: {e}"))?;
+        let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
+        if !has_empty_bars {
+            tracing::info!(
+                "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
+                *start,
+                *end
+            );
+            refresh_continuous_aggregate(&pool, *start, *end).await;
+        } else {
+            tracing::info!(
+                "Data not loaded for [{}, {}] — OFFLINE MODE: skipping IBKR/Alpaca load.",
+                *start,
+                *end
+            );
+        }
+    }
+
+    // 2. Active strategies in deterministic (name-sorted) order.
+    let mut entries: Vec<(&String, &crate::strategy::StrategySpec)> =
+        config.strategies.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    let mut strategies: Vec<crate::strategy::strategy::StrategyEnum> = Vec::new();
+    for (name, spec) in &entries {
+        if !spec.active {
+            tracing::info!("Strategy '{name}' inactive (active=false) — skipping");
+            continue;
+        }
+        let strategy = crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
+            .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
+        strategies.push(strategy);
+    }
+    if strategies.len() < 2 {
+        return Err(
+            "run_multi_route: needs ≥ 2 active strategies (single-strategy runs use run_single_route)"
+                .into(),
+        );
+    }
+
+    // 3. Transfer seeding: each sleeve account seeds independently; the
+    //    residual (config capital − Σ seeds) stays un-traded with the rollup.
+    let seeds = vec![
+        crate::strategy::blended5_fund::fund::SE_SLEEVE;
+        strategies.len()
+    ];
+
+    // 4. Load bars once (the deepest warmup hint), then one blocking pass.
+    let max_warm = strategies
+        .iter()
+        .map(|s| s.warmup_bars_required())
+        .max()
+        .unwrap_or(0);
+    let bars = load_bars(&config, &pool, max_warm).await?;
+    let bars_arc = Arc::new(crate::backtester::methods::transpose(bars));
+
+    let config_clone = config.clone();
+    let pool_clone = pool.clone();
+    let handle_clone = handle.clone();
+    let seeds_clone = seeds.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let light = build_light_context(&pool_clone, &config_clone);
+        crate::backtester::methods::InMemoryReplay.run_multi_with_warm_up(
+            strategies,
+            seeds_clone,
+            bars_arc,
+            &config_clone,
+            &handle_clone,
+            &light,
+        )
+    })
+    .await
+    .map_err(|e| format!("multi replayer join: {e:?}"))??;
+
+    // 5. Per-strategy results (each account's own starting capital) + rollup.
+    for (i, name) in out.names.iter().enumerate() {
+        let results = BacktestResults::compute_in_memory(
+            &out.curves[i],
+            &out.states[i],
+            seeds[i],
+            config.stock_bar_interval,
+        );
+        let output_path = format!("backtest_results_{name}.json");
+        results.write_json(&output_path)?;
+        tracing::info!("multi pass: {name} results → {output_path}");
+    }
+
+    let mut per_final = serde_json::Map::new();
+    for (i, name) in out.names.iter().enumerate() {
+        per_final.insert(
+            name.clone(),
+            serde_json::json!(out.curves[i].last_equity().unwrap_or(f64::NAN)),
+        );
+    }
+    let rollup_json = serde_json::json!({
+        "mode": "multi_rollup",
+        "starting_capital_sgd": config.starting_capital_sgd,
+        "residual_sgd": out.residual,
+        "per_strategy_final_equity_sgd": per_final,
+        "rollup_equity_curve": out
+            .rollup
+            .snapshots
+            .iter()
+            .map(|s| serde_json::json!({
+                "time_ms": s.time.timestamp_millis(),
+                "cash": s.cash,
+                "positions_value": s.positions_value,
+                "equity": s.equity,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        "backtest_results_blended5_multi.json",
+        serde_json::to_string_pretty(&rollup_json)
+            .map_err(|e| format!("serialize rollup: {e}"))?,
+    )
+    .map_err(|e| format!("write rollup: {e}"))?;
+    tracing::info!("multi pass: rollup → backtest_results_blended5_multi.json");
+    Ok(())
+}

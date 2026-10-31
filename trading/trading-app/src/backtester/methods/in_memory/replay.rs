@@ -16,6 +16,7 @@
 //! - [`InMemoryReplay::run_with_bars`] — the bar loop only (called by
 //!   `run_with_warm_up`).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ibapi::contracts::Contract;
@@ -232,9 +233,274 @@ impl InMemoryReplay {
             equity.push(snap);
         }
 
-        // 5. Clear the thread-local (the Arc<InMemoryState> is returned, so the
+        // 5. Clear the thread-locals (the Arc<InMemoryState> is returned, so the
         //    sweep can still compute results from it).
         state::clear();
         Ok((equity, state))
+    }
+}
+
+// ── Multi-strategy single pass (§8/P1b) ───────────────────────────────────
+// Each strategy runs in its OWN [`InMemoryState`] (own account). The
+// thread-local is switched to each strategy's state before its
+// `on_bar_update`, so the cfg-gated CRUD reads (equity, positions) see the
+// owning account. The reconcile is called per strategy with that strategy's
+// state + strategy ref, so fills key/order_ref to the OWNING strategy
+// (`PositionKey.strategy` = `state.strategy_name`) — attribution by
+// construction (E3, no reconcile.rs change needed).
+//
+// Composition-of-solos invariant: with one strategy per account, no
+// cross-strategy reads, and the clock/price publish happening ONCE per bar
+// (before any strategy sees it), the loop reproduces each strategy's solo
+// run byte-for-byte (same per-bar ordering, same per-strategy order_id
+// counters starting at 0).
+
+/// Context for [`InMemoryReplay::run_multi_with_bars`] — one shared market
+/// surface (clock/prices/consolidator), N strategies, N seeds.
+pub struct InMemoryMultiContext<'a> {
+    pub config: &'a BacktestConfig,
+    /// Strategies in DETERMINISTIC order (sorted by name at the call site).
+    pub strategies: Vec<StrategyEnum>,
+    /// Per-strategy starting capital (transfer seeding: each sleeve account
+    /// is seeded independently; the caller's residual = config capital − Σ).
+    pub seeds: Vec<f64>,
+    pub handle: &'a tokio::runtime::Handle,
+    pub clock: &'a BacktestClock,
+    pub prices: &'a BacktestPriceSupplier,
+    pub consolidator: &'a Arc<Consolidator>,
+}
+
+/// Output of the multi run: per-strategy curves + states (for results), the
+/// constant residual cash, and the rollup curve (residual + Σ sleeve equity).
+pub struct MultiRunOutput {
+    pub names: Vec<String>,
+    pub curves: Vec<EquityCurve>,
+    pub states: Vec<Arc<InMemoryState>>,
+    /// `config.starting_capital_sgd − Σ seeds` (≥ 0, asserted at entry).
+    pub residual: f64,
+    pub rollup: EquityCurve,
+}
+
+impl InMemoryReplay {
+    /// The full multi-strategy flow (DB-path entry, mirrors
+    /// [`InMemoryReplay::run_with_warm_up`]): set the bar cache → warm each
+    /// strategy at its OWN warmup count → trim to post-warm-up →
+    /// [`InMemoryReplay::run_multi_with_bars`] → clear the cache.
+    pub fn run_multi_with_warm_up(
+        &self,
+        strategies: Vec<StrategyEnum>,
+        seeds: Vec<f64>,
+        bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
+        config: &BacktestConfig,
+        handle: &tokio::runtime::Handle,
+        light: &LightContext,
+    ) -> Result<MultiRunOutput, String> {
+        let cache = Arc::new(bar_cache::BarCache::new(bars.clone()));
+        bar_cache::set(cache.clone());
+
+        // Per-strategy bar_time from each strategy's own warmup count (the
+        // same hint the single-strategy path uses).
+        #[cfg(feature = "backtest")]
+        let bar_times: Vec<_> = match &config.period {
+            BacktestPeriod::TimeRange { .. } => strategies
+                .iter()
+                .map(|s| {
+                    let n = s.warmup_bars_required();
+                    bars.get(n)
+                        .and_then(|slot| slot.iter().find_map(|b| b.as_ref()))
+                        .map(|b| b.get_time())
+                        .ok_or_else(|| {
+                            format!("insufficient bars for the warmup lookback (need {n})")
+                        })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            BacktestPeriod::NumBars(_) => {
+                return Err(
+                    "run_multi_with_warm_up: NumBars period is not supported with warmup_bars"
+                        .to_string(),
+                );
+            }
+        };
+
+        let mut strategies = strategies;
+        for (i, s) in strategies.iter_mut().enumerate() {
+            #[cfg(feature = "backtest")]
+            let end = handle
+                .block_on(s.warm_up_data(&light.consolidator, bar_times[i]))
+                .map_err(|e| format!("warm_up_data: {e}"))?;
+            #[cfg(not(feature = "backtest"))]
+            let end = handle
+                .block_on(s.warm_up_data(&light.consolidator))
+                .map_err(|e| format!("warm_up_data: {e}"))?;
+            let _ = end;
+        }
+
+        // Trim to post-warm-up (same linear scan as the single path; the
+        // shared cache's max_end_time covers every strategy's warm reads).
+        let trimmed: &[Vec<Option<HistoricalDataFullKeys>>] = match cache.max_end_time() {
+            Some(t) => {
+                let split = bars
+                    .iter()
+                    .position(|bar| {
+                        bar.iter()
+                            .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > t))
+                    })
+                    .unwrap_or(0);
+                &bars[split..]
+            }
+            None => &bars[..],
+        };
+
+        let ctx = InMemoryMultiContext {
+            config,
+            strategies,
+            seeds,
+            handle,
+            clock: light.clock.as_ref(),
+            prices: light.prices.as_ref(),
+            consolidator: &light.consolidator,
+        };
+        let result = self.run_multi_with_bars(ctx, trimmed);
+        bar_cache::clear();
+        result
+    }
+
+    /// Run the multi-strategy bar loop with pre-loaded shared bars. Each
+    /// strategy gets its own seeded [`InMemoryState`]; the thread-local is
+    /// switched per strategy call. Returns per-strategy curves + states, the
+    /// residual cash, and the rollup curve.
+    pub fn run_multi_with_bars(
+        &self,
+        mut ctx: InMemoryMultiContext,
+        bars: &[Vec<Option<HistoricalDataFullKeys>>],
+    ) -> Result<MultiRunOutput, String> {
+        assert_eq!(
+            ctx.strategies.len(),
+            ctx.seeds.len(),
+            "run_multi_with_bars: strategies/seeds length mismatch"
+        );
+
+        let names: Vec<String> = ctx.strategies.iter().map(|s| s.get_name()).collect();
+        let details: Vec<StrategyDetails> = ctx
+            .strategies
+            .iter()
+            .map(|s| s.get_strategy_details())
+            .collect();
+
+        // 1. Per-strategy states (own accounts, transfer-seeded).
+        let states: Vec<Arc<InMemoryState>> = names
+            .iter()
+            .zip(&ctx.seeds)
+            .map(|(n, seed)| Arc::new(InMemoryState::new(n.clone(), *seed)))
+            .collect();
+        let residual = ctx.config.starting_capital_sgd - ctx.seeds.iter().sum::<f64>();
+        assert!(
+            residual >= -1e-6,
+            "transfer seeding over-commits: capital {} < Σ seeds {}",
+            ctx.config.starting_capital_sgd,
+            ctx.seeds.iter().sum::<f64>()
+        );
+        let residual = residual.max(0.0);
+
+        // Approved pooled-emission seam: install the per-strategy state
+        // router ONCE (fills resolve by order_ref → owning account; the
+        // reconcile fill paths read it). The strategy-layer fund pool
+        // (fund_gate::pool_init) is initialised by the BINARY before this
+        // runner — the engine carries no fund state.
+        {
+            let router: std::collections::HashMap<String, Arc<InMemoryState>> =
+                names.iter().cloned().zip(states.iter().cloned()).collect();
+            state::set_fill_router(router);
+        }
+
+        // 2. Replay. Per-strategy order_id counters (each starts at 0, exactly
+        //    like a solo run — synthetic execution ids stay per-account).
+        let mut order_ids = vec![0i32; names.len()];
+        let mut curves: Vec<EquityCurve> = (0..names.len()).map(|_| EquityCurve::new()).collect();
+        let mut rollup = EquityCurve::new();
+
+        for slot in bars {
+            let mut this_time = None;
+            for idx in 0..slot.len() {
+                let bar = match slot.get(idx) {
+                    Some(Some(v)) => v,
+                    _ => continue,
+                };
+                let contract = ctx
+                    .config
+                    .subscribed_contracts
+                    .get(idx)
+                    .expect("Expected contract aligned with bar in multi replay");
+                let time = bar.get_time();
+                this_time = Some(time);
+                // Shared market surface: clock + close publish happen ONCE per
+                // bar, before any strategy sees it (identical to a solo run's
+                // view — no strategy can observe another's reconcile).
+                ctx.clock.set(time);
+                let close = bar.get_price();
+                ctx.prices.publish_close(&contract, close);
+
+                for i in 0..ctx.strategies.len() {
+                    state::set(states[i].clone());
+                    let outcome = ctx.strategies[i]
+                        .on_bar_update(&contract, bar, ctx.consolidator)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("on_bar_update error [{}]: {e:?}", names[i]);
+                            crate::strategy::strategy::BarUpdateOutcome::NoAction
+                        });
+                    if let Err(e) = handle_bar_update_outcome_in_memory(
+                        ctx.config,
+                        details[i]
+                            .hooks_execution
+                            .then_some(&mut ctx.strategies[i]),
+                        ctx.prices as &dyn PriceSupplier,
+                        &states[i],
+                        &outcome,
+                        &contract,
+                        bar,
+                        slot,
+                        &mut order_ids[i],
+                    ) {
+                        tracing::error!("InMemory multi reconcile error [{}]: {e:?}", names[i]);
+                    }
+                }
+            }
+
+            // 3. Equity snapshots: per-strategy + rollup (residual + Σ).
+            let t = this_time.unwrap();
+            let mut sum_cash = residual;
+            let mut sum_pv = 0.0;
+            let mut sum_eq = residual;
+            for i in 0..ctx.strategies.len() {
+                let positions = states[i].current_positions_snapshot();
+                let snap = crate::backtester::output::equity::compute_snapshot_from_positions(
+                    positions,
+                    ctx.prices as &dyn PriceSupplier,
+                    t,
+                    0.0,
+                );
+                sum_cash += snap.cash;
+                sum_pv += snap.positions_value;
+                sum_eq += snap.equity;
+                curves[i].push(snap);
+            }
+            rollup.push(crate::backtester::output::equity::EquitySnapshot {
+                time: t,
+                cash: sum_cash,
+                positions_value: sum_pv,
+                equity: sum_eq,
+            });
+        }
+
+        // 4. Clear the thread-locals (the Arc states are returned in `output`).
+        state::clear();
+        state::clear_fill_router();
+        Ok(MultiRunOutput {
+            names,
+            curves,
+            states,
+            residual,
+            rollup,
+        })
     }
 }

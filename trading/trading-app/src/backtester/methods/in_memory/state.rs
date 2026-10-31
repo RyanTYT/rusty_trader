@@ -192,3 +192,67 @@ pub fn current() -> Option<Arc<InMemoryState>> {
 pub fn clear() {
     IN_MEMORY_STATE.with(|s| *s.borrow_mut() = None);
 }
+
+// ── Fill router + realized-fill mailbox (§8 pooled emission seam) ────────
+// APPROVED engine seam (user, 2026-10-30): with central pooled emission
+// the COMPLETING sleeve emits orders on behalf of ALL sleeves; every
+// pooled order carries `order_ref = <owner strategy name>` and fills must
+// settle into the OWNING sleeve's account — not the emitting sleeve's.
+//
+// - FILL_ROUTER: name → Arc<InMemoryState>, installed ONCE by the multi
+//   replay runner (alongside the states vec it mirrors). The reconcile
+//   fill paths resolve the settlement state by order_ref (fallback: the
+//   passed state).
+// - FILLED_MAILBOX: realized fills per owner name. Pooled fills bypass
+//   every strategy hook (the completing strategy must NOT ingest peer
+//   fills into its severity streams); each sleeve drains its OWN mailbox
+//   at its next flush (strategy layer) and feeds its own chain — the
+//   same `on_fill → apply_realised` shape as direct fills.
+
+/// One routed realized fill (engine-side record; the sleeve layer converts
+/// to its `RealisedFill`).
+#[derive(Debug, Clone)]
+pub struct MailFill {
+    pub sym: String,
+    /// Signed: +buy / −sell.
+    pub qty: i64,
+    pub px: f64,
+    pub date: chrono::NaiveDate,
+}
+
+thread_local! {
+    static FILL_ROUTER: RefCell<Option<HashMap<String, Arc<InMemoryState>>>> =
+        const { RefCell::new(None) };
+    static FILLED_MAILBOX: RefCell<HashMap<String, Vec<MailFill>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Install the per-strategy state router (multi replay runner, once per
+/// pass, BEFORE the slot loop).
+pub fn set_fill_router(states: HashMap<String, Arc<InMemoryState>>) {
+    FILL_ROUTER.with(|r| *r.borrow_mut() = Some(states));
+}
+
+/// Resolve the settlement state for `order_ref` (fallback `None` → caller
+/// uses the passed state).
+pub fn routed_state(order_ref: &str) -> Option<Arc<InMemoryState>> {
+    FILL_ROUTER.with(|r| r.borrow().as_ref().and_then(|m| m.get(order_ref).cloned()))
+}
+
+/// Clear the router (run end).
+pub fn clear_fill_router() {
+    FILL_ROUTER.with(|r| *r.borrow_mut() = None);
+}
+
+/// Record a realized fill for the OWNING strategy's mailbox (pooled fills;
+/// the owning sleeve drains at its next flush).
+pub fn mailbox_push(owner: &str, f: MailFill) {
+    FILLED_MAILBOX.with(|m| m.borrow_mut().entry(owner.to_string()).or_default().push(f));
+}
+
+/// Drain ALL realized fills recorded for `name` (owning sleeve, next flush).
+pub fn mailbox_drain(name: &str) -> Vec<MailFill> {
+    FILLED_MAILBOX.with(|m| m.borrow_mut().remove(name).unwrap_or_default())
+}
+
+
