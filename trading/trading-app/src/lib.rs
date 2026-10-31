@@ -11,6 +11,7 @@ pub mod market_data;
 pub mod schedule;
 pub mod server;
 pub mod strategy;
+pub mod strategy_wrappers;
 
 /// Test-only re-exports of internal items that are otherwise `pub(crate)` or private.
 /// This module is gated on `test-utils` feature (or `test` cfg for unit tests).
