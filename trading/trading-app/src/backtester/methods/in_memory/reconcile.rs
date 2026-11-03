@@ -447,6 +447,19 @@ fn fill_order_in_memory<'a>(
             currency: "SGD".to_string(),
         };
         tgt.update_current_additive(cash_key, cash_sgd_delta, 1.0);
+        super::diag::diag_fill(
+            bar.get_time().timestamp_millis(),
+            bar.get_time().with_timezone(&New_York).date_naive(),
+            &state.strategy_name,
+            &order.order_ref,
+            Some(&tgt.strategy_name),
+            &key.stock,
+            &format!("{:?}", order.action),
+            fill.fill_qty,
+            fill.fill_price,
+            fees,
+            fx_rate,
+        );
         *order_id += 1;
         return Ok(strategy);
     }
@@ -555,6 +568,25 @@ fn process_resting_orders<'a>(
 
         // ── EOD (mso >= 385): force-close active exits at close/mid, cancel the rest.
         if mso >= 385 {
+            // Hybrid OCA entry pairs survive overnight (= py limits resting
+            // across sessions); their close_mso is rebased lazily on next
+            // evaluation, so they rest here untouched.
+            if order.active
+                && matches!(order.role, OrderRole::Entry)
+                && !order.oca_group.is_empty()
+            {
+                super::diag::hyb_event(
+                    bar.get_time().with_timezone(&New_York).date_naive(),
+                    mso,
+                    "eod_carry",
+                    &order.order_ref,
+                    &order.contract.symbol.to_string(),
+                    order.qty,
+                    0.0,
+                );
+                remaining.push(order);
+                continue;
+            }
             if order.active && matches!(order.role, OrderRole::Exit(_)) {
                 if let Some(o) = ohlc {
                     let price = if order.close_is_mid {
@@ -587,16 +619,73 @@ fn process_resting_orders<'a>(
             continue;
         }
 
+        // ── Hybrid OCA mirror (same-pass): an Entry leg that filled earlier
+        // this pass cancels its OCA-sibling Entry legs before they can
+        // double-fill. On the expiry bar the limit cross and close_mso can
+        // both hit — exactly one leg wins regardless of book order. Normal
+        // brackets carry a single Entry per bracket_id (and empty oca_group
+        // on the entry side), so this is a no-op for every existing emitter.
+        if matches!(order.role, OrderRole::Entry)
+            && !order.oca_group.is_empty()
+            && filled_entry_brackets.contains(&order.bracket_id)
+        {
+            order.status = RestingStatus::Cancelled;
+            super::diag::hyb_event(
+                bar.get_time().with_timezone(&New_York).date_naive(),
+                mso,
+                "mirror_cancel",
+                &order.order_ref,
+                &order.contract.symbol.to_string(),
+                order.qty,
+                0.0,
+            );
+            continue;
+        }
+
+        // ── Hybrid overnight rebase: a close_mso past the session end (385)
+        // was set in a previous session (push-day cm ≤ push_mso + 15 ≤ 400);
+        // rebase it into the current session (span 390 = 78 five-minute
+        // slots). A due trigger on a print-less day (cm ≤ 385 at EOD) rests
+        // unchanged — py does not age TTL without prints. Half-day sessions
+        // are a declared approximation under the fixed 390 span.
+        if matches!(order.role, OrderRole::Entry) && !order.oca_group.is_empty() {
+            if let Some(cm) = order.close_mso {
+                if cm > 385 {
+                    super::diag::hyb_event(
+                        bar.get_time().with_timezone(&New_York).date_naive(),
+                        mso,
+                        "rebase",
+                        &order.order_ref,
+                        &order.contract.symbol.to_string(),
+                        order.qty,
+                        (cm - 390) as f64,
+                    );
+                    order.close_mso = Some(cm - 390);
+                }
+            }
+        }
+
         // ── Time-gated close ──
         if order.close_mso.is_some() {
             let close_mso = order.close_mso.unwrap();
             if mso >= close_mso {
                 if let Some(o) = ohlc {
-                    let price = if order.close_is_mid {
+                    let mut price = if order.close_is_mid {
                         (o.high + o.low) / 2.0
                     } else {
                         o.close
                     };
+                    // Hybrid conversion leg (Entry role): py's
+                    // limit_then_market expiry fills at close+adverse-slip.
+                    // (Time-gated exits are untouched — mid/close as before.)
+                    if matches!(order.role, OrderRole::Entry) {
+                        let dir = if matches!(order.action, ibapi::orders::Action::Buy) {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        price *= 1.0 + dir * config.slippage_bps / 1e4;
+                    }
                     strategy = fill_order_at_price(
                         config,
                         strategy,
@@ -611,7 +700,27 @@ fn process_resting_orders<'a>(
                         &order.order_ref,
                     )?;
                     order.status = RestingStatus::Filled;
-                    filled_exit_brackets.insert(order.bracket_id);
+                    if matches!(order.role, OrderRole::Entry)
+                        && !order.oca_group.is_empty()
+                    {
+                        super::diag::hyb_event(
+                            bar.get_time().with_timezone(&New_York).date_naive(),
+                            mso,
+                            "converted",
+                            &order.order_ref,
+                            &order.contract.symbol.to_string(),
+                            order.qty,
+                            price,
+                        );
+                    }
+                    match order.role {
+                        OrderRole::Entry => {
+                            filled_entry_brackets.insert(order.bracket_id);
+                        }
+                        OrderRole::Exit(_) => {
+                            filled_exit_brackets.insert(order.bracket_id);
+                        }
+                    }
                 }
                 continue; // drop (filled)
             }
@@ -642,6 +751,17 @@ fn process_resting_orders<'a>(
                 )?;
                 order.status = RestingStatus::Filled;
                 did_fill = true;
+                if matches!(order.role, OrderRole::Entry) && !order.oca_group.is_empty() {
+                    super::diag::hyb_event(
+                        bar.get_time().with_timezone(&New_York).date_naive(),
+                        mso,
+                        "limit_fill",
+                        &order.order_ref,
+                        &order.contract.symbol.to_string(),
+                        order.qty,
+                        price,
+                    );
+                }
                 match order.role {
                     OrderRole::Entry => {
                         filled_entry_brackets.insert(order.bracket_id);
@@ -666,6 +786,18 @@ fn process_resting_orders<'a>(
             if filled_exit_brackets.contains(&order.bracket_id) {
                 order.status = RestingStatus::Cancelled; // an exit filled → cancel siblings
             }
+        }
+        // Hybrid OCA mirror (cross-bar): an Entry leg filled → cancel its
+        // OCA-sibling Entry legs (same bracket_id). Persists the cancel into
+        // the book so a sibling resting past this bar can never fill later.
+        // Normal brackets carry exactly one Entry per bracket_id, so this is
+        // a no-op for every existing emitter (additionally gated on a
+        // non-empty oca_group, which only hybrid pairs set).
+        if matches!(order.role, OrderRole::Entry)
+            && !order.oca_group.is_empty()
+            && filled_entry_brackets.contains(&order.bracket_id)
+        {
+            order.status = RestingStatus::Cancelled;
         }
     }
 
@@ -777,6 +909,19 @@ fn fill_order_at_price<'a>(
             });
             cash.quantity -= sgd_value + fees;
         }
+        super::diag::diag_fill(
+            bar_time.timestamp_millis(),
+            bar_time.with_timezone(&New_York).date_naive(),
+            &state.strategy_name,
+            order_ref,
+            Some(&tgt.strategy_name),
+            &key.stock,
+            &format!("{:?}", action),
+            signed_qty,
+            fill_price,
+            fees,
+            fx_rate,
+        );
         *order_id += 1;
         return Ok(strategy); // peer fills reach their own chain via the mailbox
     }
@@ -813,6 +958,19 @@ fn fill_order_at_price<'a>(
         if let Err(e) = strategy_inner.on_fill(execution_data) {
             tracing::warn!("backtest on_fill failed: {e:?}");
         }
+        super::diag::diag_fill(
+            bar_time.timestamp_millis(),
+            bar_time.with_timezone(&New_York).date_naive(),
+            &key.strategy,
+            order_ref,
+            None,
+            &key.stock,
+            &format!("{:?}", action),
+            signed_qty,
+            fill_price,
+            fees,
+            fx_rate,
+        );
         Some(strategy_inner)
     } else {
         None
@@ -1039,5 +1197,305 @@ mod tests {
 
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 10.0, "Db-arm: single fill at own bar");
         assert_eq!(txn_prices(&state, "ARIS"), vec![10.0], "Db-arm fill price is the OWN close");
+    }
+}
+
+#[cfg(test)]
+mod hybrid_tests {
+    use super::*;
+    use crate::backtester::execution::fill_model::LimitFillModel;
+    use crate::helpers::contract::build_contract_from_stock;
+    use chrono::TimeZone;
+
+    struct NoFxHyb;
+    impl PriceSupplier for NoFxHyb {
+        fn get_current_price(&self, _c: Contract, _v: bool, _t: &[&str]) -> Result<f64, String> {
+            Err("no fx in tests".into())
+        }
+    }
+
+    fn apple_h() -> Contract {
+        build_contract_from_stock(&"AAPL".to_string(), &"NASDAQ".to_string(), &"USD".to_string())
+    }
+
+    fn cfg_h() -> BacktestConfig {
+        BacktestConfig::new(10_000.0).slippage_bps(0.0).contracts(vec![apple_h()])
+    }
+
+    fn stock_bar_h(c: &Contract, time: DateTime<Utc>, close: f64) -> HistoricalDataFullKeys {
+        HistoricalDataFullKeys::from_data(
+            c,
+            &ibapi::market_data::realtime::WhatToShow::Trades,
+            time,
+            close,
+            close,
+            close,
+            close,
+            1_000.0,
+        )
+    }
+
+    /// 09:30 ET (mso 0) on 2024-03-05.
+    fn slot_h(minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2024, 3, 5, 14, minute, 0).unwrap()
+    }
+
+    fn key_h(state: &InMemoryState, sym: &str) -> PositionKey {
+        PositionKey {
+            strategy: state.strategy_name.clone(),
+            stock: sym.to_string(),
+            primary_exchange: "NASDAQ".to_string(),
+            currency: "USD".to_string(),
+        }
+    }
+
+    fn resting_count_h(state: &InMemoryState, sym: &str) -> usize {
+        state
+            .resting_orders
+            .read()
+            .expect("resting poisoned")
+            .iter()
+            .filter(|o| o.contract.symbol.to_string() == sym && o.status == RestingStatus::Resting)
+            .count()
+    }
+
+    fn txn_prices_h(state: &InMemoryState, sym: &str) -> Vec<f64> {
+        state
+            .transactions
+            .read()
+            .expect("transactions poisoned")
+            .iter()
+            .filter(|t| t.stock == sym)
+            .map(|t| t.price)
+            .collect()
+    }
+
+    fn slot_utc(hour: u32, minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2024, 3, 5, hour, minute, 0).unwrap()
+    }
+
+    /// Next session (2024-03-06): overnight-survival boundary tests.
+    fn slot_next(minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2024, 3, 6, 14, minute, 0).unwrap()
+    }
+
+    fn close_msos_h(state: &InMemoryState, sym: &str) -> Vec<Option<i32>> {
+        state
+            .resting_orders
+            .read()
+            .expect("resting poisoned")
+            .iter()
+            .filter(|o| {
+                o.contract.symbol.to_string() == sym && o.status == RestingStatus::Resting
+            })
+            .map(|o| o.close_mso)
+            .collect()
+    }
+
+    /// Push a hybrid OCA pair straight into the book (what the sleeve's
+    /// `hybrid_emit` does): buy limit leg + time-gated market fallback leg.
+    fn push_hybrid_pair(
+        state: &InMemoryState,
+        contract: &Contract,
+        qty: f64,
+        limit: f64,
+        close_mso: i32,
+    ) {
+        use std::sync::atomic::Ordering;
+        let bid = NEXT_BRACKET_ID.fetch_add(1, Ordering::SeqCst);
+        let group = "hybrid-test-group".to_string();
+        let mut guard = state.resting_orders.write().expect("poisoned");
+        guard.push(RestingOrder {
+            contract: contract.clone(),
+            action: ibapi::orders::Action::Buy,
+            qty,
+            order_ref: state.strategy_name.clone(),
+            oca_group: group.clone(),
+            bracket_id: bid,
+            role: OrderRole::Entry,
+            active: true,
+            fill_model: Some(Box::new(LimitFillModel { limit, is_buy: true })),
+            close_mso: None,
+            close_is_mid: false,
+            status: RestingStatus::Resting,
+        });
+        guard.push(RestingOrder {
+            contract: contract.clone(),
+            action: ibapi::orders::Action::Buy,
+            qty,
+            order_ref: state.strategy_name.clone(),
+            oca_group: group,
+            bracket_id: bid,
+            role: OrderRole::Entry,
+            active: true,
+            fill_model: None,
+            close_mso: Some(close_mso),
+            close_is_mid: false,
+            status: RestingStatus::Resting,
+        });
+    }
+
+    fn drive(state: &InMemoryState, bar: &HistoricalDataFullKeys, order_id: &mut i32) {
+        let config = cfg_h();
+        let prices = NoFxHyb;
+        let contracts = vec![Some(bar.clone())];
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, state,
+            &BarUpdateOutcome::NoAction, &apple_h(), bar, &contracts, order_id,
+        )
+        .expect("reconcile drive");
+    }
+
+    #[test]
+    fn hybrid_expiry_bar_single_fill_limit_wins() {
+        // Limit cross AND close_mso hit on the same bar: the limit leg is
+        // first in book order → fills at the limit; the fallback is cancelled.
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 99.95, 10);
+        let bar = stock_bar_h(&apple_h(), slot_utc(14, 40), 99.0); // mso 10, low 99 ≤ 99.95
+        drive(&state, &bar, &mut order_id);
+        assert_eq!(txn_prices_h(&state, "AAPL"), vec![99.95]);
+        assert_eq!(state.current_qty(&key_h(&state, "AAPL")), 10.0);
+        assert_eq!(resting_count_h(&state, "AAPL"), 0, "sibling cancelled, not resting");
+    }
+
+    #[test]
+    fn hybrid_expiry_bar_single_fill_fallback_wins_when_first() {
+        // Book order swapped (fallback leg first): it fills at close and the
+        // limit leg is cancelled — still exactly one fill, no double.
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        {
+            use std::sync::atomic::Ordering;
+            let bid = NEXT_BRACKET_ID.fetch_add(1, Ordering::SeqCst);
+            let mut guard = state.resting_orders.write().expect("poisoned");
+            guard.push(RestingOrder {
+                contract: apple_h(),
+                action: ibapi::orders::Action::Buy,
+                qty: 10.0,
+                order_ref: "t".to_string(),
+                oca_group: "g".to_string(),
+                bracket_id: bid,
+                role: OrderRole::Entry,
+                active: true,
+                fill_model: None,
+                close_mso: Some(10),
+                close_is_mid: false,
+                status: RestingStatus::Resting,
+            });
+            guard.push(RestingOrder {
+                contract: apple_h(),
+                action: ibapi::orders::Action::Buy,
+                qty: 10.0,
+                order_ref: "t".to_string(),
+                oca_group: "g".to_string(),
+                bracket_id: bid,
+                role: OrderRole::Entry,
+                active: true,
+                fill_model: Some(Box::new(LimitFillModel { limit: 99.95, is_buy: true })),
+                close_mso: None,
+                close_is_mid: false,
+                status: RestingStatus::Resting,
+            });
+        }
+        let bar = stock_bar_h(&apple_h(), slot_utc(14, 40), 99.0);
+        drive(&state, &bar, &mut order_id);
+        assert_eq!(txn_prices_h(&state, "AAPL").len(), 1, "exactly one fill");
+        assert_eq!(state.current_qty(&key_h(&state, "AAPL")), 10.0);
+        assert_eq!(resting_count_h(&state, "AAPL"), 0);
+    }
+
+    #[test]
+    fn hybrid_limit_fill_cancels_fallback_across_bars() {
+        // Limit fills on bar 2 (before expiry); the fallback must never fire
+        // on a later bar even though its close_mso arrives.
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 99.95, 100);
+        drive(&state, &stock_bar_h(&apple_h(), slot_utc(14, 35), 100.0), &mut order_id); // mso 5: rest
+        assert!(txn_prices_h(&state, "AAPL").is_empty());
+        assert_eq!(resting_count_h(&state, "AAPL"), 2);
+        drive(&state, &stock_bar_h(&apple_h(), slot_utc(14, 36), 99.0), &mut order_id); // mso 6: cross
+        assert_eq!(txn_prices_h(&state, "AAPL"), vec![99.95]);
+        assert_eq!(resting_count_h(&state, "AAPL"), 0, "fallback cancelled cross-bar");
+        drive(&state, &stock_bar_h(&apple_h(), slot_utc(16, 10), 50.0), &mut order_id); // mso 100: expiry
+        assert_eq!(txn_prices_h(&state, "AAPL").len(), 1, "no zombie fallback fill");
+    }
+
+    #[test]
+    fn hybrid_fallback_fills_at_close_plus_slip() {
+        // No cross ever; the fallback fires at bar close + adverse slip
+        // (py limit_then_market expiry semantics).
+        let config = cfg_h();
+        assert_eq!(config.slippage_bps, 0.0);
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 50.0, 10); // limit unreachable
+        let bar = stock_bar_h(&apple_h(), slot_utc(14, 40), 100.0); // mso 10
+        let prices = NoFxHyb;
+        let contracts = vec![Some(bar.clone())];
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state,
+            &BarUpdateOutcome::NoAction, &apple_h(), &bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile drive");
+        assert_eq!(txn_prices_h(&state, "AAPL"), vec![100.0], "zero-slip cfg → raw close");
+    }
+
+    #[test]
+    fn hybrid_fallback_applies_adverse_slip() {
+        // Same setup with 1bp slip: buy fallback pays close × (1 + 1bp).
+        let config = BacktestConfig::new(10_000.0).slippage_bps(1.0).contracts(vec![apple_h()]);
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 50.0, 10);
+        let bar = stock_bar_h(&apple_h(), slot_utc(14, 40), 100.0);
+        let prices = NoFxHyb;
+        let contracts = vec![Some(bar.clone())];
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state,
+            &BarUpdateOutcome::NoAction, &apple_h(), &bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile drive");
+        let px = txn_prices_h(&state, "AAPL");
+        assert_eq!(px.len(), 1);
+        assert!((px[0] - 100.01).abs() < 1e-9, "close+adverse-slip, got {}", px[0]);
+    }
+
+    #[test]
+    fn hybrid_eod_preserves_pair_for_overnight() {
+        // Neither leg hit by the close: the pair SURVIVES overnight (= py
+        // limits resting across sessions) with close_mso untouched; the
+        // rebase happens lazily on next-session evaluation.
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 99.95, 400);
+        drive(&state, &stock_bar_h(&apple_h(), slot_utc(20, 55), 100.0), &mut order_id); // mso 385
+        assert!(txn_prices_h(&state, "AAPL").is_empty());
+        assert_eq!(resting_count_h(&state, "AAPL"), 2);
+        assert_eq!(close_msos_h(&state, "AAPL"), vec![None, Some(400)]);
+    }
+
+    #[test]
+    fn hybrid_overnight_rebase_converts_next_morning() {
+        // Full boundary walk: EOD preserves (cm 400), next-morning first
+        // bar rebases 400 → 10, third bar (mso 10) converts at close.
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        push_hybrid_pair(&state, &apple_h(), 10.0, 99.95, 400);
+        drive(&state, &stock_bar_h(&apple_h(), slot_utc(20, 55), 100.0), &mut order_id);
+        assert_eq!(resting_count_h(&state, "AAPL"), 2);
+        // Next morning, first bar: rebase only, no fill (mso 5 < 10,
+        // low 100 > limit 99.95).
+        drive(&state, &stock_bar_h(&apple_h(), slot_next(35), 100.0), &mut order_id);
+        assert!(txn_prices_h(&state, "AAPL").is_empty());
+        assert_eq!(resting_count_h(&state, "AAPL"), 2);
+        assert_eq!(close_msos_h(&state, "AAPL"), vec![None, Some(10)]);
+        // Third bar: conversion at close, sibling cancelled.
+        drive(&state, &stock_bar_h(&apple_h(), slot_next(40), 100.0), &mut order_id);
+        assert_eq!(txn_prices_h(&state, "AAPL"), vec![100.0]);
+        assert_eq!(state.current_qty(&key_h(&state, "AAPL")), 10.0);
+        assert_eq!(resting_count_h(&state, "AAPL"), 0);
     }
 }

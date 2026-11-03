@@ -12,6 +12,7 @@
 
 pub mod bar_cache;
 pub mod bracket;
+pub mod diag;
 pub mod reconcile;
 pub mod replay;
 pub mod state;

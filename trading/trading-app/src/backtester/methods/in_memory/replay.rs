@@ -418,6 +418,7 @@ impl InMemoryReplay {
         let mut order_ids = vec![0i32; names.len()];
         let mut curves: Vec<EquityCurve> = (0..names.len()).map(|_| EquityCurve::new()).collect();
         let mut rollup = EquityCurve::new();
+        let mut cells_eq = vec![0.0f64; names.len()];
 
         for slot in bars {
             let mut this_time = None;
@@ -482,6 +483,7 @@ impl InMemoryReplay {
                 sum_cash += snap.cash;
                 sum_pv += snap.positions_value;
                 sum_eq += snap.equity;
+                cells_eq[i] = snap.equity;
                 curves[i].push(snap);
             }
             rollup.push(crate::backtester::output::equity::EquitySnapshot {
@@ -490,11 +492,18 @@ impl InMemoryReplay {
                 positions_value: sum_pv,
                 equity: sum_eq,
             });
+            // §8 diag seam: per-slot equity row (writer closed over env).
+            super::diag::diag_eq_row(
+                t.timestamp_millis(),
+                &cells_eq,
+                sum_eq,
+            );
         }
 
         // 4. Clear the thread-locals (the Arc states are returned in `output`).
         state::clear();
         state::clear_fill_router();
+        super::diag::diag_close();
         Ok(MultiRunOutput {
             names,
             curves,
