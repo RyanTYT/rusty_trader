@@ -58,10 +58,8 @@ struct Writer(Mutex<Option<BufWriter<File>>>);
 fn writer(key: &'static str) -> &'static Writer {
     static EQ: OnceLock<Writer> = OnceLock::new();
     static FILLS: OnceLock<Writer> = OnceLock::new();
-    static HYB: OnceLock<Writer> = OnceLock::new();
     let w = match key {
         "BLENDED5_DIAG_EQ_CSV" => &EQ,
-        "BLENDED5_HYB_DIAG" => &HYB,
         _ => &FILLS,
     };
     w.get_or_init(|| Writer(Mutex::new(None)))
@@ -96,7 +94,6 @@ pub fn diag_close() {
     for key in [
         "BLENDED5_DIAG_EQ_CSV",
         "BLENDED5_DIAG_FILLS_CSV",
-        "BLENDED5_HYB_DIAG",
     ] {
         let mut g = writer(key).0.lock().expect("diag writer poisoned");
         if let Some(bw) = g.as_mut() {
@@ -118,28 +115,6 @@ pub fn diag_eq_row(time_ms: i64, cells: &[f64], rollup: f64) {
             line.push_str(&format!(",{v:.4}"));
         }
         let _ = writeln!(bw, "{line},{rollup:.4}");
-    }
-}
-
-/// Hybrid OCA-pair lifecycle event (BLENDED5_HYB_DIAG path; no-op when
-/// unset). One row per event: emit / dedupe_keep / dedupe_replace / no_bar /
-/// flat_cancel (sleeve side); mirror_cancel / eod_carry / rebase / converted /
-/// limit_fill (reconcile side). `px` carries the fill price for fills, the
-/// new close_mso for rebase, 0.0 otherwise.
-pub fn hyb_event(
-    date: chrono::NaiveDate,
-    mso: i32,
-    event: &str,
-    owner: &str,
-    sym: &str,
-    qty: f64,
-    px: f64,
-) {
-    let Some(mut g) = csv_writer("BLENDED5_HYB_DIAG", "date,mso,event,owner,sym,qty,px") else {
-        return;
-    };
-    if let Some(bw) = g.as_mut() {
-        let _ = writeln!(bw, "{date},{mso},{event},{owner},{sym},{qty:.4},{px:.4}");
     }
 }
 
