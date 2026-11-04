@@ -73,7 +73,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-use crate::backtester::methods::in_memory::state;
+use crate::backtester::methods::in_memory::{diag, state};
 use crate::execution::order_engine::OrderIBKR;
 use crate::strategy::blended5_fund::fund::{
     EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX, ibkr_primary_exchange,
@@ -182,10 +182,15 @@ static POOL_RESIDUAL: AtomicU64 = AtomicU64::new(0);
 /// Registration is folded into `new`; no separate init/registration call.
 static REGISTRY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
-    /// Packed (et_date, mso) into a u64 ring key.
+    /// Packed (et_date, mso) into a u64 ring key. Year-safe: ordinal()
+    /// wraps every calendar year — 2021-01-03 and 2022-01-03 produced the
+    /// SAME key, so the first slot of a new year started from a STALE-FULL
+    /// mask and completed against the previous year's books (BUG-1, seen in
+    /// the m1.6 diag run). `num_days_from_ce` is unique per calendar day
+    /// (~738k for 2021 — far below the 48-bit slot budget).
 fn pack_key(et_date: chrono::NaiveDate, mso: i32) -> u64 {
     use chrono::Datelike;
-    ((et_date.ordinal() as u64) << 16) | (mso.max(0) as u64 & 0xFFFF)
+    ((et_date.num_days_from_ce() as u64) << 16) | (mso.max(0) as u64 & 0xFFFF)
 }
 
 /// Initialise the pool ONCE per program lifetime. Participants come from
@@ -223,6 +228,10 @@ fn pool_reset() {
     // ledger/gate tests need through the thread-local LEDGER reset and
     // accept the OnceLock constraint by initialising identical pools.
     POOL_RESIDUAL.store(0.0f64.to_bits(), Ordering::Relaxed);
+    POOL_SEEN.store(0, Ordering::Relaxed);
+    for s in POOL_LAST_EQ.iter().chain(POOL_LAST_PRICED.iter()).chain(POOL_LAST_FIXED.iter()) {
+        s.store(0, Ordering::Relaxed);
+    }
     if let Some(ring) = POOL.get() {
         for s in &ring.slots {
             s.key.store(0, Ordering::Relaxed);
@@ -276,6 +285,47 @@ fn pool_own_idx(own: &str) -> Option<usize> {
 /// sleeve)? Drives the sleeve's pooled vs legacy flush arms.
 pub(crate) fn pool_is_participant(own: &str) -> bool {
     pool_own_idx(own).is_some()
+}
+
+/// FUND equity at SLOT-START vintage (the legacy engine-registry value):
+/// residual + Σ per-sleeve equity, where an UNPUSHED sleeve contributes its
+/// seed (SE_SLEEVE — the binary seeds every sleeve SE_SLEEVE, and the
+/// engine's slot-start snapshot counted the seed balances the same way).
+/// A gate classifies its OWN gross against THIS fund equity (legacy
+/// semantics: per-sleeve gross vs FUND-level cap — NOT a pooled gross).
+fn pool_fund_equity() -> f64 {
+    let Some(ring) = pool() else { return f64::NAN };
+    let residual = f64::from_bits(POOL_RESIDUAL.load(Ordering::Relaxed));
+    let seen = POOL_SEEN.load(Ordering::Relaxed);
+    let mut sum = residual;
+    for i in 0..ring.names.len() {
+        let eq = if seen & (1u32 << i) != 0 {
+            f64::from_bits(POOL_LAST_EQ[i].load(Ordering::Relaxed))
+        } else {
+            SE_SLEEVE
+        };
+        sum += eq;
+    }
+    sum
+}
+
+/// Peers' freshest known gross (priced + fixed) — every OTHER participant's
+/// last pushed gross (this slot if it already flushed, else the rolling
+/// vintage). Legacy: the engine-registry slot-start snapshot gave every
+/// gate the SAME peer gross; here late flushers see fresher peers, so the
+/// fund total pins under the cap at the LAST trim of each slot (legacy's
+/// observable EOD property, u ≤ cap).
+fn pool_peer_gross(own_idx: usize) -> f64 {
+    let n = pool().map(|r| r.names.len()).unwrap_or(0);
+    let mut s = 0.0f64;
+    for (i, c) in POOL_LAST_PRICED.iter().enumerate() {
+        if i >= n || i == own_idx {
+            continue;
+        }
+        s += f64::from_bits(c.load(Ordering::Relaxed))
+            + f64::from_bits(POOL_LAST_FIXED[i].load(Ordering::Relaxed));
+    }
+    s
 }
 
 /// Sleeve-side direct push for the BROKE sleeve: its flush early-returns
@@ -356,6 +406,9 @@ fn pool_push(
     }
     slot.eq[idx].store(eq.to_bits(), Ordering::Relaxed);
     POOL_LAST_EQ[idx].store(eq.to_bits(), Ordering::Relaxed);
+    POOL_LAST_PRICED[idx].store(priced.to_bits(), Ordering::Relaxed);
+    POOL_LAST_FIXED[idx].store(fixed.to_bits(), Ordering::Relaxed);
+    POOL_SEEN.fetch_or(1u32 << idx, Ordering::Relaxed);
     slot.priced[idx].store(priced.to_bits(), Ordering::Relaxed);
     slot.fixed[idx].store(fixed.to_bits(), Ordering::Relaxed);
     // Arc<BTreeMap> published as a raw pointer; the writer clones a fresh
@@ -368,6 +421,19 @@ fn pool_push(
     let full = (1u32 << ring.names.len()) - 1;
     let m = slot.mask.fetch_or(1u32 << idx, Ordering::Relaxed) | (1u32 << idx);
     let completed = m == full;
+    if diag::diag_fills() {
+        let owner: Option<&String> = ring.names.get(idx);
+        tracing::info!(
+            key,
+            owner = owner.map(|s| s.as_str()).unwrap_or("?"),
+            eq,
+            priced,
+            fixed,
+            book_len = book.len(),
+            completed,
+            "[POOLED] push"
+        );
+    }
     completed
 }
 
@@ -429,85 +495,16 @@ impl FundSlotView {
     }
 }
 
-/// Central pooled classification — the gate's step-3 fire classifier run ONCE
-/// per completed slot at FRESH complete vintage (py FundBook semantics: all
-/// sleeves' fresh intents visible simultaneously). Same math verbatim:
-///
-/// - fund equity = residual + Σ sleeve eq (USD-conv at [`USD_FX`]);
-/// - `eod_edge` = BLENDED5_CLOSE_AWARE → the sleeve-provided close-window
-///   flag, else the intrinsic `day_last` edge; `cap` = EOD 1.95 / INTRA 4.0
-///   (battery constants);
-/// - liquidate iff fund equity finite & ≤ 0 (non-finite = fail-open
-///   pass-through, scale 1);
-/// - fire scale = ((cap·eq_usd − fixed)/priced).max(0) when priced > 0,
-///   else 1.0 (no-resize legacy branch).
-///
-/// Fires the shared violation/fire counters once per slot. Returns
-/// `(scale, liquidate)`.
-fn pool_classify(view: &FundSlotView, close_window: bool, day_last: bool) -> (f64, bool) {
-    let (priced, fixed) = view.pooled_gross();
-    let gross = priced + fixed;
-    let eq_usd = view.fund_eq_sgd() / USD_FX;
-    let close_aware =
-        std::env::var("BLENDED5_CLOSE_AWARE").ok().as_deref() == Some("1");
-    let eod_edge = if close_aware { close_window } else { day_last };
-    let cap = if eod_edge { EOD_CAP } else { INTRA_CAP };
-
-    let mut scale = 1.0f64;
-    let mut liquidate = false;
-    let mut viol = false;
-    if eq_usd <= 0.0 || !eq_usd.is_finite() {
-        if eq_usd.is_finite() {
-            scale = 0.0;
-            liquidate = true;
-            viol = true;
-        }
-    } else if gross > cap * eq_usd && priced > 0.0 {
-        scale = ((cap * eq_usd - fixed) / priced).max(0.0);
-        viol = true;
-    } else if gross > cap * eq_usd {
-        scale = 1.0;
-        viol = true;
-    }
-    if viol {
-        if eod_edge {
-            N_VIOL_EOD.fetch_add(1, Ordering::Relaxed);
-            if liquidate || scale < 1.0 {
-                N_FIRE_EOD.fetch_add(1, Ordering::Relaxed);
-            }
-        } else {
-            N_VIOL_INTRA.fetch_add(1, Ordering::Relaxed);
-            if liquidate || scale < 1.0 {
-                N_FIRE_INTRA.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-    (scale, liquidate)
-}
-
-/// Legacy step-8 scale semantics for ONE pooled book entry: liquidate → 0;
-/// px unavailable / `q == 0` / `scale >= 1` → keep q; else
-/// `floor(|q|·scale)·signum`.
-fn pooled_scaled_entry(px: Option<f64>, q: i64, scale: f64, liquidate: bool) -> i64 {
-    if liquidate {
-        return 0;
-    }
-    match (px, q) {
-        (Some(p), _) if p.is_finite() && p > 0.0 && scale < 1.0 && q != 0 => {
-            ((q.abs() as f64 * scale).floor() as i64) * (if q > 0 { 1 } else { -1 })
-        }
-        _ => q,
-    }
-}
-
 // ── §8 CENTRAL POOLED TRIM — the ONE place fund-level emission logic lives ──
 //
 // Built sheet = the completed slot's ABSOLUTE trimmed book: per participant
-// (all-zero books skipped — the sleeve's own early gate fired → carry
-// standing), per entry, legacy step-8 scale semantics. `Some(name)`
-// attribution rides every entry — the order_ref source at the sleeve's
-// order assembly (user ruling: "fills the order_reference field correctly —
-// ie specific to each strategy, not all from one strategy").
+// (per-sleeve legacy trim already applied IN PLACE at each owner's own
+// flush), per entry INCLUDING explicit zeros (BUG-2 fix: a flatten target
+// rides the sheet so the engine true-ups held positions — dropping q==0
+// entries left positions orphaned forever). `Some(name)` attribution rides
+// every entry — the order_ref source at the sleeve's order assembly (user
+// ruling: "fills the order_reference field correctly — ie specific to each
+// strategy, not all from one strategy").
 //
 // TWO consumption pathways, ONE trim:
 // - the COMPLETING GATE (`pooled_intents`): sheet → attributed per-share
@@ -518,29 +515,40 @@ fn pooled_scaled_entry(px: Option<f64>, q: i64, scale: f64, liquidate: bool) -> 
 //   sleeve converts the sheet to orders directly.
 pub fn pool_take_sheet(
     key: u64,
-    bars: &BarFrame,
-    close_window: bool,
-    day_last: bool,
+    slot_date: chrono::NaiveDate,
 ) -> Option<Vec<ShareOut>> {
     let view = pool_take_slot(key)?;
-    let (scale, liquidate) = pool_classify(&view, close_window, day_last);
     let mut sheet: Vec<ShareOut> = Vec::new();
     for (name, _eq, book, _priced, _fixed) in view.participants.iter() {
-        if book.values().all(|q| *q == 0) {
-            continue;
-        }
         for (sym, q) in book.iter() {
-            if *q == 0 {
-                continue;
-            }
-            // Legacy step-8 per-entry scale: px checked against THIS frame
-            // (unpriced entries keep q — they were part of the
-            // classification's `fixed`, and the scale spends the priced
-            // budget only).
-            let px = bars.get(sym).map(|b| b.get_price());
-            let scaled = pooled_scaled_entry(px, *q, scale, liquidate);
-            sheet.push((sym.clone(), scaled, Some(name.clone())));
+            sheet.push((sym.clone(), *q, Some(name.clone())));
         }
+    }
+    if diag::diag_fills() {
+        let fund_eq = view.fund_eq_sgd();
+        let per_owner: Vec<String> = view
+            .participants
+            .iter()
+            .map(|(n, eq, b, p, f)| {
+                format!(
+                    "{} eq={:.0} gross={:.0}(|q|={} book={})",
+                    n,
+                    eq,
+                    p + f,
+                    b.values().map(|q| q.abs()).sum::<i64>(),
+                    b.len()
+                )
+            })
+            .collect();
+        let sheet_q: i64 = sheet.iter().map(|(_, q, _)| q.abs()).sum();
+        tracing::info!(
+            slot = %slot_date,
+            fund_eq_sgd = format!("{fund_eq:.2}"),
+            sheet_len = sheet.len(),
+            sheet_abs_q = sheet_q,
+            participants = per_owner.join(" | "),
+            "[POOLED] sheet"
+        );
     }
     Some(sheet)
 }
@@ -550,13 +558,18 @@ pub fn pool_take_sheet(
 /// the payload contract: `run_chain` returns `Payload::Shares` and the
 /// sleeve reads the attributed sheet from there. Empty sheet (e.g. every
 /// book all-zero) → no intents → the sleeve emits `NoAction`.
-fn pooled_intents(key: u64, bars: &BarFrame, close_window: bool, day_last: bool) -> Payload {
-    let Some(sheet) = pool_take_sheet(key, bars, close_window, day_last) else {
+fn pooled_intents(key: u64, slot_date: chrono::NaiveDate) -> Payload {
+    let Some(sheet) = pool_take_sheet(key, slot_date) else {
         return Payload::Intents(Vec::new());
     };
     let mut out: crate::strategy_wrappers::intent::IntentMap =
         Vec::with_capacity(sheet.len());
     for (sym, q, owner) in sheet {
+        // q == 0 → explicit flatten. Encoded as per_share(side=0, |q|=0):
+        // the foreign SharesGate lane debug-asserts per-share book counts,
+        // so the flat MUST stay per-share — side==0 routes it to
+        // (sym, 0, owner) and the sleeve's delta order turns the zero
+        // target into a full liquidation of the owner's carried position.
         let it = Intent::per_share(q.signum() as i32, q.abs() as f64, 1.0);
         out.push((sym, Intent { strategy: owner, ..it }));
     }
@@ -583,6 +596,16 @@ pub struct FundGate {
 
 impl FundGate {
     pub fn new(own: String) -> Self {
+        // Registration fold (user ruling): `new` is the ONLY registration
+        // point — every sleeve's chain construction lands here, so by the
+        // time the binary calls `pool_init`, REGISTRY holds exactly the
+        // active sleeve set (deduped, construction order).
+        {
+            let mut reg = REGISTRY.lock().expect("fund registry poisoned");
+            if !reg.iter().any(|n| *n == own) {
+                reg.push(own.clone());
+            }
+        }
         Self {
             own,
             eod_cap: EOD_CAP,
@@ -656,6 +679,20 @@ impl GateLogic for FundGate {
             }
             None => return Err("FundGate requires upstream intents (never a chain head)".into()),
         };
+        // DIAG seam: the chain output AT THE GATE BOUNDARY splits the signal
+        // blackout: n_intents==0 → upstream chain silent; n_intents>0 with
+        // the book staying empty → fresh_shares omitted every entry.
+        if crate::backtester::methods::in_memory::diag::diag_fills() {
+            let n = items.len();
+            let abs_n: f64 = items.iter().map(|(_, it)| it.n_base.abs()).sum();
+            tracing::info!(
+                slot = %ctx.et_date,
+                owner = %self.own,
+                n_intents = n,
+                abs_n_base = format!("{abs_n:.2}"),
+                "[GATE] up"
+            );
+        }
 
         // ── 1) fresh emissions overwrite the book (absolute, legacy
         //       `sub_cur[si][sym] = q`); unnamed syms retain. Track which
@@ -672,11 +709,12 @@ impl GateLogic for FundGate {
         }
 
         // ── 1b) legacy step 3 all-zero early gate on the PRE-scale book ──
-        // (basket all-zero → `None` = emit nothing; a book that SCALES to
-        // all-zero below still emits its zeros — the liquidation path).
+        // (basket all-zero → emit NOTHING — legacy short-circuit before the
+        // classification/scale pass; the engine accounts true up from the
+        // sheet's explicit zeros when the strategy had held positions).
         // POOLED mode pushes even the all-zero book (completion counting)
         // before the early return; if THIS push completes the slot, the
-        // central trim runs HERE (an all-zero sleeve can be the completer).
+        // sheet assembles HERE (an all-zero sleeve can be the completer).
         let all_zero = self.book.values().all(|q| *q == 0);
         if all_zero {
             if let Some(idx) = pool_own_idx(&self.own) {
@@ -690,9 +728,7 @@ impl GateLogic for FundGate {
                 ) {
                     return Ok(pooled_intents(
                         pack_key(ctx.et_date, ctx.mso),
-                        bars,
-                        ctx.close_window,
-                        ctx.day_last,
+                        ctx.et_date,
                     ));
                 }
             }
@@ -720,17 +756,114 @@ impl GateLogic for FundGate {
             }
         }
 
-        // ── 2b) POOLED MODE: no per-sleeve trim. Push own slot state
-        //       (eq, absolute book, priced/fixed gross split) into the
-        //       fund pool. If THIS push completes the slot (this sleeve's
-        //       gate is the LAST participant to fire at this timestamp),
-        //       the ONE central trim runs HERE and the full attributed
-        //       sheet is emitted THROUGH this chain (per-share foreign
-        //       intents → SharesGate pass-through → run_chain output =
-        //       the sheet). Non-completing sleeves emit NOTHING (their
-        //       books entered the pool via the push — no double emission);
-        //       run_chain returns an empty book for them. ──
+        // ── 2b) POOLED MODE — per-sleeve LEGACY semantics (BUG-3 fix):
+        //       each sleeve classifies ITS OWN gross against the FUND-level
+        //       cap at SLOT-START fund vintage (the legacy engine registry
+        //       gave every gate the same slot-start fund equity), scales
+        //       its persistent book IN PLACE (CUMULATIVE across fires —
+        //       legacy step 8 verbatim; the scaled book carries to the next
+        //       slot, which is the ratchet the global-pooled-gross trim was
+        //       missing), then pushes the SCALED book. If THIS push
+        //       completes the slot, the sheet assembles HERE (books are
+        //       already trimmed per owner) and rides this chain — full
+        //       attributed sheet incl. explicit zeros (BUG-2 fix: flattens
+        //       reach the engine). Non-completing sleeves emit NOTHING. ──
         if let Some(idx) = pool_own_idx(&self.own) {
+            let fund_eq_sgd = pool_fund_equity();
+            let eq_usd = fund_eq_sgd / USD_FX;
+            let close_aware =
+                std::env::var("BLENDED5_CLOSE_AWARE").ok().as_deref() == Some("1");
+            let eod_edge = if close_aware { ctx.close_window } else { ctx.day_last };
+            let cap = if eod_edge { self.eod_cap } else { self.intra_cap };
+            let gross = priced + fixed;
+            // PEER budget deduction (legacy engine-registry semantics): own
+            // gross fits inside the budget LEFT by the peers — without this
+            // each sleeve may spend the whole fund budget and Σ gross_i
+            // reaches N·cap·eq (the 2021 over-leverage + u_max 2.5-2.7 vs
+            // the legacy pinned 1.95).
+            let peer_gross = pool_peer_gross(idx);
+
+            let mut scale = 1.0f64;
+            let mut liquidate = false;
+            let mut viol = false;
+            if eq_usd <= 0.0 || !eq_usd.is_finite() {
+                if eq_usd.is_finite() {
+                    scale = 0.0;
+                    liquidate = true;
+                    viol = true;
+                }
+            } else if gross + peer_gross > cap * eq_usd && priced > 0.0 {
+                scale = ((cap * eq_usd - fixed - peer_gross) / priced).max(0.0);
+                viol = true;
+            } else if gross + peer_gross > cap * eq_usd {
+                scale = 1.0;
+                viol = true;
+            }
+            if viol {
+                if eod_edge {
+                    N_VIOL_EOD.fetch_add(1, Ordering::Relaxed);
+                    if liquidate || scale < 1.0 {
+                        N_FIRE_EOD.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    N_VIOL_INTRA.fetch_add(1, Ordering::Relaxed);
+                    if liquidate || scale < 1.0 {
+                        N_FIRE_INTRA.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            if crate::backtester::methods::in_memory::diag::diag_fills() {
+                tracing::info!(
+                    slot = %ctx.et_date,
+                    owner = %self.own,
+                    fund_eq = format!("{fund_eq_sgd:.2}"),
+                    own_gross = format!("{gross:.2}"),
+                    own_priced = format!("{priced:.2}"),
+                    own_fixed = format!("{fixed:.2}"),
+                    peer_gross = format!("{peer_gross:.2}"),
+                    scale = format!("{scale:.4}"),
+                    liquidate,
+                    bg = if eod_edge { "close|day_last" } else { "intra" },
+                    "[POOLED] trim"
+                );
+            }
+
+            // Legacy step 8 verbatim: in-place CUMULATIVE scale over the
+            // persistent book (px from the last_px cache — fresh closes
+            // were extended in step 2; unpriced/q==0/scale≥1 carry).
+            if scale < 1.0 || liquidate {
+                for (sym, q) in self.book.iter_mut() {
+                    let newq = if liquidate {
+                        0
+                    } else {
+                        let px = self.last_px.get(sym).copied().unwrap_or(0.0);
+                        if !px.is_finite() || px <= 0.0 || *q == 0 || scale >= 1.0 {
+                            *q
+                        } else {
+                            ((q.abs() as f64 * scale).floor() as i64)
+                                * (if *q > 0 { 1 } else { -1 })
+                        }
+                    };
+                    *q = newq;
+                }
+                // Refresh the pushed gross to the SCALED book (the stored
+                // vintage should describe what was actually emitted).
+                priced = 0.0;
+                fixed = 0.0;
+                for (sym, q) in self.book.iter() {
+                    if *q == 0 {
+                        continue;
+                    }
+                    let px = self.last_px.get(sym).copied().unwrap_or(0.0);
+                    let g = (*q).abs() as f64 * if px > 0.0 { px } else { 0.0 };
+                    if px > 0.0 {
+                        priced += g;
+                    } else {
+                        fixed += g;
+                    }
+                }
+            }
+
             if pool_push(
                 idx,
                 pack_key(ctx.et_date, ctx.mso),
@@ -741,9 +874,7 @@ impl GateLogic for FundGate {
             ) {
                 return Ok(pooled_intents(
                     pack_key(ctx.et_date, ctx.mso),
-                    bars,
-                    ctx.close_window,
-                    ctx.day_last,
+                    ctx.et_date,
                 ));
             }
             return Ok(Payload::Intents(Vec::new()));
@@ -1006,6 +1137,19 @@ pub fn env_fund_ledger() -> bool {
     std::env::var("BLENDED5_FUND_LEDGER").ok().as_deref() == Some("1")
 }
 
+/// Env gate: size every sleeve off the TOTAL pool equity (Python shared-fund
+/// parity) instead of the per-sleeve fund-share e_i. Default OFF (unset or
+/// any other value = today's e_i behavior, byte-identical). When ON the pool
+/// must exist (multi replay runner); bare constructions fall back to the
+/// e_i path. Rationale: Python sizes each leg off the full shared fund
+/// equity, so per-sleeve e_i (= fund/N) prices books at ~1/4 scale and the
+/// FundGate caps never bind — starving the floor-to-zero fade-cancel path
+/// of cap pressure. Pool sizing restores Python-scale deployment; the caps,
+/// floors, flats and cancel path are untouched (already ported + verified).
+pub fn env_pool_sizing() -> bool {
+    std::env::var("BLENDED5_POOL_SIZING").ok().as_deref() == Some("1")
+}
+
 /// Env gate: monthly subscription in SGD (default 0 = off).
 pub fn env_subscription() -> f64 {
     std::env::var("BLENDED5_SUBSCRIPTION")
@@ -1050,6 +1194,40 @@ static POOL_LAST_EQ: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
     AtomicU64::new(0),
     AtomicU64::new(0),
 ];
+/// Presence mask: bit i set once participant i has pushed AT LEAST ONCE.
+/// The ledger reconcile never fires before EVERY participant has pushed —
+/// pre-push reads are zeros (a sleeve's flush reads the vintage BEFORE its
+/// own chain pushes), and seeding `saved_own` from the day-1 zero vintage
+/// would corrupt every later reconcile by +SE_SLEEVE per sleeve.
+static POOL_SEEN: AtomicU32 = AtomicU32::new(0);
+
+/// Per-participant last-pushed priced / fixed gross (f64 bits) — the peers'
+/// freshest known gross for the per-sleeve cap classification. Legacy used
+/// the engine-registry SLOT-START snapshot (peer gross identical for every
+/// gate in the slot); here the statics roll forward on every push, so a
+/// late completer sees its peers' CURRENT-slot (already-trimmed) pushes —
+/// strictly tighter enforcement, same observable property: the LAST trim
+/// of each slot pins the fund total under the cap.
+static POOL_LAST_PRICED: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
+static POOL_LAST_FIXED: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
 
 /// Fund inputs for the ledger reconcile: (residual, {name → last-pushed
 /// sleeve eq SGD}). No-op-safe: empty map when the pool is absent.
@@ -1076,6 +1254,15 @@ pub(crate) fn pool_fund_inputs() -> (f64, HashMap<String, f64>) {
 pub fn ledger_on_flush(et_date: chrono::NaiveDate) {
     FUND_LEDGER.with(|l| {
         if let Some(l) = l.borrow_mut().as_mut() {
+            // Vintage gate: the reconcile fires only once EVERY participant
+            // has pushed at least once (pre-push POOL_LAST_EQ reads are
+            // zeros — seeding saved_own from them would add the full seed
+            // to every e_i at the next session boundary).
+            let Some(ring) = pool() else { return };
+            let full = (1u32 << ring.names.len()) - 1;
+            if POOL_SEEN.load(Ordering::Relaxed) != full {
+                return;
+            }
             let (residual, eqs) = pool_fund_inputs();
             if eqs.is_empty() {
                 return;
@@ -1085,11 +1272,52 @@ pub fn ledger_on_flush(et_date: chrono::NaiveDate) {
     });
 }
 
+/// Total pool equity (residual + Σ sleeve eq) for pool-share sizing.
+/// `None` when the pool is absent (bare unit constructions, solo runs).
+pub fn pool_total_equity() -> Option<f64> {
+    let (residual, eqs) = pool_fund_inputs();
+    if eqs.is_empty() {
+        return None;
+    }
+    let total = residual + eqs.values().sum::<f64>();
+    if total.is_finite() {
+        Some(total)
+    } else {
+        None
+    }
+}
+
 /// Sleeve's sizing base: the fund-share book when the ledger mode is on and
 /// covers the sleeve, else `None` (caller falls back to own equity).
+/// `BLENDED5_POOL_SIZING=1` overrides with total pool equity (Python
+/// shared-fund parity); absent pool falls back to the e_i path.
 pub fn sizing_base(name: &str) -> Option<f64> {
     if !env_fund_ledger() {
         return None;
     }
+    if env_pool_sizing() {
+        if let Some(total) = pool_total_equity() {
+            return Some(total);
+        }
+    }
     FUND_LEDGER.with(|l| l.borrow().as_ref().and_then(|l| l.eq_for(name)))
+}
+
+#[cfg(test)]
+mod pool_sizing_tests {
+    use super::*;
+
+    #[test]
+    fn pool_sizing_flag_defaults_off() {
+        // No other test in this binary touches BLENDED5_POOL_SIZING, so the
+        // process env is clean: default must be OFF (today's behavior).
+        assert!(!env_pool_sizing());
+    }
+
+    #[test]
+    fn sizing_base_ignores_pool_flag_without_ledger() {
+        // LEDGER unset in unit tests (env-gated) → None regardless of the
+        // pool-sizing seam: default-off paths are untouched.
+        assert_eq!(sizing_base("blended5_tc1"), None);
+    }
 }
