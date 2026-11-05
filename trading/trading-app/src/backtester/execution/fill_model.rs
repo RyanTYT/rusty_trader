@@ -297,6 +297,60 @@ impl FillModel for LimitFillModel {
     }
 }
 
+/// OptimisticLimitFillModel — optimistic (tape-set) passive-limit fill: the
+/// py `thorough.py::_process_pending_limits` port. Same resting/crossing
+/// conditions as [`LimitFillModel`], but on an open that GAPS THROUGH the
+/// limit the fill happens at the OPEN — the market's actual first trade
+/// ("the fund is the passive side, the tape sets the price"; never better
+/// than the tape, never capped at a stale limit on a gap bar). Selected
+/// ENGINE-WIDE at initialisation (`LIMIT_FILL=optimistic`, see
+/// `optimistic_limits()`); strategies are untouched.
+#[derive(Clone)]
+pub struct OptimisticLimitFillModel {
+    pub limit: f64,
+    pub is_buy: bool,
+}
+impl FillModel for OptimisticLimitFillModel {
+    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
+    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+        let crossed = if self.is_buy {
+            bar.low <= self.limit
+        } else {
+            bar.high >= self.limit
+        };
+        if crossed {
+            let price = if self.is_buy {
+                if bar.open <= self.limit { bar.open } else { self.limit }
+            } else {
+                if bar.open >= self.limit { bar.open } else { self.limit }
+            };
+            FillEval::Fill { price }
+        } else {
+            FillEval::Rest
+        }
+    }
+    fn is_immediate(&self) -> bool {
+        false
+    }
+}
+
+/// Engine-level LMT fill semantics, chosen ONCE at initialisation (first
+/// `fill_model_for` use reads the seam and caches it). Default = classic
+/// at-limit cap (`LimitFillModel`). `LIMIT_FILL=optimistic` selects
+/// [`OptimisticLimitFillModel`] for ALL LMT orders run-wide — the
+/// tape-set pricing form (an open that gaps through the limit fills at
+/// the open, py `thorough.py::_process_pending_limits` port). Strategies
+/// are untouched: they always emit LMT as normal; only the fill model
+/// that decides how the order is filled changes.
+static LIMIT_FILL_OPTIMISTIC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+pub(crate) fn optimistic_limits() -> bool {
+    *LIMIT_FILL_OPTIMISTIC.get_or_init(|| {
+        std::env::var("LIMIT_FILL")
+            .map(|v| v.eq_ignore_ascii_case("optimistic"))
+            .unwrap_or(false)
+    })
+}
+
 /// Market stop — fills on breach at `stop ± pct_of_bar×(high−low)` (adverse),
 /// the pre-existing orb_general model (used when STOP has no limit_price).
 #[derive(Clone)]
@@ -383,7 +437,17 @@ pub fn fill_model_for(order: &Order, slippage_bps: f64, stop_pct_of_bar: f64) ->
         "LMT" => order
             .limit_price
             .filter(|&p| p > 0.0)
-            .map(|limit| Box::new(LimitFillModel { limit, is_buy }) as Box<dyn FillModel>),
+            .map(|limit| {
+                // Semantics of plain LMT fills are an ENGINE-LEVEL setting,
+                // chosen once at initialisation (LIMIT_FILL env; default =
+                // touch = the classic at-limit cap). Strategies always emit
+                // LMT as normal; the fill model decides how it fills.
+                if optimistic_limits() {
+                    Box::new(OptimisticLimitFillModel { limit, is_buy }) as Box<dyn FillModel>
+                } else {
+                    Box::new(LimitFillModel { limit, is_buy }) as Box<dyn FillModel>
+                }
+            }),
         "STP" => {
             let stop = order.aux_price.unwrap_or(0.0);
             match order.limit_price.filter(|&p| p > 0.0) {

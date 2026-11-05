@@ -22,7 +22,8 @@ use ibapi::orders::Action;
 use ibapi::prelude::Contract;
 
 use crate::backtester::execution::fill_model::{
-    FillModel, LimitFillModel, MarketFillModel, StopLimitFillModel, StopMarketFillModel,
+    FillModel, LimitFillModel, MarketFillModel, OptimisticLimitFillModel, StopLimitFillModel,
+    StopMarketFillModel, optimistic_limits,
 };
 use crate::execution::order_engine::OrderIBKR;
 
@@ -142,10 +143,19 @@ pub fn build_resting_orders(
         let qty = parent.order.total_quantity;
 
         // ── Entry: limit if `LMT` with a limit price, else market ──
+        // Fill semantics are an engine-level choice (LIMIT_FILL=optimistic
+        // → tape-set open pricing on gap-throughs, py pending-limits port);
+        // strategies emit plain LMT either way, only the model differs.
         let is_buy = matches!(entry_action, Action::Buy);
         let entry_model: Box<dyn FillModel> = if parent.order.order_type == "LMT" {
             match parent.order.limit_price {
-                Some(lp) if lp > 0.0 => Box::new(LimitFillModel { limit: lp, is_buy }),
+                Some(lp) if lp > 0.0 => {
+                    if optimistic_limits() {
+                        Box::new(OptimisticLimitFillModel { limit: lp, is_buy })
+                    } else {
+                        Box::new(LimitFillModel { limit: lp, is_buy })
+                    }
+                }
                 _ => Box::new(MarketFillModel { slippage_bps, is_buy }),
             }
         } else {
@@ -209,7 +219,13 @@ pub fn build_resting_orders(
                             bracket_id,
                             role: OrderRole::Exit(CloseReason::TakeProfit),
                             active: false,
-                            fill_model: Some(Box::new(LimitFillModel { limit: tp, is_buy: child_is_buy })),
+                            fill_model: Some(if optimistic_limits() {
+                                Box::new(OptimisticLimitFillModel { limit: tp, is_buy: child_is_buy })
+                                    as Box<dyn FillModel>
+                            } else {
+                                Box::new(LimitFillModel { limit: tp, is_buy: child_is_buy })
+                                    as Box<dyn FillModel>
+                            }),
                             close_mso: None,
                             close_is_mid: false,
                             status: RestingStatus::Resting,
