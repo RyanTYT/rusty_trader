@@ -220,6 +220,7 @@ pub fn handle_bar_update_outcome_in_memory(
                             target_bar.get_time(),
                             order_id,
                             &r.order_ref,
+                            &r.oca_group,
                         )?;
                         r.status = RestingStatus::Filled;
                     }
@@ -427,6 +428,9 @@ fn fill_order_in_memory<'a>(
             fees,
             action: format!("{:?}", order.action),
         });
+        // order-id BEFORE the mailbox push: the stamped id == the value the
+        // own path's synthetic execution carries (post-increment convention).
+        *order_id += 1;
         mailbox_push(
             &tgt.strategy_name,
             MailFill {
@@ -437,6 +441,8 @@ fn fill_order_in_memory<'a>(
                     .get_time()
                     .with_timezone(&New_York)
                     .date_naive(),
+                order_id: *order_id as i64,
+                oca_group: order.oca_group.clone(),
             },
         );
         let cash_sgd_delta = -(fill.fill_qty * fill.fill_price + fees) * fx_rate;
@@ -460,7 +466,6 @@ fn fill_order_in_memory<'a>(
             fees,
             fx_rate,
         );
-        *order_id += 1;
         return Ok(strategy);
     }
 
@@ -587,6 +592,7 @@ fn process_resting_orders<'a>(
                         bar.get_time(),
                         order_id,
                         &order.order_ref,
+                        &order.oca_group,
                     )?;
                     filled_exit_brackets.insert(order.bracket_id);
                 }
@@ -622,6 +628,7 @@ fn process_resting_orders<'a>(
                         bar.get_time(),
                         order_id,
                         &order.order_ref,
+                        &order.oca_group,
                     )?;
                     order.status = RestingStatus::Filled;
                     match order.role {
@@ -659,6 +666,7 @@ fn process_resting_orders<'a>(
                     bar.get_time(),
                     order_id,
                     &order.order_ref,
+                    &order.oca_group,
                 )?;
                 order.status = RestingStatus::Filled;
                 did_fill = true;
@@ -720,6 +728,9 @@ fn fill_order_at_price<'a>(
     // §8 pooled emission: the completing sleeve emits on behalf of ALL
     // sleeves — every order's `order_ref` names its OWNING strategy.
     order_ref: &str,
+    // OCA group of the order being filled ("" = none) — threaded into the
+    // mailbox so the OrderGate can join fills to its entries (§4).
+    oca_group: &str,
 ) -> Result<Option<&'a mut StrategyEnum>, String> {
     // FX rate: contract.currency → SGD.
     let fx_rate = if contract.currency.to_string() == "SGD" {
@@ -770,6 +781,8 @@ fn fill_order_at_price<'a>(
             fees,
             action: format!("{:?}", action),
         });
+        // order-id BEFORE the mailbox push (post-increment convention).
+        *order_id += 1;
         mailbox_push(
             &tgt.strategy_name,
             MailFill {
@@ -777,6 +790,8 @@ fn fill_order_at_price<'a>(
                 qty: signed_qty as i64,
                 px: fill_price,
                 date: bar_time.with_timezone(&New_York).date_naive(),
+                order_id: *order_id as i64,
+                oca_group: oca_group.to_string(),
             },
         );
         let sgd_value = signed_qty * fill_price * fx_rate;
@@ -810,7 +825,6 @@ fn fill_order_at_price<'a>(
             fees,
             fx_rate,
         );
-        *order_id += 1;
         return Ok(strategy); // peer fills reach their own chain via the mailbox
     }
 

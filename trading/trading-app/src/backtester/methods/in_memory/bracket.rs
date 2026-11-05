@@ -156,7 +156,7 @@ pub fn build_resting_orders(
             action: entry_action,
             qty,
             order_ref: parent.order.order_ref.clone(),
-            oca_group: String::new(),
+            oca_group: parent.order.oca_group.clone(),
             bracket_id,
             role: OrderRole::Entry,
             active: true,

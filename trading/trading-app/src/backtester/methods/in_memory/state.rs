@@ -218,6 +218,11 @@ pub struct MailFill {
     pub qty: i64,
     pub px: f64,
     pub date: chrono::NaiveDate,
+    /// Engine order-id counter value — mailbox id == the execution.order_id
+    /// the own-path stamp convention carries (HYBRID_ROLLOUT.md §1).
+    pub order_id: i64,
+    /// OCA group carried from the emitted Order ("" = none).
+    pub oca_group: String,
 }
 
 thread_local! {

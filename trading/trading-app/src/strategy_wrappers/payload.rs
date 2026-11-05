@@ -60,4 +60,11 @@ pub struct RealisedFill {
     /// Fill price (bar close +/- engine slippage).
     pub px: f64,
     pub date: NaiveDate,
+    /// Engine order-id counter value stamped into the synthetic execution —
+    /// mailbox id == execution.order_id by construction (HYBRID_ROLLOUT.md
+    /// §1). Live IB fills carry the broker's order id.
+    pub order_id: i64,
+    /// OCA group carried from the emitted Order ("" = none). The OrderGate
+    /// joins fills to its resting entries on this field (§4).
+    pub oca_group: String,
 }
