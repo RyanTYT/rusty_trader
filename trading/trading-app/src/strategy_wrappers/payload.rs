@@ -51,6 +51,17 @@ impl ShareOut {
     }
 }
 
+/// OrderGate emit-descriptor prefix: stamped on every OrderGate-placed
+/// entry's oca_group. Doubles as the fill-join key in the gate's
+/// `on_realised` and the engine entry-sibling cancel trigger in the
+/// reconcile. Lives here (shared home) so both the engine and the gate
+/// import the same literals; order_gate.rs re-exports them.
+pub const OG_PREFIX: &str = "og-";
+/// OrderGate CANCEL marker prefix: an emitted order carrying this prefix
+/// cancels the engine's working resting entries for (symbol, order_ref,
+/// opposite action) — the reconcile EmitOrders arm honors it.
+pub const OG_CANCEL_PREFIX: &str = "ogcancel-";
+
 /// Mid-chain emission: sizing intents (before the shares tail) or engine
 /// shares (post `SharesGate`). Python duck-types this ("dict of intents" /
 /// "{sym: qty}"); Rust splits them so the tail conversion is type-checked.

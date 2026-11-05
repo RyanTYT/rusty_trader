@@ -171,6 +171,32 @@ pub fn handle_bar_update_outcome_in_memory(
             let stop_pct_of_bar = 0.5; // orb_general legacy market-stop slippage
             let mut resting = build_resting_orders(orders, slippage_bps, stop_pct_of_bar);
 
+            // ── OrderGate cancel seam: an "ogcancel-"-prefixed emitted order
+            // cancels the engine's working resting entries for (this symbol,
+            // this order_ref, OPPOSITE action). Same-slot semantics match
+            // python: the pending-limit fill checks already ran in STEP 1
+            // (before the strategy), so the cancel prevents FUTURE fills
+            // only. This is the only engine-side sweep now that the EOD
+            // force-close block is removed — every cancel path is
+            // load-bearing.
+            {
+                let mut guard = state
+                    .resting_orders
+                    .write()
+                    .expect("InMemoryState resting_orders poisoned");
+                for o in orders
+                    .iter()
+                    .filter(|o| o.order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_CANCEL_PREFIX))
+                {
+                    guard.retain(|r| {
+                        !(r.contract.symbol == contract.symbol
+                            && r.order_ref == o.order.order_ref
+                            && r.status == RestingStatus::Resting
+                            && r.action != o.order.action)
+                    });
+                }
+            }
+
             // Immediate (market/midprice) entries fill NOW, against their own bar.
             // Entries whose OWN bar is absent at this slot defer: they rest as a
             // market-class order and fill at the symbol's own next bar (never at
@@ -559,6 +585,11 @@ fn process_resting_orders<'a>(
     let mut remaining: Vec<RestingOrder> = Vec::new();
     let mut filled_entry_brackets: HashSet<usize> = HashSet::new();
     let mut filled_exit_brackets: HashSet<usize> = HashSet::new();
+    // OrderGate entry-sibling cancel: oca_groups of gate-placed entries
+    // ("og-…") that filled THIS bar — one sibling filling cancels the
+    // rest of the group (mirrors filled_exit_brackets' sibling-cancel for
+    // gate-placed entries, which carry no bracket exits).
+    let mut filled_entry_groups: HashSet<String> = HashSet::new();
 
     let mut strategy = strategy_opt;
     for mut order in orders {
@@ -571,34 +602,42 @@ fn process_resting_orders<'a>(
             continue; // already filled/cancelled — drop
         }
 
-        // ── EOD (mso >= 385): force-close active exits at close/mid, cancel the rest.
-        if mso >= 385 {
-            if order.active && matches!(order.role, OrderRole::Exit(_)) {
-                if let Some(o) = ohlc {
-                    let price = if order.close_is_mid {
-                        (o.high + o.low) / 2.0
-                    } else {
-                        o.close
-                    };
-                    strategy = fill_order_at_price(
-                        config,
-                        strategy,
-                        prices,
-                        state,
-                        &order.contract,
-                        order.action,
-                        order.qty,
-                        price,
-                        bar.get_time(),
-                        order_id,
-                        &order.order_ref,
-                        &order.oca_group,
-                    )?;
-                    filled_exit_brackets.insert(order.bracket_id);
-                }
-            }
-            continue; // everything for this contract is dropped at EOD
-        }
+        // ── EOD (mso >= 385): force-close active exits at close/mid, cancel
+        // the rest. REMOVED 2026-11-05 (user ruling): the only strategies
+        // that relied on it (vp_touch brackets, orb_general market-stop
+        // closes) are DEPRECATED. Resting entries now persist overnight
+        // exactly like python pending limits; lifecycle is owned by the
+        // OrderGate (TTL expiry / contradicting-intent cancels via the
+        // ogcancel- marker seam in the EmitOrders arm) and by the OCA
+        // sibling cancels below. NOTE: with this block gone there is NO
+        // unconditional sweep — every cancel path is now load-bearing.
+        // if mso >= 385 {
+        //     if order.active && matches!(order.role, OrderRole::Exit(_)) {
+        //         if let Some(o) = ohlc {
+        //             let price = if order.close_is_mid {
+        //                 (o.high + o.low) / 2.0
+        //             } else {
+        //                 o.close
+        //             };
+        //             strategy = fill_order_at_price(
+        //                 config,
+        //                 strategy,
+        //                 prices,
+        //                 state,
+        //                 &order.contract,
+        //                 order.action,
+        //                 order.qty,
+        //                 price,
+        //                 bar.get_time(),
+        //                 order_id,
+        //                 &order.order_ref,
+        //                 &order.oca_group,
+        //             )?;
+        //             filled_exit_brackets.insert(order.bracket_id);
+        //         }
+        //     }
+        //     continue; // everything for this contract is dropped at EOD
+        // }
 
         // Inactive exits wait for their entry to fill.
         if !order.active {
@@ -634,6 +673,9 @@ fn process_resting_orders<'a>(
                     match order.role {
                         OrderRole::Entry => {
                             filled_entry_brackets.insert(order.bracket_id);
+                            if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                                filled_entry_groups.insert(order.oca_group.clone());
+                            }
                         }
                         OrderRole::Exit(_) => {
                             filled_exit_brackets.insert(order.bracket_id);
@@ -673,6 +715,9 @@ fn process_resting_orders<'a>(
                 match order.role {
                     OrderRole::Entry => {
                         filled_entry_brackets.insert(order.bracket_id);
+                        if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                            filled_entry_groups.insert(order.oca_group.clone());
+                        }
                     }
                     OrderRole::Exit(_) => {
                         filled_exit_brackets.insert(order.bracket_id);
@@ -694,6 +739,14 @@ fn process_resting_orders<'a>(
             if filled_exit_brackets.contains(&order.bracket_id) {
                 order.status = RestingStatus::Cancelled; // an exit filled → cancel siblings
             }
+        }
+        // OrderGate entry-sibling mirror: one "og-" entry of a group filled
+        // this bar → cancel sibling ENTRIES sharing the group (non-empty
+        // groups only — engine-placed orders carry "").
+        else if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+            && filled_entry_groups.contains(&order.oca_group)
+        {
+            order.status = RestingStatus::Cancelled;
         }
     }
 
