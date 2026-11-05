@@ -18,12 +18,38 @@ pub use crate::database::models_crud::historical_data::historical_data::Historic
 /// `BTreeMap` for deterministic iteration (parity-risk ledger #1).
 pub type BarFrame = BTreeMap<String, HistoricalDataFullKeys>;
 
-/// Post-`SharesGate` emission entry: (symbol, signed quantity, attributed
-/// owner). `Some(name)` = pooled cross-sleeve attribution (§8) — the intent
+/// Post-`SharesGate` emission entry: symbol, signed quantity, attributed
+/// owner. `Some(name)` = pooled cross-sleeve attribution (§8) — the intent
 /// carried `strategy: Some(name)` and rides verbatim to `order_ref` at the
 /// sleeve's order assembly. `None` = the owning sleeve (filled with its own
 /// name there — `SharesGate` is name-free by contract).
-pub type ShareOut = (String, i64, Option<String>);
+///
+/// The last two fields carry the OrderGate hybrid machinery (§4 rollout —
+/// Section 2 widening, inert until the OrderGate exists):
+/// - `limit_px`: `Some(px)` = rest as a passive LMT at `px` (OrderGate
+///   hybrid mode); `None` = plain MKT.
+/// - `oca_group`: the OrderGate emit descriptor (`og-…`), cancel marker
+///   (`ogcancel-…`), or engine OCA group; `None` = no OCA.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShareOut {
+    pub sym: String,
+    pub qty: i64,
+    pub owner: Option<String>,
+    pub limit_px: Option<f64>,
+    pub oca_group: Option<String>,
+}
+
+impl ShareOut {
+    pub fn new(
+        sym: String,
+        qty: i64,
+        owner: Option<String>,
+        limit_px: Option<f64>,
+        oca_group: Option<String>,
+    ) -> Self {
+        Self { sym, qty, owner, limit_px, oca_group }
+    }
+}
 
 /// Mid-chain emission: sizing intents (before the shares tail) or engine
 /// shares (post `SharesGate`). Python duck-types this ("dict of intents" /

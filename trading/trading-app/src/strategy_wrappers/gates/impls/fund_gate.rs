@@ -685,7 +685,7 @@ pub fn pool_take_sheet(
     let mut sheet: Vec<ShareOut> = Vec::new();
     for (name, _eq, book, _priced, _fixed) in view.participants.iter() {
         for (sym, q) in book.iter() {
-            sheet.push((sym.clone(), *q, Some(name.clone())));
+            sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
         }
     }
     if diag::diag_fills() {
@@ -704,7 +704,7 @@ pub fn pool_take_sheet(
                 )
             })
             .collect();
-        let sheet_q: i64 = sheet.iter().map(|(_, q, _)| q.abs()).sum();
+        let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
         tracing::info!(
             slot = %slot_date,
             fund_eq_sgd = format!("{fund_eq:.2}"),
@@ -750,11 +750,11 @@ pub fn pool_take_trimmed_sheet(
         }
         store_last_trimmed(i, key, &scaled);
         for (sym, q) in scaled.iter() {
-            sheet.push((sym.clone(), *q, Some(name.clone())));
+            sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
         }
     }
     if diag::diag_fills() {
-        let sheet_q: i64 = sheet.iter().map(|(_, q, _)| q.abs()).sum();
+        let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
         let per_owner: Vec<String> = view
             .participants
             .iter()
@@ -795,14 +795,17 @@ fn pooled_intents(key: u64, slot_date: chrono::NaiveDate, eod_edge: bool) -> Pay
     };
     let mut out: crate::strategy_wrappers::intent::IntentMap =
         Vec::with_capacity(sheet.len());
-    for (sym, q, owner) in sheet {
+    for s in sheet {
+        let ShareOut { sym, qty: q, owner, .. } = s;
         // q == 0 → explicit flatten. Encoded as per_share(side=0, |q|=0):
         // the foreign SharesGate lane debug-asserts per-share book counts,
         // so the flat MUST stay per-share — side==0 routes it to
         // (sym, 0, owner) and the sleeve's delta order turns the zero
         // target into a full liquidation of the owner's carried position.
+        // limit_px/oca_group explicitly reset: trimmed-sheet intents never
+        // inherit stale tags (sheet entries here carry None by construction).
         let it = Intent::per_share(q.signum() as i32, q.abs() as f64, 1.0);
-        out.push((sym, Intent { strategy: owner, ..it }));
+        out.push((sym, Intent { strategy: owner, limit_px: None, oca_group: None, ..it }));
     }
     Payload::Intents(out)
 }

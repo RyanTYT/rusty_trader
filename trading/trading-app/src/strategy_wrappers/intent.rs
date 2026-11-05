@@ -35,6 +35,13 @@ use super::payload::ShareOut;
 ///   = attribution, fills route by order_ref). Foreign intents ride the
 ///   SharesGate verbatim as PER-SHARE book counts: no printable-omit, no
 ///   dollars conversion, explicit flats kept.
+/// - `limit_px`: `Some(px)` = the OrderGate (§4 hybrid) should rest this
+///   entry as a passive LMT at `px` instead of crossing at market. `None`
+///   = market. Ignored by every qty arithmetic path.
+/// - `oca_group`: the OrderGate's emit descriptor (`og-…`), cancel marker
+///   (`ogcancel-…`), or engine OCA group; `None` = plain market / no OCA.
+///   Carried through SharesGate into `ShareOut.oca_group` so fills can be
+///   joined back by `order_id`/group. Ignored by qty arithmetic.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Intent {
     pub side: i32,
@@ -44,32 +51,34 @@ pub struct Intent {
     pub sc: f64,
     pub unscaled: bool,
     pub strategy: Option<String>,
+    pub limit_px: Option<f64>,
+    pub oca_group: Option<String>,
 }
 
 impl Intent {
     /// Entry intent, dollars path (`n_base` notional, weights applied later).
     pub const fn long(n_base: f64, w: f64) -> Self {
-        Self { side: 1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None }
+        Self { side: 1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
     pub const fn short(n_base: f64, w: f64) -> Self {
-        Self { side: -1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None }
+        Self { side: -1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
     /// Explicit flatten target (zero notional — sc/w irrelevant).
     pub const fn flat() -> Self {
-        Self { side: 0, n_base: 0.0, w: 1.0, per_share: false, sc: 1.0, unscaled: false, strategy: None }
+        Self { side: 0, n_base: 0.0, w: 1.0, per_share: false, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
     /// Vol-target intent (`n_base` = vt size; raw = (vt*|w|)*sc, no px).
     pub const fn per_share(side: i32, vt: f64, w: f64) -> Self {
-        Self { side, n_base: vt, w, per_share: true, sc: 1.0, unscaled: false, strategy: None }
+        Self { side, n_base: vt, w, per_share: true, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
     /// Battery SigStrat dollars-fallback: plain notional, NEVER eq-stamped
     /// (battery SH 445-447; EqScaleGate skips `unscaled` intents).
     pub const fn unscaled(side: i32, n_base: f64, w: f64) -> Self {
-        Self { side, n_base, w, per_share: false, sc: 1.0, unscaled: true, strategy: None }
+        Self { side, n_base, w, per_share: false, sc: 1.0, unscaled: true, strategy: None, limit_px: None, oca_group: None }
     }
 }
 
@@ -94,7 +103,7 @@ pub fn shares_from_intents(intents: &IntentMap, bars: &BarFrame, zero_is_flat: b
     let mut out: Vec<ShareOut> = Vec::with_capacity(intents.len());
     for (sym, it) in intents {
         if let Some(q) = intent_share(sym, it, bars, zero_is_flat) {
-            out.push((sym.clone(), q, None));
+            out.push(ShareOut::new(sym.clone(), q, None, it.limit_px, it.oca_group.clone()));
         }
     }
     out
