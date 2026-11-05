@@ -109,6 +109,11 @@ strategy_gate_enum! {
     // §8 P2: the fund-level cap gate — ONE instance per sleeve, chained
     // after the sleeve's weight gates and before its Shares tail (sleeve.rs).
     FundGate(crate::strategy_wrappers::gates::impls::fund_gate::FundGate),
+    // §4 hybrid: resting-limit persistence + print-gated TTL + OCA-aware
+    // cancels — ONE instance per sleeve, chained AFTER FundGate, BEFORE the
+    // Shares tail (sleeve.rs `with_order_gate`). Env-gated off by default
+    // (BLENDED5_HYB); off-path is a byte-identical pass-through.
+    OrderGate(crate::strategy_wrappers::gates::impls::order_gate::OrderGate),
 }
 
 /// Convenience constructor for the `BasicStrategy` head variant.

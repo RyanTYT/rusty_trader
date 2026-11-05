@@ -172,13 +172,18 @@ pub fn handle_bar_update_outcome_in_memory(
             let mut resting = build_resting_orders(orders, slippage_bps, stop_pct_of_bar);
 
             // ── OrderGate cancel seam: an "ogcancel-"-prefixed emitted order
-            // cancels the engine's working resting entries for (this symbol,
-            // this order_ref, OPPOSITE action). Same-slot semantics match
-            // python: the pending-limit fill checks already ran in STEP 1
-            // (before the strategy), so the cancel prevents FUTURE fills
-            // only. This is the only engine-side sweep now that the EOD
-            // force-close block is removed — every cancel path is
-            // load-bearing.
+            // cancels the engine's working resting entries for (the marker
+            // order's OWN symbol, this order_ref). §4 refinement: match the
+            // marker order's contract (a sheet carries many syms — the BAR's
+            // contract is unrelated) and drop the action condition (a
+            // flat-cancel of a resting SELL emits a same-action sell-to-flat;
+            // the gate only stamps the marker when cancelling its own entry
+            // for that exact key, so over-cancellation is impossible).
+            // Same-slot semantics match python: the pending-limit fill checks
+            // already ran in STEP 1 (before the strategy), so the cancel
+            // prevents FUTURE fills only. This is the only engine-side sweep
+            // now that the EOD force-close block is removed — every cancel
+            // path is load-bearing.
             {
                 let mut guard = state
                     .resting_orders
@@ -189,10 +194,9 @@ pub fn handle_bar_update_outcome_in_memory(
                     .filter(|o| o.order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_CANCEL_PREFIX))
                 {
                     guard.retain(|r| {
-                        !(r.contract.symbol == contract.symbol
+                        !(r.contract.symbol == o.contract.symbol
                             && r.order_ref == o.order.order_ref
-                            && r.status == RestingStatus::Resting
-                            && r.action != o.order.action)
+                            && r.status == RestingStatus::Resting)
                     });
                 }
             }
