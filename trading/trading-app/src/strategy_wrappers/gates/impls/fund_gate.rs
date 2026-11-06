@@ -74,17 +74,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::backtester::methods::in_memory::{diag, state};
-use crate::execution::order_engine::OrderIBKR;
-use crate::strategy::blended5_fund::fund::{
-    EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX, ibkr_primary_exchange,
-};
-use crate::strategy::strategy::BarUpdateOutcome;
+use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX};
 use crate::strategy_wrappers::gate::GateLogic;
 use crate::strategy_wrappers::intent::Intent;
 use crate::strategy_wrappers::payload::{BarFrame, Payload, ShareOut};
 use crate::strategy_wrappers::strategy::ClockCtx;
-use ibapi::contracts::Contract;
-use ibapi::orders::{Action, Order, TimeInForce};
 
 /// Global fire/violation instrumentation (aggregated across instances; the
 /// legacy FundBook kept per-book recs — the multi runner logs these once at
@@ -474,7 +468,6 @@ fn pool_take_slot(key: u64) -> Option<FundSlotView> {
     }
     let residual = f64::from_bits(POOL_RESIDUAL.load(Ordering::Relaxed));
     Some(FundSlotView {
-        key,
         residual,
         participants: parts,
     })
@@ -482,7 +475,6 @@ fn pool_take_slot(key: u64) -> Option<FundSlotView> {
 
 /// Complete-slot snapshot handed to the pooled trim / ledger.
 struct FundSlotView {
-    key: u64,
     residual: f64,
     /// (name, sleeve eq SGD, absolute book, priced gross, fixed gross).
     participants: Vec<(String, f64, Arc<BTreeMap<String, i64>>, f64, f64)>,
