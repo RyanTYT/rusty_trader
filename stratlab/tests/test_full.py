@@ -59,20 +59,26 @@ class BuySell:
             self.start_date = ctx.clock.et_date
         if ctx.clock.et_date == self.start_date and ctx.clock.mso == 0 and not self.done:
             return Outcome.set_targets({"T": 1.0})
-        if ctx.clock.et_date != self.start_date and ctx.clock.mso >= 10:
+        if ctx.clock.et_date != self.start_date and ctx.clock.mso >= 5:
             self.done = True
             return Outcome.set_targets({"T": 0.0})
         return Outcome.no_action()
 
 
 def test_full_report_engine():
+    # EngineConfig.fill_lag_bars defaults to 1 (Rust replay parity): targets
+    # set on a bar print on the NEXT bar. Entry targets fire on day-1 mso==0
+    # -> fill at day-1 mso=5min (101). The exit must fire EARLY on day 2
+    # (mso>=5min) so the flatten's next bar still exists inside the session;
+    # firing on the last bar (mso>=10) leaves the position open at stream end
+    # (n_open=1, n_closed=0) because nothing follows to settle it.
     uni = _uni([("2024-01-02", [100.0, 101.0, 102.0]), ("2024-01-03", [103.0, 104.0, 105.0])])
     res = run_thorough(uni, BuySell(), EngineConfig(starting_equity=1000.0, slippage_bps=0.0))
     report = full_report(uni, res.state.fills, equity_curve=res.results.equity_curve)
     assert report["trade_summary"]["n_closed"] == 1
     assert report["positive_pnl_by_n"]["n_entries"] == 1
     assert "calmar" in report["portfolio_risk"]
-    assert report["trade_summary"]["win_rate"] == 1.0  # bought 100 -> sold 105
+    assert report["trade_summary"]["win_rate"] == 1.0  # bought 101 (lag-1 next-bar fill) -> sold 105
 
 
 if __name__ == "__main__":
