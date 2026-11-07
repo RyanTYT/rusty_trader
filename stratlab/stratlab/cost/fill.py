@@ -152,9 +152,56 @@ class StopLimitFillModel:
         return FillEval.fill(self.limit) if crossed else FillEval.rest()
 
 
+class BarExtremeFillModel:
+    """Gap-through stop: fills at the triggering bar's ADVERSE EXTREME.
+
+    A stop-market order that is breached mid-bar can be filled anywhere between
+    the stop price and the worst price printed on that bar. This model takes the
+    worst one:
+
+        a sell stop (exiting a long) fills at the bar's LOW
+        a buy  stop (exiting a short) fills at the bar's HIGH
+
+    Where the bar merely grazes the stop, the extreme *is* the stop, so this
+    coincides with an exact fill. The two conventions differ only on bars that
+    gap through, which is precisely the risk being priced.
+
+    Why this is the right pessimistic convention rather than a caricature: the
+    extreme is a price that actually traded. No fill convention can be worse
+    than the worst print on the bar, so this is a genuine bound, not a guess.
+    It is also strictly *less* punitive than
+    :class:`StopMarketFillModel` with ``pct_of_bar > 0``, which extrapolates
+    past the bar's own range and can fill at a price that never existed.
+
+    Note this model evaluates against one bar and is not order-bearing across
+    bars; like ``StopMarketFillModel`` it is applied to the bar on which the
+    breach is detected.
+    """
+
+    def __init__(self, stop: float, is_buy: bool):
+        self.stop = stop
+        self.is_buy = is_buy
+
+    def evaluate(self, bar: BarOhlc) -> FillEval:
+        # is_buy=True means the resting order is a BUY, i.e. a buy stop used to
+        # cover a short: it triggers when price rises to the stop and fills
+        # adversely at the bar HIGH.
+        breached = (bar.high >= self.stop) if self.is_buy else (bar.low <= self.stop)
+        if not breached:
+            return FillEval.rest()
+        price = bar.high if self.is_buy else bar.low
+        # A stop can never fill better than its own price.
+        if self.is_buy:
+            price = max(price, self.stop)
+        else:
+            price = min(price, self.stop)
+        return FillEval.fill(price)
+
+
 __all__ = [
     "FillOutcome", "BarOhlc", "FillEval",
     "apply_slippage", "decide_fill",
     "MarketFillModel", "MidPriceFillModel", "LimitFillModel",
     "StopMarketFillModel", "StopLimitFillModel",
+    "BarExtremeFillModel",
 ]
