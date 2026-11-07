@@ -10,6 +10,12 @@ Prove the edge is real, not mined. (For the *specific ways it goes wrong*, see
 2. **Walk-forward** — train/validate/test in rolling windows; report OOS only.
 3. **Cost reality** — report NET of the IBKR model (`stratlab.cost`). An edge
    that needs ≥ ~10bp/trade net to clear cost usually doesn't.
+
+Quote every reported number in the `playbooks/reporting.md` format (Sharpe
+paired with Sortino, full column set, **100K capital base unless the user
+specified another**). When a strategy clears validation, promote it per
+`playbooks/promotion.md` — a validated result still isn't runnable until the
+Python twin + Rust twin + tests land in `promoted/<slug>/`.
 4. **Robustness** — vary slippage/commission up, test capacity (does the edge
    concentrate in low-volume regimes?), param sensitivity (does the result hold
    across nearby params?).

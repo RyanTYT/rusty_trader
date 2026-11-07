@@ -46,3 +46,7 @@ stratlab parity [--golden backtest_results_vp_touch.json]
 The `RollingAggregator` exists in both languages (`Timeframe`/`BucketKey` in
 `rolling_fn.rs`; `stratlab.io.Timeframe`) with identical calendar-boundary
 semantics.
+
+Once parity clears, the strategy is a candidate for the promoted folder —
+the full promotion contract (runnable serial causal loop, committed Rust
+twin, tests, `PROMOTION.md` evidence) is `playbooks/promotion.md`.

@@ -14,6 +14,18 @@ artifact. This repo has burned on most of these.
   group using info from ALL bars in the group (incl. future) → look-ahead. Use
   the FIRST event (real-time cooldown).
 - **Centered windows / future smoothing** anywhere.
+- **Support / existence leak** — a derived feature left `NaN` (or imputed to one
+  constant) wherever a *forward* label is absent, e.g. a stage-1 output computed
+  on `d[isfinite(forward_label)]` and then handed to stage 2 as a *feature*. The
+  model splits on the missing block; "this level gets no volume for the next N
+  sessions" becomes a usable input. **The embargo does not stop it** — an embargo
+  protects the *training label*, not the feature's missingness on the *scored*
+  rows. Detection: rank each feature's NaN-pattern against the target (if it
+  ranks, it leaks), then ablate — impute with a real causal value; if the edge
+  dies, the edge was the block. Full procedure: `feature-panel-audit` §7A.
+- **A metric that improves when you add a bug.** If agreement with a reference
+  *rises* after a change, check whether the change imported the reference's leak
+  rather than fixed yours. Agreement is not validity.
 
 ## Selection / overfitting
 

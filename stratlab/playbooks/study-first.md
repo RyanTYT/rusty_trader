@@ -12,7 +12,8 @@ file.
 |---|---|---|
 | a research question / experiment / sweep / diagnostic | `studies/<slug>/run.py` (a cell) | `stratlab study append <slug> --question "..."` |
 | a reusable model function (feature extraction, training, walk-forward) | `stratlab/models/<pkg>/` | new module under the right package |
-| a new strategy | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
+| a new strategy (research-grade) | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
+| a fully promoted strategy (runnable Python twin + Rust twin + tests) | `promoted/<slug>/` | new folder per `playbooks/promotion.md` |
 | a one-off diagnostic / analysis | `studies/<slug>/run.py` (a cell) | `stratlab study append` |
 
 ## The workflow for a research question
@@ -41,6 +42,9 @@ file.
   diffs would be noise, and `validate` on `run.py` is the gate.
 - **Never create a `.py` under `stratlab/strategies/` for a research
   question.** That folder holds `PrecomputedStrategy` subclasses only.
+- **A fully promoted strategy does not go in `strategies/` either** —
+  it gets its own `promoted/<slug>/` folder (Python twin + Rust twin +
+  tests + `PROMOTION.md`) per `playbooks/promotion.md`.
 - **A reusable function that emerges from a study cell → promote to
   `stratlab/models/<pkg>/`** (like `models/vbo_xgb/`), then import it back
   into the cell. One-off code stays a cell.
