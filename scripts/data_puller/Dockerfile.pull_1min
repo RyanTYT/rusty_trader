@@ -1,0 +1,38 @@
+# Bar puller (Python side)
+#
+# Fetches RTH bars from an IB Gateway via ib_async and maintains the raw bars
+# parquet files stratlab reads. Puller = scripts/data_puller/pull_bars.py —
+# ONE script, any IBKR bar size, three modes (full/extend/repair), universe
+# loaded from the JSON files COPYed below.
+#
+# Install:  pip install "stratlab[pull]"
+#
+# Run (see the boxed HOW TO RUN section in pull_bars.py and ../README.md):
+#   docker compose -f scripts/data_puller/docker-compose.yml run --rm pull-1min
+#     defaults: TF='5 mins', MODE=extend, UNIVERSE=full_universe,
+#               OUTPUT=/data/backtest-results/stats/raw_5min_bars.parquet
+#   first-ever run:  docker compose run --rm -e MODE=full pull-1min
+#   1-min repair:    docker compose run --rm -e TF="1 min" -e MODE=repair pull-1min
+#
+# The gateway is NOT installed here: see infra/ib-gateway/Dockerfile.ibc +
+# entrypoint-ibc.sh. On Docker Desktop/macOS the puller MUST run in the
+# gateway's container netstack (compose: network_mode "service:tws") — a
+# host-side connect through the docker-proxy peer IP fails the gateway trust
+# check; the run recipe in pull_bars.py is the verified-correct lane.
+FROM python:3.12-slim
+
+# duckdb does the external sort + dedup on merge; pyarrow writes the chunks.
+RUN pip install --no-cache-dir ib_async pandas pyarrow duckdb
+
+COPY scripts/data_puller/experiments/pull_1min_bars.py /app/pull_1min_bars.py
+COPY scripts/data_puller/experiments/pull_5min_bars.py /app/pull_5min_bars.py
+COPY scripts/data_puller/ib_throttle.py /app/ib_throttle.py
+# The current-generation puller + the universe files it consumes.
+COPY scripts/data_puller/pull_bars.py /app/pull_bars.py
+COPY scripts/data_puller/universes/ /app/universes/
+WORKDIR /app
+
+# All knobs via env: TF, UNIVERSE, MODE, OUTPUT, THROTTLE, START_DATE,
+# END_DATE, CHUNK_DAYS, IB_CLIENT_ID, IB_TIMEOUT, ASSETS, EXTEND_DAYS, ...
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "-u", "/app/pull_bars.py"]

@@ -21,6 +21,10 @@ PYTHONPATH=stratlab .venv/bin/python -m stratlab.cli verify
 
 1. **Causality** — every rolling/aggregate/feature is causal (output at `t` from
    inputs `<= t`). Rolling std/z must trail; a static std inflates Sharpe 5–10×.
+   This includes **support**: *which rows a column is defined for*, and *whether a
+   cell is finite*. A derived feature left `NaN` because a **forward** label is
+   absent is a future fact carried as a value, and a GBM will split on it. Audit
+   the NaN-pattern like a feature — see `feature-panel-audit` §7A.
 2. **No same-bar look-ahead** — `signal[t]` acts on bar `t+1`; any confirmation
    uses a signal observable strictly before entry; event selection uses the
    FIRST event, never "the best bar in the group".
@@ -29,6 +33,19 @@ PYTHONPATH=stratlab .venv/bin/python -m stratlab.cli verify
 4. **Parity** — numerics must match the Rust backtester (`stratlab.metrics.rust`
    + `stratlab.cost`); acceptance gate = exact trade count, equity ≤ ~1bp,
    Sharpe ≤ ~0.01 vs a committed golden.
+5. **rolling_fn is the only rolling/EWM math source** (Rust side) — every
+   rolling mean/median/std/EWM in `trading-app/src/strategy/**` imports from
+   `strategy/helpers/rolling_fn.rs` (pinned verbatim-port kernels; pandas
+   EWM = `EwmMean` pandas mode, bit-exact). NO per-module pandas math
+   reimplementations (the retired `panels.rs` duplicate-kernels pattern is
+   banned). Rolling-mean oracles tolerate pandas at **relative 1e-15**
+   (Decimal accumulator is the exact same mean; Kahan residue carries no
+   information). Runtime never reads parquet — bars come from the database;
+   committed `data/blended5_fund/` parquets are TEST ORACLES under
+   `blended5_fund/tests/` only. Every edit to a rolling primitive MUST add or
+   keep a NUMERIC pinned test — a discrete (1.0/0.0) oracle cannot see
+   arithmetic regressions (the missing-accumulator bug in `RollingMean` was
+   found exactly this way: flags tests caught `rolling_sum` never adding).
 
 Research follows **Features → Signal → Execution → Validation**, each captured
 with a *reason* in a `study/` (see `playbooks/validation.md`).
@@ -44,6 +61,8 @@ with a *reason* in a `study/` (see `playbooks/validation.md`).
 | H1/H2, walk-forward, robustness | `playbooks/validation.md` |
 | hunting look-ahead / overfit | `playbooks/bias.md` |
 | matching the Rust backtester | `playbooks/parity.md` |
+| quoting results / tables / capital base | `playbooks/reporting.md` |
+| promoting a validated strategy to a runnable Python↔Rust pair | `playbooks/promotion.md` |
 
 ## Where does new code go?
 
@@ -51,7 +70,8 @@ with a *reason* in a `study/` (see `playbooks/validation.md`).
 |---|---|---|
 | a research question / experiment / sweep / diagnostic | `studies/<slug>/run.py` (a cell) | `stratlab study append <slug> --question "..."` |
 | a reusable model function (features, training, walk-forward) | `stratlab/models/<pkg>/` | new module |
-| a new strategy | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
+| a new strategy (research-grade) | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
+| a fully promoted strategy (runnable serial loop + Rust twin + tests) | `promoted/<slug>/` | new folder per `playbooks/promotion.md` |
 
 See `playbooks/study-first.md` for the full workflow. **Never** create a `.py`
 under `strategies/` for a research question — that is how `strategies/` filled

@@ -1,0 +1,77 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# DATA ACQUISITION STACK ONLY
+#
+# Two services — the IB Gateway (via IBC, paper) and the parquet puller.
+# Everything app-level (trading-bot, db, monitoring, scraper, ...) lives in the
+# ROOT docker-compose.yml; the pre-2026-11-07 all-services fork that used to
+# live here was drift from it and is retired.
+#
+#        docker compose -f scripts/data_puller/docker-compose.yml run --rm pull-1min          (extend 5-min, full_universe)
+#        docker compose -f scripts/data_puller/docker-compose.yml run --rm -e TF="1 min" -e MODE=full pull-1min
+#
+# Build contexts are the APP root: `context: ../..` resolves relative to this
+# file (scripts/data_puller/), so both Dockerfiles' COPY sources line up
+# (scripts/data_puller/..., trading/trading-app/...).
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+  tws:
+    image: ib-gateway-ibc
+    platform: linux/amd64
+    restart: "no"
+    build:
+      context: ../..
+      dockerfile: infra/ib-gateway/Dockerfile.ibc
+    # NOT network_mode: host -- on Docker Desktop for macOS the host network
+    # namespace is the docker VM's, not the Mac's, so the gateway would be
+    # unreachable from pull_bars.py running on the Mac (hardcoded
+    # 127.0.0.1:4002). Publish it instead:
+    ports:
+      - "127.0.0.1:4002:4002"
+    user: "root"
+    environment:
+      - TRADING_MODE=paper
+      - TZ=US/Eastern
+      # entrypoint default RUN_COMMAND is a one-shot dry-run pull, which makes
+      # the container EXIT after boot — the gateway must stay resident so
+      # manual/host-side pull_bars.py runs (and `docker compose run --rm
+      # pull-1min`) can connect. Stay up and do nothing.
+      - RUN_COMMAND=sleep infinity
+      - DISPLAY=host.docker.internal:0
+    volumes:
+      - ../../infra/ib-gateway/entrypoint-ibc.sh:/home/tws/entrypoint-ibc.sh:ro
+
+  # ── bar puller, any timeframe (--tf, ANY IBKR bar size) ───────────────
+  # One-shot: runs pull_bars.py in the tws container's netstack (the
+  # only connection path the gateway accepts) and writes RTH bars to the
+  # OUTPUT parquet. Resumable full/extend/repair (skips covered chunks).
+  # The image ENTRYPOINT is pull_bars.py.
+  pull-1min:
+    restart: "no"
+    build:
+      context: ../..
+      dockerfile: scripts/data_puller/Dockerfile.pull_1min
+    # Shares the tws container's netstack so pull_bars' HARDCODED
+    # 127.0.0.1:4002 hits the gateway at its verified trusted address
+    # (container-local). Host-side connects through a docker proxy whose
+    # source IP the gateway rejects no matter what TrustedIPs allows —
+    # do NOT switch this back to network_mode: host or ports.
+    network_mode: "service:tws"
+    environment:
+      - TF=${TF:-5 mins}
+      - MODE=${MODE:-extend}   # first run: docker compose run -e MODE=full pull-1min
+      - UNIVERSE=/app/universes/full_universe.json
+      - OUTPUT=/data/backtest-results/stats/raw_5min_bars.parquet
+      - IB_CLIENT_ID=15
+      - START_DATE=${PULL_START:-2024-01-01}
+      - END_DATE=${PULL_END:-2026-06-30}
+      - CHUNK_DAYS=60
+      - THROTTLE=0.5
+    volumes:
+      # bind-mount instead of baking into the image: the current gw image
+      # predates pull_bars.py, and image rebuilds are allowed only sparingly.
+      - ../../scripts/data_puller/pull_bars.py:/app/pull_bars.py:ro
+      - ../../scripts/data_puller/universes:/app/universes:ro
+      - ../../data:/data
+    depends_on:
+      tws:
+        condition: service_started
