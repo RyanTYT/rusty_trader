@@ -11,6 +11,12 @@ dependencies = ["numpy>=1.24", "pandas>=2.2"]
 
 [project.optional-dependencies]
 render = ["jupytext>=1.16", "nbformat>=5.10"]
+# Deep-learning arm (bar_attention study). Kept optional so the core toolkit
+# stays pure-Python/no-build; `pip install -e 'stratlab[dl]'` for the encoder.
+dl = ["torch>=2.4"]
+# Data acquisition: scripts/data_puller/experiments/pull_5min_bars.py pulls 5-min RTH bars
+# from an IB Gateway (ib_async) and merges them with DuckDB's external sort.
+pull = ["ib_async>=2.1", "pyarrow>=15", "duckdb>=1.0"]
 
 [project.scripts]
 stratlab = "stratlab.cli:main"
