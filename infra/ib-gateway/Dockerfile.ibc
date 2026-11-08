@@ -1,59 +1,104 @@
-# Self-contained IB Gateway + IBC (IB Controller) image with headless auto-login.
+# IB Gateway + IBC, for headless (Xvfb) use.
 #
-# Uses the LOCAL IBCLinux-3.21.2.zip (at trading/trading-app/) — provided by the
-# user, gitignored. The IB Gateway installer is downloaded at build time (it's
-# not in the repo). The only other local file needed is the IBC config.ini
-# (with your IBKR paper credentials) at trading/trading-app/IBCMacos-3.20.0/config.ini.
+# This fills the gap in Dockerfile.backtest / Dockerfile: those images install
+# IBC but never install IB Gateway itself, and `ibcstart.sh` hard-fails with
+# E_TWS_VERSION_NOT_INSTALLED unless it finds
+# `${tws_path}/ibgateway/${tws_version}/jars`. The Gateway installer is the
+# same 281 MB standalone installer used by infra/ib-gateway/Dockerfile (the
+# VNC/X11 variant), so the offline install path is already proven on this box.
 #
-# Paper account → no 2FA (IBKR paper accounts don't trigger the second factor).
+# Build context MUST be the repository root, since it copies from both
+# infra/ib-gateway/ and trading/trading-app/:
 #
-# Build context MUST be the repo root (.) so this Dockerfile can COPY the local
-# IBC zip + config.ini + the entrypoint. Build:
-#   docker compose build tws
-# Run (auto-starts Xvfb + IBC + the IB Gateway, auto-logins via config.ini):
-#   docker compose up -d tws
+#   docker build --platform linux/amd64 \
+#     -f infra/ib-gateway/Dockerfile.ibc -t ib-gateway-ibc .
+#
+# --platform linux/amd64 is MANDATORY: the Gateway installer is a linux-x64
+# install4j binary, so an arm64 image (the default on Apple Silicon) cannot
+# install it. The root docker-compose.yml already pins linux/amd64 for `tws`
+# for the same reason.
+#
+# Runtime: entrypoint-ibc.sh boots Xvfb + IBC and waits for a real login
+# before handing off. Intended to be combined with a puller in ONE container so
+# the client can reach the gateway on 127.0.0.1:4002 -- `network_mode: host`
+# is a no-op on Docker Desktop for macOS.
+FROM --platform=linux/amd64 python:3.12-slim
 
-FROM debian:bookworm-slim
+# X libs for the Gateway's bundled JRE + IBC's Swing UI, plus Xvfb for a
+# display. Same set as Dockerfile.backtest, except `libgl1`: this base is
+# Debian trixie, which dropped `libgl1-mesa-glx` in favour of `libgl1`.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
+      libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1 \
+      unzip xvfb curl procps ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/*
 
-# bookworm = Debian 12 (current stable, NOT EOL — apt repos work natively).
-# create the tws user (matches the original infra/ib-gateway image)
-ENV HOME=/home/tws
-RUN groupadd --gid 501 tws && \
-    useradd -ms /bin/bash --uid 501 --gid 501 tws && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-      ca-certificates curl unzip xvfb \
-      openjdk-17-jre openjfx \
-      libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 \
-      libxext6 libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
-      libgtk-3-0 libgdk-pixbuf-2.0-0 libglib2.0-0 libpango-1.0-0 \
-      libcairo2 libpangocairo-1.0-0 \
-      libgl1-mesa-dri libegl1 libglx-mesa0 \
-      xfonts-base xfonts-encodings xfonts-utils \
-      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
-      libxkbcommon0 libdbus-1-3 \
-    && rm -rf /var/lib/apt/lists/*
+# ── IB Gateway (offline install; IBC requires a non-auto-updating install) ──
+# `-dir` is resolved by the install4j installer relative to the SCRIPT'S own
+# location, not the working directory, so it must be absolute -- otherwise a
+# copy in /tmp silently installs to /tmp/ibgateway/1030.
+COPY infra/ib-gateway/ibgateway-stable-standalone-linux-x64.sh /home/tws/ibgw.sh
+RUN chmod +x /home/tws/ibgw.sh \
+ && /home/tws/ibgw.sh -q -dir /home/tws/ibgateway/1030/ \
+ && rm -f /home/tws/ibgw.sh \
+ && test -d /home/tws/ibgateway/1030/jars \
+ && ls /home/tws/ibgateway/1030 | head \
+ && echo "IB Gateway installed to /home/tws/ibgateway/1030"
 
-USER tws
-WORKDIR /home/tws
-RUN mkdir -p /home/tws/ibgateway/1030 /home/tws/ibc/logs
+# ── IBC ──────────────────────────────────────────────────────────────────────
+# Same IBC build + config the trading-app images use, so credentials and IBC
+# settings stay in one place.
+COPY trading/trading-app/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/ \
+ && rm -f /IBCLinux-3.21.2.zip \
+ && chmod -u+x -R /IBCLinux-3.21.2/
 
-# ── IB Gateway (local installer — provided by the user) ────────────────────
-COPY --chown=tws:tws infra/ib-gateway/ibgateway-stable-standalone-linux-x64.sh /tmp/ibgateway.sh
-RUN sh /tmp/ibgateway.sh -q -dir /home/tws/ibgateway/1030/ > /home/tws/ib-install.log 2>&1 && \
-    rm /tmp/ibgateway.sh
+COPY trading/trading-app/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY trading/trading-app/IBCMacos-3.20.0/scripts/ibcstart.sh \
+     /IBCLinux-3.21.2/scripts/ibcstart.sh
+RUN chmod -u+x -R /IBCLinux-3.21.2/
 
-# ── IBC (IB Controller) 3.21.2 — LOCAL zip (provided by the user) ──────────
-COPY --chown=tws:tws trading/trading-app/IBCLinux-3.21.2.zip /tmp/ibc.zip
-RUN unzip -q /tmp/ibc.zip -d /home/tws/ibc/ && \
-    chmod -R u+x /home/tws/ibc/ && \
-    rm /tmp/ibc.zip
+# ── puller ───────────────────────────────────────────────────────────────────
+RUN pip install --no-cache-dir ib_async pandas pyarrow duckdb
+COPY scripts/data_puller/experiments/pull_1min_bars.py /app/pull_1min_bars.py
+COPY scripts/data_puller/experiments/pull_5min_bars.py /app/pull_5min_bars.py
+COPY scripts/data_puller/ib_throttle.py /app/ib_throttle.py
+# build_universes.py (in universes/) produces the research-universe JSONs the
+# retired puller imported; they must be in the image or the archaeology puller
+# dies at startup -- which is exactly what happened on the first benchmark run.
+COPY scripts/data_puller/universes/build_universes.py /app/build_universes.py
+COPY scripts/data_puller/universes/existing_41.json /app/universes/existing_41.json
+COPY scripts/data_puller/universes/benchmarks.json /app/universes/benchmarks.json
+COPY scripts/data_puller/universes/all_new.json /app/universes/all_new.json
+COPY scripts/data_puller/universes/full_universe.json /app/universes/full_universe.json
+COPY scripts/data_puller/universes/excluded_no_contract.json /app/universes/excluded_no_contract.json
+COPY scripts/data_puller/experiments/screen_universe.py /app/screen_universe.py
+# (filter_universe.py retired/removed; the old 3-file chain
+#  select_universe/universe_candidates/universe_design merged into
+#  universes/build_universes.py)
+COPY scripts/data_puller/experiments/diag_ib_1min.py /app/diag_ib_1min.py
+COPY scripts/data_puller/Dockerfile.pull_1min /app/Dockerfile.pull_1min
+WORKDIR /app
 
-# ── IBC config (credentials — gitignored, must exist locally) ─────────────
-COPY --chown=tws:tws trading/trading-app/IBCMacos-3.20.0/config.ini /home/tws/ibc/config.ini
+COPY infra/ib-gateway/entrypoint-ibc.sh /entrypoint-ibc.sh
+RUN chmod +x /entrypoint-ibc.sh
 
-# ── entrypoint (Xvfb + IBC auto-start) ─────────────────────────────────────
-COPY --chown=tws:tws infra/ib-gateway/entrypoint-ibc.sh /home/tws/entrypoint-ibc.sh
-RUN chmod +x /home/tws/entrypoint-ibc.sh
+ENV TZ=US/Eastern \
+    PYTHONUNBUFFERED=1 \
+    IB_HOST=127.0.0.1 \
+    IB_PORT=4002 \
+    IB_CLIENT_ID=15 \
+    GATEWAY_PORT=4002 \
+    IBC_COMMAND_PORT=7462 \
+    GATEWAY_STARTUP_TIMEOUT=300 \
+    GATEWAY_VERSION=1030
 
-ENTRYPOINT ["/home/tws/entrypoint-ibc.sh"]
+# NOTE: config.ini ships with TradingMode=live and live credentials. The
+# entrypoint forces `--mode=paper`, and RUN_COMMAND defaults to a --dry-run so
+# a bare `docker run` can never mutate data or touch a live account. Override
+# RUN_COMMAND explicitly to do real work, e.g.
+#   -e RUN_COMMAND="python -u /app/pull_1min_bars.py --mode repair"
+ENV RUN_COMMAND="python -u /app/pull_1min_bars.py --dry-run --mode repair"
+
+CMD ["/entrypoint-ibc.sh"]
