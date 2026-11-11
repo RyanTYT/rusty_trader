@@ -747,7 +747,6 @@ fn on_full_open_order_received(
     default_strategy: &Option<String>,
 ) {
     // 1. Get Associated Strategy if possible, else default strategy
-    let symbol = get_local_symbol(unvalidated_contract);
     let strategy = {
         if borrowed_order.order_ref == "" {
             contract_to_strategy
@@ -769,69 +768,20 @@ fn on_full_open_order_received(
         .unwrap_or(unvalidated_contract.clone());
 
     // 3. Begin a detached thread to update the DB accordingly
-    let order = borrowed_order.clone();
+    let mut order = borrowed_order.clone();
+    order.order_ref = strategy.clone();
     let order_status_filled = order_status.filled;
     tokio::spawn(async move {
         let asset_type = AssetType::from_str(&contract.security_type);
         let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
         let open_order_pk = OpenOrdersPrimaryKeys::new(&asset_type, order.perm_id, order.order_id);
-        let open_order_uk = match asset_type {
-            AssetType::Option => OpenOrdersUpdateKeys::Options(OpenOptionOrdersUpdateKeys {
-                strategy: Some(strategy),
-                stock: Some(symbol),
-                primary_exchange: Some(contract.primary_exchange.to_string()),
-                currency: Some(contract.currency.to_string()),
-                expiry: Some(contract.last_trade_date_or_contract_month),
-                strike: Some(contract.strike),
-                multiplier: Some(contract.multiplier),
-                option_type: Some(
-                    OptionType::from_str(&contract.right)
-                        .expect("Expected contract right to be convertible to OptionType"),
-                ),
-                time: Some(Utc::now()),
-                quantity: Some(
-                    order.total_quantity
-                        * if order.action == Action::Buy {
-                            1.0
-                        } else {
-                            -1.0
-                        },
-                ),
-                executions: None,
-                filled: Some(order_status_filled),
-            }),
-            AssetType::Stock | AssetType::Future | AssetType::ForexPair | AssetType::CFD => {
-                OpenOrdersUpdateKeys::Stock(OpenStockOrdersUpdateKeys {
-                    strategy: Some(strategy),
-                    stock: Some(symbol),
-                    primary_exchange: Some(contract.primary_exchange.to_string()),
-                    currency: Some(contract.currency.to_string()),
-                    time: Some(Utc::now()),
-                    quantity: Some(
-                        order.total_quantity
-                            * if order.action == Action::Buy {
-                                1.0
-                            } else {
-                                -1.0
-                            },
-                    ),
-                    executions: None,
-                    filled: Some(order_status_filled),
-                })
-            }
-            AssetType::CASH => {
-                tracing::warn!(
-                    "CASH AssetType encountered while syncing open orders:\nAssumed not from any of the strategies - don't need to track!"
-                );
-                return;
-            }
-            AssetType::Unknown => {
-                tracing::warn!(
-                    "Unknown AssetType encountered while syncing open orders:\nAssumed not from any of the strategies - don't need to track!"
-                );
-                return;
-            }
-        };
+        let open_order_uk = OpenOrdersUpdateKeys::new_with_fill(
+            &asset_type,
+            &contract,
+            &order,
+            order_status_filled,
+        );
+
         if let Err(e) = open_orders_crud
             .create_or_update(&open_order_pk, &open_order_uk)
             .await

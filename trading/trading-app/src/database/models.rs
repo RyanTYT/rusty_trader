@@ -311,6 +311,7 @@ pub struct OpenStockOrders {
     pub time: Option<DateTime<Utc>>,
     pub quantity: Option<f64>,
 
+    pub parent_order_id: Option<i32>,
     pub executions: Option<Vec<String>>,
     pub filled: Option<f64>,
 }
@@ -340,6 +341,7 @@ pub struct OpenOptionOrders {
     pub time: Option<DateTime<Utc>>,
     pub quantity: Option<f64>,
 
+    pub parent_order_id: Option<i32>,
     pub executions: Option<Vec<String>>,
     pub filled: Option<f64>,
 }

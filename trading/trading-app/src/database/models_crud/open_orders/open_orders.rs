@@ -61,6 +61,7 @@ impl OpenOrdersFullKeys {
                     currency: contract.currency.to_string(),
                     time: Utc::now(),
                     quantity: qty,
+                    parent_order_id: order.parent_id,
                     filled: filled,
                     executions: Vec::new(),
                 })
@@ -88,6 +89,7 @@ impl OpenOrdersFullKeys {
                         .unwrap_or_else(|e| panic!("{}", e)),
                     time: Utc::now(),
                     quantity: qty,
+                    parent_order_id: order.parent_id,
                     filled: filled,
                     executions: Vec::new(),
                 })
@@ -209,6 +211,24 @@ pub enum OpenOrdersUpdateKeys {
 
 impl OpenOrdersUpdateKeys {
     pub fn new(asset_type: &AssetType, contract: &Contract, order: &Order) -> Self {
+        Self::from(asset_type, contract, order, 0.0)
+    }
+
+    pub fn new_with_fill(
+        asset_type: &AssetType,
+        contract: &Contract,
+        order: &Order,
+        fill_amount: f64,
+    ) -> Self {
+        Self::from(asset_type, contract, order, fill_amount)
+    }
+
+    fn from(
+        asset_type: &AssetType,
+        contract: &Contract,
+        order: &Order,
+        filled_amount: f64,
+    ) -> Self {
         match asset_type {
             AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
                 Self::Stock(OpenStockOrdersUpdateKeys {
@@ -225,8 +245,9 @@ impl OpenOrdersUpdateKeys {
                                 -1.0
                             },
                     ),
+                    parent_order_id: Some(order.parent_id),
                     executions: None,
-                    filled: Some(0.0),
+                    filled: Some(filled_amount),
                 })
             }
             AssetType::Option => Self::Options(OpenOptionOrdersUpdateKeys {
@@ -247,8 +268,9 @@ impl OpenOrdersUpdateKeys {
                             -1.0
                         },
                 ),
+                parent_order_id: Some(order.parent_id),
                 executions: None,
-                filled: Some(0.0),
+                filled: Some(filled_amount),
             }),
             AssetType::CASH => {
                 panic!("Tried to construct OpenOrdersPrimaryKeys from CASH asset_type")
@@ -325,6 +347,7 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                         currency as "currency!",
                         time as "time!",
                         quantity as "quantity!",
+                        parent_order_id as "parent_order_id!",
                         executions as "executions!",
                         filled as "filled!"
                     FROM trading.open_stock_orders
@@ -355,6 +378,7 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                         option_type AS "option_type!:OptionType",
                         time as "time!",
                         quantity as "quantity!",
+                        parent_order_id as "parent_order_id!",
                         executions as "executions!",
                         filled as "filled!"
                     FROM trading.open_option_orders
