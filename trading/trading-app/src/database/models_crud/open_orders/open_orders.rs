@@ -320,9 +320,16 @@ implement_crud_trait_for_interface!(
     [Stock, Options]
 );
 
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
+
 #[async_trait::async_trait]
 pub trait OpenOrdersOps {
-    async fn get_orders_for_strat(&self, strategy: &str)
+    async fn get_orders_for_strat(
+        &self,
+        strategy: &str,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
+    )
     -> Result<Vec<OpenOrdersFullKeys>, String>;
     async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String>;
 }
@@ -333,10 +340,11 @@ impl OpenOrdersOps for OpenOrdersCRUD {
     async fn get_orders_for_strat(
         &self,
         strategy: &str,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<OpenOrdersFullKeys>, String> {
         #[cfg(feature = "backtest")]
-        {
-            // Backtest-in-memory arm (mode-blind CRUD seam): read the
+        if matches!(mode, BacktestMode::InMemory) {
+            // In-memory arm (explicit BacktestMode::InMemory): read the
             // strategy's InMemoryState resting book instead of the DB.
             // Resting+ACTIVE rows only — the in-memory book marks fills via
             // RestingStatus (Filled/Cancelled rows filtered out), so every
@@ -345,12 +353,14 @@ impl OpenOrdersOps for OpenOrdersCRUD {
             // (parent != 0 ∧ parent exists) never fires — the OCA-active
             // gate replaces it. Multi replay resolves any strategy via the
             // fill router; Db mode falls back to the CURRENT strategy's
-            // state; no state → empty Vec.
+            // state; no state → fail CLOSED (missing state = wiring bug).
             use crate::backtester::methods::in_memory::{bracket::RestingStatus, state as in_memory};
             let Some(st) =
                 in_memory::routed_state(strategy).or_else(|| in_memory::current())
             else {
-                return Ok(Vec::new());
+                return Err(format!(
+                    "get_orders_for_strat(InMemory): no InMemoryState installed for '{strategy}'"
+                ));
             };
             let book = st.resting_orders.read().expect("resting_orders poisoned");
             let rows = book
@@ -383,7 +393,7 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                 .collect();
             return Ok(rows);
         }
-        #[cfg(not(feature = "backtest"))]
+        // Db body — the live path, and BacktestMode::Db under backtest builds.
         {
             let result = match self {
                 Self::Stock(_) => sqlx::query_as!(

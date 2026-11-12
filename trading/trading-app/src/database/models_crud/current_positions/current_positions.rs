@@ -318,11 +318,15 @@ implement_crud_trait_for_interface!(
     [Stock, Options]
 );
 
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
+
 #[async_trait::async_trait]
 pub trait CurrentPositionsOps {
     async fn get_pos_by_strat(
         &self,
         strategy: &str,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<CurrentPositionsFullKeys>, String>;
     /// Returns position if exists, else None
     /// - Note: Returns outer Result Err on sql fail, returns inner None when 404
@@ -340,6 +344,7 @@ pub trait CurrentPositionsOps {
         &self,
         pk: CurrentPositionsPrimaryKeys,
         uk: CurrentPositionsUpdateKeys,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<(), String>;
 }
 
@@ -349,21 +354,24 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
     async fn get_pos_by_strat(
         &self,
         strategy: &str,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<CurrentPositionsFullKeys>, String> {
         #[cfg(feature = "backtest")]
-        {
-            // Backtest-in-memory arm (mode-blind CRUD seam): read the
+        if matches!(mode, BacktestMode::InMemory) {
+            // In-memory arm (explicit BacktestMode::InMemory): read the
             // strategy's InMemoryState snapshot instead of the DB. The
             // multi replay installs the fill router (name → state) so ANY
             // strategy's positions resolve; Db mode (router absent) falls
             // back to the CURRENT strategy's thread-local state, filtered
-            // to the requested name; no state at all → empty Vec (same as
-            // a fresh DB row set).
+            // to the requested name; no state at all → fail CLOSED (a
+            // missing state is a wiring bug, never an empty book).
             use crate::backtester::methods::in_memory::state as in_memory;
             let Some(st) =
                 in_memory::routed_state(strategy).or_else(|| in_memory::current())
             else {
-                return Ok(Vec::new());
+                return Err(format!(
+                    "get_pos_by_strat(InMemory): no InMemoryState installed for '{strategy}'"
+                ));
             };
             let rows = st
                 .current_positions_snapshot()
@@ -385,7 +393,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 .collect();
             return Ok(rows);
         }
-        #[cfg(not(feature = "backtest"))]
+        // Db body — the live path, and BacktestMode::Db under backtest builds.
         {
             let result = match self {
                 Self::Stock(_) => sqlx::query_as!(
@@ -603,14 +611,15 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
         &self,
         pk: CurrentPositionsPrimaryKeys,
         uk: CurrentPositionsUpdateKeys,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<(), String> {
         #[cfg(feature = "backtest")]
-        {
-            // Mode-blind write seam (mirrors the read dispatch): in the
-            // in-memory replay the additive update lands in the strategy's
-            // InMemoryState — the SAME weighted-avg semantics as the SQL
-            // upsert below. With no state installed (Db lane) fall through
-            // to the DB body.
+        if matches!(mode, BacktestMode::InMemory) {
+            // In-memory write arm (explicit BacktestMode::InMemory): the
+            // additive update lands in the strategy's InMemoryState — the
+            // SAME weighted-avg semantics as the SQL upsert below. Missing
+            // state or non-stock rows fail CLOSED (Err); no silent fall
+            // through to the real DB.
             use crate::backtester::methods::in_memory::state as in_memory;
             if let (
                 CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
@@ -626,22 +635,31 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 }),
             ) = (&pk, &uk)
             {
-                if let Some(st) =
+                let Some(st) =
                     in_memory::routed_state(strategy).or_else(|| in_memory::current())
-                {
-                    st.update_current_additive(
-                        in_memory::PositionKey {
-                            strategy: strategy.clone(),
-                            stock: stock.clone(),
-                            primary_exchange: primary_exchange.clone(),
-                            currency: currency.clone(),
-                        },
-                        *quantity,
-                        avg_price.unwrap_or(0.0),
-                    );
-                    return Ok(());
-                }
+                else {
+                    return Err(format!(
+                        "update_positions_additive(InMemory): no InMemoryState installed \
+                         for '{strategy}'"
+                    ));
+                };
+                st.update_current_additive(
+                    in_memory::PositionKey {
+                        strategy: strategy.clone(),
+                        stock: stock.clone(),
+                        primary_exchange: primary_exchange.clone(),
+                        currency: currency.clone(),
+                    },
+                    *quantity,
+                    avg_price.unwrap_or(0.0),
+                );
+                return Ok(());
             }
+            return Err(
+                "update_positions_additive(InMemory): only Stock rows with a quantity are \
+                 supported in the in-memory lane"
+                    .into(),
+            );
         }
         match (pk, uk) {
             (
