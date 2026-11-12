@@ -4,7 +4,7 @@
 //! into ONE gate instantiated per sleeve, chained AFTER the sleeve's weight
 //! gates and BEFORE its `SharesGate`. The gate ports the legacy fire
 //! classification + scale pass EXACTLY (fund.rs `on_row` steps 4-8 / fund.py
-//! order), operating on a SHARE-SPACE book it carries itself:
+//! order), operating on a SHARE-SPACE book the POOL owns for it:
 //!
 //! **The book carry (the load-bearing legacy semantics).** Heads are
 //! delta-emitters — connors emits only entries + exit flats; held positions
@@ -14,8 +14,9 @@
 //! the scale pass reached HELD positions. Without the same carry, a cap
 //! scales only fresh entries and the held book compounds unbounded (the
 //! first P2 solo run: connors 10k → 737k, cash −3.9M — the cap never touched
-//! held positions). FundGate therefore keeps `book: BTreeMap<sym, i64>`
-//! (signed shares) with exactly the legacy `sub_cur` semantics:
+//! held positions). The POOL therefore owns ONE `BTreeMap<sym, i64>` per
+//! participant (inside `PoolState`, keyed by producer idx) with exactly the legacy
+//! `sub_cur` semantics:
 //!
 //! - fresh intents are converted to shares at the gate boundary with the
 //!   `shares_from_intents` arithmetic (dollars: printable required, else the
@@ -70,15 +71,31 @@
 //!
 //! `on_realised` is the default no-op: the fund gate never consumes fills.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use chrono::Datelike;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::backtester::methods::in_memory::{diag, state};
+use super::mpsc::{MpscRingBuffer, MpscRingBufferProducer};
+// DIAG seam — gated: the diag module lives in the backtest-only in-memory
+// engine. Live runs with it off (`diag_on()` helper below).
+#[cfg(feature = "backtest")]
+use crate::backtester::methods::in_memory::diag;
 use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX};
 use crate::strategy_wrappers::gate::GateLogic;
 use crate::strategy_wrappers::intent::Intent;
 use crate::strategy_wrappers::payload::{BarFrame, Payload, ShareOut};
 use crate::strategy_wrappers::strategy::ClockCtx;
+
+/// DIAG seam (backtest-only; live = off).
+#[cfg(feature = "backtest")]
+fn diag_on() -> bool {
+    diag::diag_fills()
+}
+
+#[cfg(not(feature = "backtest"))]
+fn diag_on() -> bool {
+    false
+}
 
 /// Global fire/violation instrumentation (aggregated across instances; the
 /// legacy FundBook kept per-book recs — the multi runner logs these once at
@@ -127,431 +144,685 @@ pub fn log_counters(tag: &str) {
 // TWO-PHASE reconcile (collect → central trim): each sleeve's FundGate
 // PUSHES its own UNTRIMMED slot state here from inside its own
 // `on_bar_update` (the gate's natural lifecycle: flush-on-advance = one push
-// per slot per sleeve), into a lock-free ring array indexed by
-// `ts_mod = (num_days_from_ce << 16 | mso) % RING` with overwriting writes.
-// The COMPLETING push of a slot (mask reaching all participants) runs the
-// ONE uniform central trim over the complete vintage (legacy single-book
-// semantics: one factor for every entry) and hands the scaled sheet to the
+// per slot per sleeve) through the `MpscRingBuffer` vintage carrier
+// (`PoolState.ring`, Pass 3b): `FundInput` snapshots move BY VALUE through the
+// ring's MaybeUninit cells; ONE ring position = ONE 5-min flush
+// (`bucket = mso / 5` — 78 positions per session < FUND_RING = 128, so a
+// session never self-collides) and the flush key
+// `(days_from_year_start << 16) | mso` recycles positions across sessions
+// through the ring's mismatch branch. The COMPLETING push of a slot (mask
+// reaching the ring's ACTIVE count = the registered participant set)
+// returns the complete vintage in producer-idx order == sleeve-name order
+// and runs the ONE uniform central trim over it (legacy single-book
+// semantics: one factor for every entry), handing the scaled sheet to the
 // sleeve layer: ONE pooled emission on behalf of ALL sleeves (EmitOrders
 // variant; fills route to the right sleeve account by order_ref — the
-// approved engine seam). Scaled books are written back to LAST_TRIMMED so
-// each gate's next flush carries the trimmed book (the cumulative ratchet,
-// order-independent).
+// approved engine seam). Scaled books are written back into the POOL-OWNED
+// per-participant books (`PoolState.books`) so each gate's next flush carries the
+// trimmed book (order-independent).
 //
 // Single-thread-class engine (sequential single-pass replay): the atomics
 // exist for static sharing, not for cross-thread synchronisation.
 // ═══════════════════════════════════════════════════════════════════════
 
-use std::sync::Arc;
+use std::cell::UnsafeCell;
+use std::sync::{Arc, OnceLock};
 
 pub const FUND_RING: usize = 128;
-pub const FUND_MAX_PARTICIPANTS: usize = 8;
+/// Minutes per flush position: one ring position = one 5-min bar flush
+/// (the fund's bar cadence). 390-min session / 5 = 78 positions < 128.
+pub const FUND_BUCKET_SPAN: u32 = 5;
 
-/// One ring slot: everything the pooled trim needs for ONE (date, mso)
-/// across ALL participants. `key == 0` = never written. The mask bit i set
-/// = participant i has pushed for this exact key.
-#[derive(Default)]
-pub struct PoolSlot {
-    /// (et_date_ordinal << 16) | mso — 0 = empty slot.
-    pub key: AtomicU64,
-    /// Participant presence bitmask (bit i = participant i pushed).
-    pub mask: AtomicU32,
-    /// Per-participant sleeve equity (SGD, f64 bits).
-    pub eq: [AtomicU64; FUND_MAX_PARTICIPANTS],
-    /// Per-participant ABSOLUTE intent book (signed shares) — Arc ptr.
-    pub book: [AtomicU64; FUND_MAX_PARTICIPANTS],
-    /// Per-participant priced / fixed gross components (f64 bits).
-    pub priced: [AtomicU64; FUND_MAX_PARTICIPANTS],
-    pub fixed: [AtomicU64; FUND_MAX_PARTICIPANTS],
+/// Ring producer capacity = the fund's sleeve count (const generic on
+/// `MpscRingBuffer` — minting beyond it panics by design; the blended5 fund
+/// has exactly four sleeves).
+pub const FUND_PRODUCERS: usize = 4;
+
+/// One participant's slot vintage — the ring's payload (Pass 3b: the push
+/// runs through `MpscRingBuffer`, `FundInput` moves BY VALUE through its
+/// MaybeUninit cells — no f64 bit-packing anywhere). Frozen snapshot at
+/// push time: owner + sleeve equity + gross components + the FULL absolute
+/// book (self-describing — the trim attributes straight from the vintage).
+#[derive(Debug)]
+pub struct FundInput {
+    pub own: String,
+    pub eq_sgd: f64,
+    pub priced: f64,
+    pub fixed: f64,
+    pub book: BTreeMap<String, i64>,
 }
 
-struct PoolRing {
-    slots: Vec<PoolSlot>,
-    names: Vec<String>,
+/// THE pool: ring carrier + participant names + pool-owned books + fund
+/// residual + the sizing vintage. Every piece of cross-sleeve fund state
+/// lives here (user ruling: no bare pool statics) — the struct defines its
+/// own interior mutability (`UnsafeCell` per field; the ONE safety argument
+/// below covers all of them).
+pub struct PoolState {
+    ring: Arc<MpscRingBuffer<FundInput, FUND_RING, FUND_PRODUCERS>>,
+    /// Participant names, appended at mint; index == producer idx == mint
+    /// order == sleeve-name order (Parity-risk #1 by construction). This
+    /// list IS the registry — no separate registration static.
+    names: UnsafeCell<Vec<String>>,
+    /// Pool-owned per-participant books (shared-state ruling): absolute
+    /// signed share counts, fresh emissions overwrite, unnamed syms
+    /// retain, explicit zeros KEPT — the UNTRIMMED collect panel whose
+    /// centrally-trimmed form the completer writes back at `trim`.
+    books: [UnsafeCell<BTreeMap<String, i64>>; FUND_PRODUCERS],
+    /// Unbooked fund capital (set once at `init`).
+    residual: UnsafeCell<f64>,
+    /// The fund capital this pool was initialised with (the ONE capital
+    /// source — init_app's const / the binary's config). The LIVE month-end
+    /// reallocation derives `residual = capital − N·SE_SLEEVE` from it.
+    capital: UnsafeCell<f64>,
+    /// Month-end equal-weight reallocation trigger (LIVE): the last month
+    /// (year, month) the reallocation ran. A new calendar month's first
+    /// flush re-allocates the strategies' capital across the sleeves in
+    /// the DB (`realloc_equal_weights`); restarts reset this (in-memory),
+    /// which simply re-anchors — restart-as-anchor semantics.
+    realloc_month: UnsafeCell<Option<(i32, u32)>>,
+    /// Fund total (residual + Σ sleeve eq) from the LAST completed trim —
+    /// the pool-share sizing vintage (`None` until the first trim; sizing
+    /// falls back to the e_i path).
+    last_total: UnsafeCell<Option<f64>>,
+    /// Ledger vintage: each sleeve's LAST-PUSHED equity (name → eq SGD)
+    /// plus pushed-at-least-once flags. The FLUSH-TIME day reconcile reads
+    /// this pair — at the day's first flush it holds the PREVIOUS
+    /// session's day-last equities (today's pushes have not happened yet),
+    /// exactly the vintage `FundLedger::on_slot` documents.
+    last_eqs: UnsafeCell<HashMap<String, f64>>,
+    seen: UnsafeCell<Vec<bool>>,
+    /// `true` once `init` ran (the binary calls it after all sleeves
+    /// construct). Bare constructions mint a pool but never ready it —
+    /// unready pools fail CLOSED at the gate (emit nothing).
+    ready: UnsafeCell<bool>,
 }
 
-static POOL: std::sync::OnceLock<PoolRing> = std::sync::OnceLock::new();
-/// Unbooked fund capital (f64 bits) — set once at init.
-static POOL_RESIDUAL: AtomicU64 = AtomicU64::new(0);
-/// FundGate REGISTRATION: every `FundGate::new(strategy)` appends its own
-/// sleeve name here (deduped) — the pool's participant set is exactly this
-/// registry, so the ONE init input the binary supplies is the fund capital.
-/// Registration is folded into `new`; no separate init/registration call.
-static REGISTRY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+// SAFETY (single-threaded engine — ONE argument covers every field): the
+// UnsafeCells/atomics exist for static sharing, not for cross-thread
+// synchronisation. Each participant's cell (names slot, books[idx]) is
+// written by its own gate's flush and — for the book — by the same-thread
+// completer's trim; the ring is the user-owned `MpscRingBuffer` (its own
+// Send/Sync impls assert the same discipline). No reference derived from a
+// shared `&PoolState` crosses a thread boundary in this engine.
+unsafe impl Sync for PoolState {}
 
-    /// Packed (et_date, mso) into a u64 ring key. Year-safe: ordinal()
-    /// wraps every calendar year — 2021-01-03 and 2022-01-03 produced the
-    /// SAME key, so the first slot of a new year started from a STALE-FULL
-    /// mask and completed against the previous year's books (BUG-1, seen in
-    /// the m1.6 diag run). `num_days_from_ce` is unique per calendar day
-    /// (~738k for 2021 — far below the 48-bit slot budget).
-fn pack_key(et_date: chrono::NaiveDate, mso: i32) -> u64 {
-    use chrono::Datelike;
-    ((et_date.num_days_from_ce() as u64) << 16) | (mso.max(0) as u64 & 0xFFFF)
-}
+static POOL: OnceLock<PoolState> = OnceLock::new();
 
-/// Initialise the pool ONCE per program lifetime. Participants come from
-/// the REGISTRY (every `FundGate::new(strategy)` registered its sleeve —
-/// the binary constructs all strategies before calling this, so the set is
-/// complete); the ONE input is the fund capital. Residual is derived
-/// inside: the binary seeds each sleeve `SE_SLEEVE`, so
-/// `residual = capital − N·SE_SLEEVE` (the same math the binary used to
-/// pass explicitly). Also wires the fund LEDGER (see the ledger section at
-/// the bottom of this file) — the ledger reads the pool's vintage instead
-/// of any engine state.
-pub fn pool_init(ledger_capital: f64) {
-    let names: Vec<String> =
-        REGISTRY.lock().expect("fund registry poisoned").clone();
-    let residual = (ledger_capital - names.len() as f64 * SE_SLEEVE).max(0.0);
-    let ring = PoolRing {
-        slots: (0..FUND_RING).map(|_| PoolSlot::default()).collect(),
-        names: names.clone(),
-    };
-    let _ = POOL.set(ring);
-    POOL_RESIDUAL.store(residual.to_bits(), Ordering::Relaxed);
-    ledger_init(&names, ledger_capital);
-    tracing::info!(
-        participants = names.len(),
-        residual,
-        "fund pool initialised (strategy-layer cross-sleeve vintage)"
-    );
-}
-
-#[cfg(test)]
-fn pool_reset() {
-    // Test-only: rebuild an empty pool. POOL is OnceLock — tests that need
-    // a fresh pool run in their own process (libtest runs each #[test] on
-    // its own thread but shares the process); we expose the pieces the
-    // ledger/gate tests need through the thread-local LEDGER reset and
-    // accept the OnceLock constraint by initialising identical pools.
-    POOL_RESIDUAL.store(0.0f64.to_bits(), Ordering::Relaxed);
-    POOL_SEEN.store(0, Ordering::Relaxed);
-    for s in POOL_LAST_EQ.iter().chain(POOL_LAST_PRICED.iter()).chain(POOL_LAST_FIXED.iter()) {
-        s.store(0, Ordering::Relaxed);
+impl PoolState {
+    /// The pool singleton accessor (`None` only before the first
+    /// `FundGate::new` / `init`).
+    pub fn current() -> Option<&'static PoolState> {
+        POOL.get()
     }
-    for s in LAST_TRIMMED.iter().chain(LAST_TRIMMED_KEY.iter()) {
-        s.store(0, Ordering::Relaxed);
+
+    fn new() -> Self {
+        Self {
+            ring: Arc::new(MpscRingBuffer::new()),
+            names: UnsafeCell::new(Vec::new()),
+            books: core::array::from_fn(|_| UnsafeCell::new(BTreeMap::new())),
+            residual: UnsafeCell::new(0.0),
+            capital: UnsafeCell::new(0.0),
+            realloc_month: UnsafeCell::new(None),
+            last_total: UnsafeCell::new(None),
+            last_eqs: UnsafeCell::new(HashMap::new()),
+            seen: UnsafeCell::new(Vec::new()),
+            ready: UnsafeCell::new(false),
+        }
     }
-    if let Some(ring) = POOL.get() {
-        for s in &ring.slots {
-            s.key.store(0, Ordering::Relaxed);
-            s.mask.store(0, Ordering::Relaxed);
+
+    /// Mint ONE producer handle + append the participant name — identity
+    /// and registration in ONE act (`FundGate::new`). The mint happens
+    /// FIRST so a panic (beyond `FUND_PRODUCERS`) cannot leave a name
+    /// behind; duplicates are a loud construction error (a second
+    /// `FundGate::new` for one sleeve would double-mint and desync the
+    /// name/idx mapping).
+    fn mint(
+        &self,
+        own: &str,
+    ) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
+        let producer = self.ring.get_new_producer();
+        let names = unsafe { &mut *self.names.get() };
+        assert!(
+            !names.iter().any(|n| n == own),
+            "fund pool: duplicate participant registration '{own}'"
+        );
+        names.push(own.to_string());
+        unsafe { &mut *self.seen.get() }.push(false);
+        producer
+    }
+
+    /// Initialise ONCE per program lifetime (the binary calls it after all
+    /// strategies construct, so `names` is the complete participant set).
+    /// Residual: the binary seeds each sleeve `SE_SLEEVE`, so
+    /// `residual = capital − N·SE_SLEEVE` (the same math the binary used to
+    /// pass explicitly). Also wires the fund LEDGER (the ledger reconciles
+    /// from the flush-time day reconcile — see `reconcile_day`).
+    pub fn init(&self, ledger_capital: f64) {
+        let names = unsafe { &mut *self.names.get() };
+        let residual = (ledger_capital - names.len() as f64 * SE_SLEEVE).max(0.0);
+        self.ring
+            .set_active_producers(&(0..names.len()).collect::<Vec<usize>>());
+        unsafe {
+            *self.residual.get() = residual;
+            *self.capital.get() = ledger_capital;
+            *self.ready.get() = true;
+        }
+        Self::install_ledger(names, ledger_capital);
+        tracing::info!(
+            participants = names.len(),
+            residual,
+            "fund pool initialised (strategy-layer cross-sleeve vintage)"
+        );
+    }
+
+    /// LIVE variant of `init`: the fund deploys ALL its capital into the
+    /// sleeves (`seed_fund_cash` transferred it from the unstrategised
+    /// accounts), so there is NO unbooked residual — the trim's fund equity
+    /// is exactly Σ sleeve equity. Memory-only: a restart behaves as a
+    /// re-anchor (the first post-restart flush reallocates equal weights).
+    pub fn init_live(&self, capital: f64) {
+        let names = unsafe { &mut *self.names.get() };
+        self.ring
+            .set_active_producers(&(0..names.len()).collect::<Vec<usize>>());
+        unsafe {
+            *self.residual.get() = 0.0;
+            *self.capital.get() = capital;
+            *self.ready.get() = true;
+        }
+        Self::install_ledger(names, capital);
+        tracing::info!(
+            participants = names.len(),
+            capital,
+            "fund pool initialised (LIVE, transfer-seeded)"
+        );
+    }
+
+    /// Participant `idx`'s pool-owned book (read view): the push snapshot +
+    /// the `fund_gross` sweep.
+    fn book(&self, idx: usize) -> &BTreeMap<String, i64> {
+        unsafe { &*self.books[idx].get() }
+    }
+
+    /// THE one mutation entry into a pool-owned book. The fresh overwrite
+    /// collects fresh pairs then inserts them in ONE call; the trim
+    /// write-back replaces the map wholesale (`|b| *b = scaled`).
+    fn update_book(&self, idx: usize, f: impl FnOnce(&mut BTreeMap<String, i64>)) {
+        unsafe { f(&mut *self.books[idx].get()) }
+    }
+
+    /// `true` once `init` ran — the gate's participant check (unready pools
+    /// fail CLOSED at the gate).
+    fn ready(&self) -> bool {
+        unsafe { *self.ready.get() }
+    }
+
+    /// Month reallocation trigger (LIVE — called from the sleeve's flush
+    /// path): `true` on the FIRST flush of a new calendar month, at which
+    /// point the caller runs `realloc_equal_weights`. Memory-only state: a
+    /// restart re-anchors (restart-as-anchor semantics).
+    pub fn advance_month_anchor(&self, d: chrono::NaiveDate) -> bool {
+        let month = (d.year(), d.month());
+        let prev = unsafe { &mut *self.realloc_month.get() };
+        match *prev {
+            Some(pm) if month > pm => {
+                *prev = Some(month);
+                true
+            }
+            Some(_) => false,
+            None => {
+                *prev = Some(month);
+                true
+            }
+        }
+    }
+
+    /// LIVE month-end equal-weight reallocation: reads each sleeve's equity
+    /// from the SAME source per-flush sizing reads (`get_strategy_sgd_value`
+    /// — fresh, memoised), computes `fund = Σ eq` (live carries NO unbooked
+    /// residual — the seeding transferred ALL capital into the sleeves), and
+    /// writes the equalising `CASH:SGD` deltas (positions untouched). The
+    /// DB cash move IS the live analog of the ledger's monthly `e_i`
+    /// re-anchor — sizing then reads real equity per flush. Mid-month
+    /// restarts re-anchor (restart-as-anchor). Subscriptions
+    /// (BLENDED5_SUBSCRIPTION) are not yet supported live.
+    pub fn realloc_equal_weights(
+        &self,
+        consolidator: &std::sync::Arc<crate::market_data::consolidator::Consolidator>,
+        handle: &tokio::runtime::Handle,
+        pool: &sqlx::PgPool,
+    ) -> Result<(), String> {
+        use crate::database::models::{
+            AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
+        };
+        use crate::database::models_crud::current_positions::current_positions::{
+            CurrentPositionsCRUD, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
+            CurrentPositionsUpdateKeys,
+        };
+        use crate::database::crud::CRUDTrait;
+        use crate::market_data::traits::strategy_value::GetStrategyValue;
+
+        let names = unsafe { &*self.names.get() }.clone();
+        if env_subscription() > 0.0 {
+            tracing::warn!(
+                "BLENDED5_SUBSCRIPTION set — subscriptions are not yet \
+                 supported in the live month reallocation; ignoring"
+            );
+        }
+        let mut eqs = Vec::with_capacity(names.len());
+        for name in &names {
+            let eq = consolidator
+                .get_strategy_sgd_value(name)
+                .map_err(|e| format!("realloc equity read '{name}': {e}"))?;
+            eqs.push(eq);
+        }
+        // Fund = Σ sleeve equity — live carries NO unbooked residual
+        // (seed_fund_cash transfers ALL capital into the sleeves).
+        let fund = eqs.iter().sum::<f64>();
+        let share = fund / names.len() as f64;
+        tracing::info!(
+            fund = format!("{fund:.2}"),
+            share = format!("{share:.2}"),
+            "month-end equal-weight reallocation"
+        );
+        for (name, eq) in names.iter().zip(&eqs) {
+            let delta = share - eq;
+            if delta.abs() < 0.005 {
+                continue;
+            }
+            let jh = handle.spawn({
+                let pool = pool.clone();
+                let name = name.clone();
+                async move {
+                    let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+                    let pk = CurrentPositionsPrimaryKeys::Stock(
+                        CurrentStockPositionsPrimaryKeys {
+                            strategy: name.clone(),
+                            stock: "CASH:SGD".to_string(),
+                            primary_exchange: "".to_string(),
+                            currency: "SGD".to_string(),
+                        },
+                    );
+                    let uk = CurrentPositionsUpdateKeys::Stock(
+                        CurrentStockPositionsUpdateKeys {
+                            quantity: Some(delta),
+                            avg_price: Some(1.0),
+                            last_updated: None,
+                        },
+                    );
+                    cp.update_positions_additive(pk, uk).await
+                }
+            });
+            futures::executor::block_on(jh)
+                .map_err(|e| format!("realloc join: {e}"))?
+                .map_err(|e| format!("realloc write '{name}': {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// LIVE first-run capital seeding — TRANSFER-BASED (user ruling): the
+    /// sleeves' cash comes from the app's UNSTRATEGISED money, never minted.
+    /// Sources, in order: the `unknown` strategy's `CASH:SGD` row, then the
+    /// `""` (main account, no strategy associated) `CASH:SGD` row. A
+    /// negative/drained source is skipped (left untouched); when both
+    /// together cannot cover `required`, the run PANICS before a single
+    /// write. Restart-safe: if every sleeve already holds a `CASH:SGD` row
+    /// nothing is transferred and the CURRENT sleeve-cash sum is returned
+    /// as the init capital estimate (the first post-restart flush's
+    /// reallocation re-derives the true equity split from the
+    /// Consolidator). Returns the capital to `init_live` with.
+    pub async fn seed_fund_cash(pool: &sqlx::PgPool, required: f64) -> Result<f64, String> {
+        use crate::database::models::{
+            AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
+        };
+        use crate::database::models_crud::current_positions::current_positions::{
+            CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
+            CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
+        };
+        use crate::database::crud::CRUDTrait;
+
+        /// Σ CASH:SGD quantity for one strategy (negative = drained).
+        async fn strategy_cash(pool: &sqlx::PgPool, strategy: &str) -> Result<f64, String> {
+            let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
+                .get_pos_by_strat(strategy)
+                .await
+                .map_err(|e| format!("seed read '{strategy}': {e}"))?;
+            Ok(rows
+                .iter()
+                .filter(|r| {
+                    matches!(r, CurrentPositionsFullKeys::Stock(k) if k.stock == "CASH:SGD")
+                })
+                .map(|r| match r {
+                    CurrentPositionsFullKeys::Stock(k) => k.quantity,
+                    _ => 0.0,
+                })
+                .sum())
+        }
+
+        /// One additive CASH:SGD adjustment (delta may be negative = drain).
+        async fn adjust_cash(
+            pool: &sqlx::PgPool,
+            strategy: &str,
+            delta: f64,
+        ) -> Result<(), String> {
+            let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+            let pk = CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
+                strategy: strategy.to_string(),
+                stock: "CASH:SGD".to_string(),
+                primary_exchange: "".to_string(),
+                currency: "SGD".to_string(),
+            });
+            let uk = CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
+                quantity: Some(delta),
+                avg_price: Some(1.0),
+                last_updated: None,
+            });
+            cp.update_positions_additive(pk, uk)
+                .await
+                .map_err(|e| format!("seed cash write '{strategy}': {e}"))
+        }
+
+        let Some(p) = PoolState::current() else {
+            return Err("seed_fund_cash before any sleeve constructed — no participants".to_string());
+        };
+        let names = unsafe { &*p.names.get() }.clone();
+
+        // Restart no-op: every sleeve already funded.
+        let mut all_funded = true;
+        for name in &names {
+            let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
+                .get_pos_by_strat(name)
+                .await
+                .map_err(|e| format!("seed read '{name}': {e}"))?;
+            if !rows
+                .iter()
+                .any(|r| matches!(r, CurrentPositionsFullKeys::Stock(k) if k.stock == "CASH:SGD"))
+            {
+                all_funded = false;
+                break;
+            }
+        }
+        if all_funded {
+            let mut total = 0.0;
+            for name in &names {
+                total += strategy_cash(pool, name).await?;
+            }
+            tracing::info!(
+                capital = format!("{total:.2}"),
+                "fund sleeves already funded — restart, no transfer"
+            );
+            return Ok(total);
+        }
+
+        // FIRST-RUN transfer: unknown first, then the "" main account.
+        let share = required / names.len() as f64;
+        let unknown_cash = strategy_cash(pool, "unknown").await?;
+        let take_unknown = unknown_cash.max(0.0).min(required);
+        let main_need = required - take_unknown;
+        let main_cash = if main_need > 0.0 {
+            strategy_cash(pool, "").await?
+        } else {
+            0.0
+        };
+        let take_main = main_cash.max(0.0).min(main_need);
+        if take_unknown + take_main < required - 1e-6 {
+            panic!(
+                "blended5 fund: insufficient source cash — unknown {unknown_cash:.2} + main \
+                 {main_cash:.2} cannot cover the required {required:.2} ({:.2} per sleeve); \
+                 refusing to transfer anything",
+                share
+            );
+        }
+        if take_unknown > 0.0 {
+            adjust_cash(pool, "unknown", -take_unknown).await?;
+            tracing::info!(amount = format!("{take_unknown:.2}"), "transferred from 'unknown'");
+        }
+        if take_main > 0.0 {
+            adjust_cash(pool, "", -take_main).await?;
+            tracing::info!(amount = format!("{take_main:.2}"), "transferred from '' (main)");
+        }
+        for name in &names {
+            adjust_cash(pool, name, share).await?;
+            tracing::info!(strategy = %name, equity = format!("{share:.2}"), "seeded CASH:SGD");
+        }
+        Ok(required)
+    }
+
+    /// Wire the ledger from the pool init (names + fund capital). Reads
+    /// BLENDED5_SUBSCRIPTION. Called by `init` — the binaries make NO
+    /// separate ledger call.
+    fn install_ledger(names: &[String], capital: f64) {
+        let mut led = FundLedger::new(names, capital);
+        let sub = env_subscription();
+        if sub > 0.0 {
+            led.set_subscription(sub);
+            tracing::info!("fund ledger: monthly subscription {sub:.2} SGD enabled");
+        }
+        FUND_LEDGER.with(|l| *l.borrow_mut() = Some(led));
+        tracing::info!(
+            "fund ledger installed: {} sleeves, e_i = {:.2} SGD each (capital {capital:.2})",
+            names.len(),
+            capital / names.len() as f64
+        );
+    }
+
+    /// Push THIS participant's slot state through the pooled ring carrier;
+    /// returns the complete vintage when THIS push completed the slot (the
+    /// completing gate/sleeve owns the central trim for the slot).
+    fn push(
+        &self,
+        producer: &MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS>,
+        own: &str,
+        et_date: chrono::NaiveDate,
+        mso: i32,
+        eq: f64,
+        book: &BTreeMap<String, i64>,
+        priced: f64,
+        fixed: f64,
+    ) -> Option<Vec<FundInput>> {
+        // One ring position = one flush bucket (`FUND_BUCKET_SPAN` minutes —
+        // the fund's bar cadence: mso multiples of 5 → buckets 0..=77 <
+        // FUND_RING, so a session never self-collides).
+        let bucket = (mso.max(0) as u32) / FUND_BUCKET_SPAN;
+        // Flush key (days_from_year_start << 16) | bucket, keyed INSIDE the
+        // ring. BUG-1-class note: ordinal() wraps every calendar year, but
+        // slots complete + clear every session, so a wrapped key never finds a
+        // stale-full mask.
+        let days = et_date.ordinal() as u32;
+        let input = FundInput {
+            own: own.to_string(),
+            eq_sgd: eq,
+            priced,
+            fixed,
+            // Snapshot clone (vintage determinism): the pool book persists
+            // after the push (unnamed-sym retention; the completer's trim
+            // write-back replaces it wholesale).
+            book: book.clone(),
+        };
+        let vintage = producer.push(input, bucket, days);
+        // Ledger vintage: last-pushed equity per sleeve + pushed-at-least-once
+        // flag — the pair the flush-time day reconcile reads (`reconcile_day`).
+        unsafe {
+            self.last_eqs
+                .get()
+                .as_mut()
+                .unwrap()
+                .insert(own.to_string(), eq);
+            let seen = &mut *self.seen.get();
+            let idx = unsafe { &*self.names.get() }
+                .iter()
+                .position(|n| n == own)
+                .expect("pusher must be a minted participant");
+            seen[idx] = true;
+        }
+        if diag_on() {
+            tracing::info!(
+                slot = %et_date,
+                bucket,
+                owner = own,
+                eq,
+                priced,
+                fixed,
+                book_len = book.len(),
+                completed = vintage.is_some(),
+                "[POOLED] push"
+            );
+        }
+        vintage
+    }
+
+    /// Phase 2 of the two-phase reconcile: uniform central trim over the
+    /// completed slot's UNTRIMMED vintage (the ring's returned
+    /// `Vec<FundInput>` in producer-idx order == sleeve-name order),
+    /// write-back into the pool-owned per-participant books (direct
+    /// `update_book` store), scaled sheet out. `eod_edge` comes from the
+    /// completer's ctx (one edge per slot).
+    fn trim(
+        &self,
+        vintage: Vec<FundInput>,
+        slot_date: chrono::NaiveDate,
+        eod_edge: bool,
+    ) -> Vec<ShareOut> {
+        let cap = if eod_edge { EOD_CAP } else { INTRA_CAP };
+        let residual = unsafe { *self.residual.get() };
+        let fund_eq_sgd = residual + vintage.iter().map(|v| v.eq_sgd).sum::<f64>();
+        let fund_eq_usd = fund_eq_sgd / USD_FX;
+        let priced_total = vintage.iter().map(|v| v.priced).sum::<f64>();
+        let fixed_total = vintage.iter().map(|v| v.fixed).sum::<f64>();
+        let (scale, viol, liquidate) =
+            central_scale_panel(priced_total, fixed_total, fund_eq_usd, cap);
+        if viol {
+            if eod_edge {
+                N_VIOL_EOD.fetch_add(1, Ordering::Relaxed);
+            } else {
+                N_VIOL_INTRA.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        // Diag strings collected BEFORE the consuming loop as well.
+        let per_owner: Vec<String> = if diag_on() {
+            vintage
+                .iter()
+                .map(|v| {
+                    format!(
+                        "{} eq={:.0} gross={:.0}(|q|={} book={})",
+                        v.own,
+                        v.eq_sgd,
+                        v.priced + v.fixed,
+                        v.book.values().map(|q| q.abs()).sum::<i64>(),
+                        v.book.len()
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut sheet: Vec<ShareOut> = Vec::new();
+        for (i, input) in vintage.into_iter().enumerate() {
+            let name = input.own;
+            let scaled = apply_uniform_scale(&input.book, scale, liquidate);
+            if (liquidate || scale < 1.0) && scaled != input.book {
+                if eod_edge {
+                    N_FIRE_EOD.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    N_FIRE_INTRA.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            for (sym, q) in scaled.iter() {
+                sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
+            }
+            // Direct write-back into the pool-owned book — MOVED, no clone:
+            // the completer (same thread) is the sanctioned cross-index
+            // writer, and the next flush of participant i reads THIS book
+            // (no key guard needed — the write happens exactly once per
+            // slot trim).
+            self.update_book(i, |b| *b = scaled);
+        }
+        // Sizing vintage: fund total from THIS completed trim (the
+        // pool-share sizing path reads it; None until the first trim).
+        unsafe { *self.last_total.get() = Some(fund_eq_sgd) };
+        if diag_on() {
+            let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
+            tracing::info!(
+                slot = %slot_date,
+                fund_eq_sgd = format!("{fund_eq_sgd:.2}"),
+                scale = format!("{scale:.4}"),
+                liquidate,
+                sheet_len = sheet.len(),
+                sheet_abs_q = sheet_q,
+                participants = per_owner.join(" | "),
+                bg = if eod_edge { "close|day_last" } else { "intra" },
+                "[POOLED] central trim"
+            );
+        }
+        sheet
+    }
+
+    /// FLUSH-TIME day reconcile (the old `ledger_on_flush` seam — restored
+    /// after the trim-time placement proved to change pinned results: the
+    /// trim of the day's first slot reconciles against TODAY-OPEN
+    /// equities, re-anchoring every daily e_i update to open-anchored
+    /// windows and diverging the Nov-6 pins at the 2021-01-08 first slot).
+    /// Each sleeve's flush calls this BEFORE sizing; `on_slot`'s per-day
+    /// guard makes it once per ET date. At the day's first flush the
+    /// vintage is every sleeve's LAST-PUSHED equity = the previous
+    /// session's day-last (today's pushes have not happened yet) — the
+    /// documented contract. The full-mask gate mirrors the old POOL_SEEN:
+    /// pre-push reads are zeros, and seeding `saved_own` from them would
+    /// corrupt every later reconcile by +SE_SLEEVE per sleeve.
+    pub fn reconcile_day(&self, et_date: chrono::NaiveDate) {
+        let residual = unsafe { *self.residual.get() };
+        FUND_LEDGER.with(|l| {
+            if let Some(l) = l.borrow_mut().as_mut() {
+                let seen = unsafe { &*self.seen.get() };
+                if seen.iter().any(|&s| !s) {
+                    return;
+                }
+                let names = unsafe { &*self.names.get() };
+                if names.is_empty() {
+                    return;
+                }
+                let eqs = unsafe { &*self.last_eqs.get() }.clone();
+                l.on_slot(residual, &eqs, et_date);
+            }
+        });
+    }
+
+    /// Total pool equity (residual + Σ sleeve eq) from the LAST completed
+    /// trim — the pool-share sizing vintage. `None` until the first trim.
+    /// Sleeve-side sizing vintage: fund total from the last completed trim.
+    /// `None` until the first trim (caller falls back to own equity).
+    pub(crate) fn total_equity(&self) -> Option<f64> {
+        let total = unsafe { (*self.last_total.get()).unwrap_or(f64::NAN) };
+        if total.is_finite() {
+            Some(total)
+        } else {
+            None
         }
     }
 }
 
 /// Test-only explicit init: the ledger tests drive the pool WITHOUT live
 /// sleeve constructions (no FundGate::new registrations), so names are
-/// supplied directly + the ledger wiring is identical to production.
+/// supplied directly + the ledger wiring is identical to production. A
+/// second call in the test binary is a silent OnceLock no-op (same names).
 #[cfg(test)]
 pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
-    let ring = PoolRing {
-        slots: (0..FUND_RING).map(|_| PoolSlot::default()).collect(),
-        names: names.to_vec(),
-    };
-    let _ = POOL.set(ring);
-    POOL_RESIDUAL.store(residual.to_bits(), Ordering::Relaxed);
-    ledger_init(names, ledger_capital);
+    let p = POOL.get_or_init(PoolState::new);
+    unsafe {
+        *p.names.get() = names.to_vec();
+        *p.residual.get() = residual;
+        *p.ready.get() = true;
+    }
+    PoolState::install_ledger(names, ledger_capital);
 }
 
-/// Test-only push simulation (production pushes happen inside the gate's
-/// own `on_bar_update` or the break-sleeve `pool_push_carried`).
-#[cfg(test)]
-pub fn pool_test_push(
-    name: &str,
-    et_date: chrono::NaiveDate,
-    mso: i32,
-    eq: f64,
-    book: &BTreeMap<String, i64>,
-    priced: f64,
-    fixed: f64,
-) {
-    if let Some(idx) = pool_own_idx(name) {
-        pool_push(idx, pack_key(et_date, mso), eq, book, priced, fixed);
-    }
-}
-
-fn pool() -> Option<&'static PoolRing> {
-    POOL.get()
-}
-
-/// Packed key for the current slot + this gate's participant index.
-/// Returns None when the pool is not initialised or `own` is unregistered.
-fn pool_own_idx(own: &str) -> Option<usize> {
-    pool()?.names.iter().position(|n| n == own)
-}
-
-/// Sleeve-side seam: is `own` a pool participant (pooled mode ON for that
-/// sleeve)? Drives the sleeve's pooled vs legacy flush arms.
-pub(crate) fn pool_is_participant(own: &str) -> bool {
-    pool_own_idx(own).is_some()
-}
-
-/// FUND equity at SLOT-START vintage (the legacy engine-registry value):
-/// residual + Σ per-sleeve equity, where an UNPUSHED sleeve contributes its
-/// seed (SE_SLEEVE — the binary seeds every sleeve SE_SLEEVE, and the
-/// engine's slot-start snapshot counted the seed balances the same way).
-/// A gate classifies its OWN gross against THIS fund equity (legacy
-/// semantics: per-sleeve gross vs FUND-level cap — NOT a pooled gross).
-fn pool_fund_equity() -> f64 {
-    let Some(ring) = pool() else { return f64::NAN };
-    let residual = f64::from_bits(POOL_RESIDUAL.load(Ordering::Relaxed));
-    let seen = POOL_SEEN.load(Ordering::Relaxed);
-    let mut sum = residual;
-    for i in 0..ring.names.len() {
-        let eq = if seen & (1u32 << i) != 0 {
-            f64::from_bits(POOL_LAST_EQ[i].load(Ordering::Relaxed))
-        } else {
-            SE_SLEEVE
-        };
-        sum += eq;
-    }
-    sum
-}
-
-/// Peers' freshest known gross (priced + fixed) — every OTHER participant's
-/// last pushed gross (this slot if it already flushed, else the rolling
-/// vintage). Legacy: the engine-registry slot-start snapshot gave every
-/// gate the SAME peer gross; here late flushers see fresher peers, so the
-/// fund total pins under the cap at the LAST trim of each slot (legacy's
-/// observable EOD property, u ≤ cap).
-fn pool_peer_gross(own_idx: usize) -> f64 {
-    let n = pool().map(|r| r.names.len()).unwrap_or(0);
-    let mut s = 0.0f64;
-    for (i, c) in POOL_LAST_PRICED.iter().enumerate() {
-        if i >= n || i == own_idx {
-            continue;
-        }
-        s += f64::from_bits(c.load(Ordering::Relaxed))
-            + f64::from_bits(POOL_LAST_FIXED[i].load(Ordering::Relaxed));
-    }
-    s
-}
-
-/// Sleeve-side direct push for the BROKE sleeve: its flush early-returns
-/// BEFORE `run_chain`, so its gate never pushes — the pool mask must
-/// complete EVERY slot or the whole fund stalls. Pushes the sleeve's
-/// ENGINE-side carried positions as an absolute book (snapshot of
-/// `state::current()` positions priced off THIS flush's frame; absent bars
-/// contribute `fixed`, exactly like the gate's `last_px` miss path).
-/// Returns the slot key when THIS push completed it — the sleeve then
-/// runs the ONE central trim itself via [`pool_take_sheet`] (the gate
-/// path is unavailable: no chain ran).
-pub fn pool_push_carried(
-    own: &str,
-    et_date: chrono::NaiveDate,
-    mso: i32,
-    eq: f64,
-    frame: &BarFrame,
-) -> Option<u64> {
-    let idx = pool_own_idx(own)?;
-    let mut book: BTreeMap<String, i64> = BTreeMap::new();
-    let mut priced = 0.0f64;
-    let mut fixed = 0.0f64;
-    if let Some(st) = state::current() {
-        let guard = st
-            .current_positions
-            .read()
-            .expect("InMemoryState current_positions poisoned");
-        for (k, v) in guard.iter() {
-            if k.strategy != own
-                || k.stock.starts_with("CASH:")
-                || book.contains_key(&k.stock)
-                || v.quantity == 0.0
-            {
-                continue;
-            }
-            let q = v.quantity.trunc() as i64;
-            book.insert(k.stock.clone(), q);
-            let px = frame
-                .get(&k.stock)
-                .map(|b| b.get_price())
-                .filter(|p| p.is_finite() && *p > 0.0)
-                .unwrap_or(0.0);
-            let g = q.abs() as f64 * if px > 0.0 { px } else { 0.0 };
-            if px > 0.0 {
-                priced += g;
-            } else {
-                fixed += g;
-            }
-        }
-    }
-    let key = pack_key(et_date, mso);
-    if pool_push(idx, key, eq, &book, priced, fixed) {
-        Some(key)
-    } else {
-        None
-    }
-}
-
-/// Push THIS participant's slot state; returns true when THIS push
-/// completed the slot (mask full) — the completing gate/sleeve owns the
-/// central trim for the slot.
-fn pool_push(
-    idx: usize,
-    key: u64,
-    eq: f64,
-    book: &BTreeMap<String, i64>,
-    priced: f64,
-    fixed: f64,
-) -> bool {
-    let Some(ring) = pool() else { return false };
-    let slot = &ring.slots[(key as usize) % FUND_RING];
-    let prev = slot.key.load(Ordering::Relaxed);
-    if prev != key {
-        // New (or recycled) slot: this push re-seeds it. Single-thread-class
-        // engine: no other writer can race this slot for the same key.
-        slot.key.store(key, Ordering::Relaxed);
-        slot.mask.store(0, Ordering::Relaxed);
-    }
-    slot.eq[idx].store(eq.to_bits(), Ordering::Relaxed);
-    POOL_LAST_EQ[idx].store(eq.to_bits(), Ordering::Relaxed);
-    POOL_LAST_PRICED[idx].store(priced.to_bits(), Ordering::Relaxed);
-    POOL_LAST_FIXED[idx].store(fixed.to_bits(), Ordering::Relaxed);
-    POOL_SEEN.fetch_or(1u32 << idx, Ordering::Relaxed);
-    slot.priced[idx].store(priced.to_bits(), Ordering::Relaxed);
-    slot.fixed[idx].store(fixed.to_bits(), Ordering::Relaxed);
-    // Arc<BTreeMap> published as a raw pointer; the writer clones a fresh
-    // Arc per push and leaks the previous one deliberately: steady-state
-    // books are tiny and overwritten per slot (the engine keeps no handle
-    // and the ring recycles every RING slots). Documented single-pass
-    // class — no reader can observe a half-published pointer.
-    let arc: Arc<BTreeMap<String, i64>> = Arc::new(book.clone());
-    slot.book[idx].store(Arc::into_raw(arc) as u64, Ordering::Relaxed);
-    let full = (1u32 << ring.names.len()) - 1;
-    let m = slot.mask.fetch_or(1u32 << idx, Ordering::Relaxed) | (1u32 << idx);
-    let completed = m == full;
-    if diag::diag_fills() {
-        let owner: Option<&String> = ring.names.get(idx);
-        tracing::info!(
-            key,
-            owner = owner.map(|s| s.as_str()).unwrap_or("?"),
-            eq,
-            priced,
-            fixed,
-            book_len = book.len(),
-            completed,
-            "[POOLED] push"
-        );
-    }
-    completed
-}
-
-/// The pooled view of ONE slot: per-participant (name, eq, book, priced,
-/// fixed) + fund inputs. `None` when the pool is absent or the slot's mask
-/// is not complete (the caller falls back / skips).
-fn pool_take_slot(key: u64) -> Option<FundSlotView> {
-    let ring = pool()?;
-    let slot = &ring.slots[(key as usize) % FUND_RING];
-    if slot.key.load(Ordering::Relaxed) != key {
-        return None;
-    }
-    let full = (1u32 << ring.names.len()) - 1;
-    if slot.mask.load(Ordering::Relaxed) != full {
-        return None;
-    }
-    let mut parts = Vec::with_capacity(ring.names.len());
-    for (i, name) in ring.names.iter().enumerate() {
-        let eq = f64::from_bits(slot.eq[i].load(Ordering::Relaxed));
-        let priced = f64::from_bits(slot.priced[i].load(Ordering::Relaxed));
-        let fixed = f64::from_bits(slot.fixed[i].load(Ordering::Relaxed));
-        let ptr = slot.book[i].load(Ordering::Relaxed) as *const BTreeMap<String, i64>;
-        let book: Arc<BTreeMap<String, i64>> = if ptr.is_null() {
-            Arc::new(BTreeMap::new())
-        } else {
-            // Reconstruct an owned view (single-pass engine: the writer
-            // cannot race). Clone out; the ring slot keeps its original.
-            let borrowed: &BTreeMap<String, i64> = unsafe { &*ptr };
-            Arc::new(borrowed.clone())
-        };
-        parts.push((name.clone(), eq, book, priced, fixed));
-    }
-    let residual = f64::from_bits(POOL_RESIDUAL.load(Ordering::Relaxed));
-    Some(FundSlotView {
-        residual,
-        participants: parts,
-    })
-}
-
-/// Complete-slot snapshot handed to the pooled trim / ledger.
-struct FundSlotView {
-    residual: f64,
-    /// (name, sleeve eq SGD, absolute book, priced gross, fixed gross).
-    participants: Vec<(String, f64, Arc<BTreeMap<String, i64>>, f64, f64)>,
-}
-
-impl FundSlotView {
-    /// Fund equity (SGD) = residual + Σ sleeve equities.
-    fn fund_eq_sgd(&self) -> f64 {
-        self.residual + self.participants.iter().map(|(_, e, _, _, _)| e).sum::<f64>()
-    }
-    /// Total priced / fixed gross over ALL participants' books.
-    fn pooled_gross(&self) -> (f64, f64) {
-        let priced = self.participants.iter().map(|(_, _, _, p, _)| p).sum::<f64>();
-        let fixed = self.participants.iter().map(|(_, _, _, _, f)| f).sum::<f64>();
-        (priced, fixed)
-    }
-}
-
-/// Slot-level EOD edge shared by the central trim: BLENDED5_CLOSE_AWARE=1
-/// reads the session close window, else the day-last edge. The completer's
+/// Slot-level EOD edge shared by the central trim: DEFAULT reads the
+/// session close window (the pin `BLENDED5_CLOSE_AWARE=1` baked in);
+/// `BLENDED5_CLOSE_AWARE=0` restores the day-last edge. The completer's
 /// ctx decides for the whole slot (all sleeves flush the same bar).
 pub(crate) fn slot_eod_edge(close_window: bool, day_last: bool) -> bool {
-    if std::env::var("BLENDED5_CLOSE_AWARE").ok().as_deref() == Some("1") {
-        close_window
-    } else {
-        day_last
-    }
-}
-
-/// Pure scale kernel: legacy per-sleeve classification.
-/// Returns (scale, violated, liquidate).
-fn classify_scale(
-    fund_eq_usd: f64,
-    priced: f64,
-    fixed: f64,
-    peer_gross: f64,
-    cap: f64,
-) -> (f64, bool, bool) {
-    let mut scale = 1.0f64;
-    let mut liquidate = false;
-    let mut viol = false;
-    if fund_eq_usd <= 0.0 || !fund_eq_usd.is_finite() {
-        if fund_eq_usd.is_finite() {
-            scale = 0.0;
-            liquidate = true;
-            viol = true;
-        }
-    } else if priced + fixed + peer_gross > cap * fund_eq_usd && priced > 0.0 {
-        scale = ((cap * fund_eq_usd - fixed - peer_gross) / priced).max(0.0);
-        viol = true;
-    } else if priced + fixed + peer_gross > cap * fund_eq_usd {
-        scale = 1.0;
-        viol = true;
-    }
-    (scale, viol, liquidate)
-}
-
-/// In-place cumulative scale over a persistent gate book (legacy step 8
-/// verbatim; px from the owner's last_px cache).
-fn apply_scale_to_book(
-    book: &mut BTreeMap<String, i64>,
-    px_of: &dyn Fn(&str) -> f64,
-    scale: f64,
-    liquidate: bool,
-) {
-    for (sym, q) in book.iter_mut() {
-        let newq = if liquidate {
-            0
-        } else {
-            let px = px_of(sym);
-            if !px.is_finite() || px <= 0.0 || *q == 0 || scale >= 1.0 {
-                *q
-            } else {
-                ((q.abs() as f64 * scale).floor() as i64) * (if *q > 0 { 1 } else { -1 })
-            }
-        };
-        *q = newq;
+    match std::env::var("BLENDED5_CLOSE_AWARE").ok().as_deref() {
+        None | Some("1") => close_window,
+        _ => day_last,
     }
 }
 
@@ -604,46 +875,6 @@ fn apply_uniform_scale(
         .collect()
 }
 
-/// Centrally-trimmed book write-back: the cumulative ratchet now lives here
-/// (the completer trims books belonging to OTHER gate objects, so the result
-/// must be visible at their next flush). Per-participant (slot key, book).
-static LAST_TRIMMED: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
-static LAST_TRIMMED_KEY: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
-
-fn last_trimmed_for(idx: usize) -> Option<(u64, Arc<BTreeMap<String, i64>>)> {
-    let ptr = LAST_TRIMMED[idx].load(Ordering::Relaxed) as *const BTreeMap<String, i64>;
-    if ptr.is_null() {
-        return None;
-    }
-    let key = LAST_TRIMMED_KEY[idx].load(Ordering::Relaxed);
-    let borrowed: &BTreeMap<String, i64> = unsafe { &*ptr };
-    Some((key, Arc::new(borrowed.clone())))
-}
-
-fn store_last_trimmed(idx: usize, key: u64, book: &BTreeMap<String, i64>) {
-    let arc: Arc<BTreeMap<String, i64>> = Arc::new(book.clone());
-    LAST_TRIMMED[idx].store(Arc::into_raw(arc) as u64, Ordering::Relaxed);
-    LAST_TRIMMED_KEY[idx].store(key, Ordering::Relaxed);
-}
-
 // ── §8 CENTRAL POOLED TRIM — the ONE place fund-level emission logic lives ──
 //
 // Built sheet = the completed slot's ABSOLUTE CENTRALLY-TRIMMED book: per
@@ -655,136 +886,32 @@ fn store_last_trimmed(idx: usize, key: u64, book: &BTreeMap<String, i64>) {
 // each strategy, not all from one strategy").
 //
 // TWO-PHASE reconcile: every sleeve's gate pushes its UNTRIMMED book (phase
-// 1, collect); the COMPLETING push runs the ONE uniform central trim over
-// the complete vintage (phase 2, reconcile) and the scaled books are written
-// back to LAST_TRIMMED so each gate's next flush carries the trimmed book
-// (the cumulative ratchet, order-independent). Fire/viol counters are
-// slot-level now: one viol per over-budget slot, one fire per sleeve whose
-// book actually changed.
+// 1, `PoolState::push`); the COMPLETING push runs the ONE uniform central
+// trim over the complete vintage (phase 2, `PoolState::trim`) and the
+// scaled books are written back DIRECTLY into the pool-owned per-participant
+// books so each gate's next flush carries the trimmed book
+// (order-independent). Fire/viol counters are slot-level now: one viol per
+// over-budget slot, one fire per sleeve whose book actually changed.
 //
 // TWO consumption pathways, ONE trim:
 // - the COMPLETING GATE (`pooled_intents`): sheet → attributed per-share
 //   intents → SharesGate (foreign pass-through, verbatim) → the chain
 //   output IS the fund's sheet → the completing sleeve computes deltas →
 //   MKT orders with order_ref = owner;
-// - a BROKE completer (`pool_push_carried` → this): no chain ran, so the
+// - a BROKE completer (`push_carried` → this): no chain ran, so the
 //   sleeve converts the sheet to orders directly.
-pub fn pool_take_sheet(
-    key: u64,
-    slot_date: chrono::NaiveDate,
-) -> Option<Vec<ShareOut>> {
-    let view = pool_take_slot(key)?;
-    let mut sheet: Vec<ShareOut> = Vec::new();
-    for (name, _eq, book, _priced, _fixed) in view.participants.iter() {
-        for (sym, q) in book.iter() {
-            sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
-        }
-    }
-    if diag::diag_fills() {
-        let fund_eq = view.fund_eq_sgd();
-        let per_owner: Vec<String> = view
-            .participants
-            .iter()
-            .map(|(n, eq, b, p, f)| {
-                format!(
-                    "{} eq={:.0} gross={:.0}(|q|={} book={})",
-                    n,
-                    eq,
-                    p + f,
-                    b.values().map(|q| q.abs()).sum::<i64>(),
-                    b.len()
-                )
-            })
-            .collect();
-        let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
-        tracing::info!(
-            slot = %slot_date,
-            fund_eq_sgd = format!("{fund_eq:.2}"),
-            sheet_len = sheet.len(),
-            sheet_abs_q = sheet_q,
-            participants = per_owner.join(" | "),
-            "[POOLED] sheet"
-        );
-    }
-    Some(sheet)
-}
-
-/// Phase 2 of the two-phase reconcile: uniform central trim over the
-/// completed slot's UNTRIMMED books, write-back to LAST_TRIMMED, scaled
-/// sheet out. `eod_edge` comes from the completer's ctx (one edge per slot).
-pub fn pool_take_trimmed_sheet(
-    key: u64,
-    slot_date: chrono::NaiveDate,
-    eod_edge: bool,
-) -> Option<Vec<ShareOut>> {
-    let view = pool_take_slot(key)?;
-    let cap = if eod_edge { EOD_CAP } else { INTRA_CAP };
-    let fund_eq_usd = view.fund_eq_sgd() / USD_FX;
-    let (priced_total, fixed_total) = view.pooled_gross();
-    let (scale, viol, liquidate) =
-        central_scale_panel(priced_total, fixed_total, fund_eq_usd, cap);
-    if viol {
-        if eod_edge {
-            N_VIOL_EOD.fetch_add(1, Ordering::Relaxed);
-        } else {
-            N_VIOL_INTRA.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    let mut sheet: Vec<ShareOut> = Vec::new();
-    for (i, (name, _eq, book, _p, _f)) in view.participants.iter().enumerate() {
-        let scaled = apply_uniform_scale(book, scale, liquidate);
-        if (liquidate || scale < 1.0) && scaled != **book {
-            if eod_edge {
-                N_FIRE_EOD.fetch_add(1, Ordering::Relaxed);
-            } else {
-                N_FIRE_INTRA.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        store_last_trimmed(i, key, &scaled);
-        for (sym, q) in scaled.iter() {
-            sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
-        }
-    }
-    if diag::diag_fills() {
-        let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
-        let per_owner: Vec<String> = view
-            .participants
-            .iter()
-            .map(|(n, eq, b, p, f)| {
-                format!(
-                    "{} eq={:.0} gross={:.0}(|q|={} book={})",
-                    n,
-                    eq,
-                    p + f,
-                    b.values().map(|q| q.abs()).sum::<i64>(),
-                    b.len()
-                )
-            })
-            .collect();
-        tracing::info!(
-            slot = %slot_date,
-            fund_eq_sgd = format!("{:.2}", view.fund_eq_sgd()),
-            scale = format!("{scale:.4}"),
-            liquidate,
-            sheet_len = sheet.len(),
-            sheet_abs_q = sheet_q,
-            participants = per_owner.join(" | "),
-            bg = if eod_edge { "close|day_last" } else { "intra" },
-            "[POOLED] central trim"
-        );
-    }
-    Some(sheet)
-}
-
 /// The COMPLETING gate's pooled branch: sheet → ATTRIBUTED per-share
 /// intents (absolute book counts). Emitting through the chain tail keeps
 /// the payload contract: `run_chain` returns `Payload::Shares` and the
 /// sleeve reads the attributed sheet from there. Empty sheet (e.g. every
 /// book all-zero) → no intents → the sleeve emits `NoAction`.
-fn pooled_intents(key: u64, slot_date: chrono::NaiveDate, eod_edge: bool) -> Payload {
-    let Some(sheet) = pool_take_trimmed_sheet(key, slot_date, eod_edge) else {
-        return Payload::Intents(Vec::new());
-    };
+fn pooled_intents(
+    p: &PoolState,
+    vintage: Vec<FundInput>,
+    slot_date: chrono::NaiveDate,
+    eod_edge: bool,
+) -> Payload {
+    let sheet = p.trim(vintage, slot_date, eod_edge);
     let mut out: crate::strategy_wrappers::intent::IntentMap =
         Vec::with_capacity(sheet.len());
     for s in sheet {
@@ -808,41 +935,50 @@ pub struct FundGate {
     /// Owning sleeve's engine strategy name ("blended5_<key>") — excluded
     /// from the peer gross (its own gross comes from its own book).
     own: String,
-    eod_cap: f64,
-    intra_cap: f64,
     /// Last-known-price cache (legacy `FundBook::last_px` idiom: freshly
     /// printed closes extend the map; unprinted syms price at the last
     /// seen close; never-priced syms contribute 0 = `fixed`).
     last_px: HashMap<String, f64>,
-    /// The sleeve's FULL target book in share space (legacy `sub_cur`):
-    /// signed share counts, fresh emissions overwrite, unnamed syms retain,
-    /// explicit zeros KEPT, cumulative scaling on fire (legacy path) — in
-    /// pooled mode the book is the UNTRIMMED collect panel and the trimmed
-    /// book is adopted from the pool write-back at the next flush.
-    book: BTreeMap<String, i64>,
-    /// Slot key of the LAST_TRIMMED write-back already adopted (0 = none).
-    last_trim_key: u64,
+    /// Participant identity: the producer handle minted from the pool at
+    /// construction — `get_producer_idx()` is the pool index keying the
+    /// pool-owned books (mint order == names order == sleeve-name order,
+    /// Parity-risk #1 by construction). The FULL target book itself lives
+    /// in the pool, legacy `sub_cur` semantics: signed share counts, fresh
+    /// emissions overwrite, unnamed syms retain, explicit zeros KEPT — the
+    /// UNTRIMMED collect panel whose centrally-trimmed form the completer
+    /// writes back directly.
+    producer: MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS>,
 }
+
+// SAFETY: single-threaded engine discipline. Strategies structurally
+// require `Sync` (`strategy_enum!` / `SleeveRunner` impls), and the
+// producer handle inside `FundGate` is auto-`!Sync` because its raw
+// pointers alias ring memory. The contract this impl asserts: every
+// `FundGate` lives on its owning sleeve's thread; the handle is used by
+// that ONE thread only (concurrent `push` from two threads would race the
+// plain payload cells — a contract break, documented the same way on
+// `MpscRingBufferProducer`); the pool state it reaches through the idx is
+// `PoolState` (one `unsafe impl Sync`, same single-thread argument) and
+// only ever touched same-thread (flush overwrite + same-thread completer
+// trim). No reference derived through a `&FundGate` crosses a thread
+// boundary in this engine.
+unsafe impl Sync for FundGate {}
 
 impl FundGate {
     pub fn new(own: String) -> Self {
-        // Registration fold (user ruling): `new` is the ONLY registration
-        // point — every sleeve's chain construction lands here, so by the
-        // time the binary calls `pool_init`, REGISTRY holds exactly the
-        // active sleeve set (deduped, construction order).
-        {
-            let mut reg = REGISTRY.lock().expect("fund registry poisoned");
-            if !reg.iter().any(|n| *n == own) {
-                reg.push(own.clone());
-            }
-        }
+        // Identity + registration in ONE act: the producer handle minted
+        // from the pool IS the participant identity (`get_producer_idx()`),
+        // and `mint` appends the sleeve name to the pool's participant
+        // list in the same act (mint order == names order == sleeve-name
+        // order, Parity-risk #1 by construction; minting beyond
+        // FUND_PRODUCERS panics — loud, never silent). The FIRST gate
+        // construction creates the pool; `pool_init` readies it before any
+        // flush.
+        let producer = POOL.get_or_init(PoolState::new).mint(&own);
         Self {
             own,
-            eod_cap: EOD_CAP,
-            intra_cap: INTRA_CAP,
             last_px: HashMap::new(),
-            book: BTreeMap::new(),
-            last_trim_key: 0,
+            producer,
         }
     }
 
@@ -894,6 +1030,143 @@ impl FundGate {
             Some(q as i64 * it.side as i64)
         }
     }
+
+    /// Gross over the FULL pool-owned book (legacy `gross_pv` verbatim):
+    /// fresh rows (q == 0) skip; px ≤ 0 rows accrue `fixed` notional
+    /// (structurally ≡ 0 — legacy parity, kept) while px > 0 rows accrue
+    /// `priced`. Extends `last_px` this flush (`price_for`), as legacy.
+    /// Returns `(priced, fixed)`.
+    fn fund_gross(&mut self, book: &BTreeMap<String, i64>, bars: &BarFrame) -> (f64, f64) {
+        let mut priced = 0.0f64;
+        let mut fixed = 0.0f64; // ≡ 0 by construction (legacy parity), kept
+        let book_items: Vec<(String, i64)> =
+            book.iter().map(|(s, q)| (s.clone(), *q)).collect();
+        for (sym, q) in book_items.iter() {
+            if *q == 0 {
+                continue;
+            }
+            let px = self.price_for(sym, bars);
+            let g = (*q).abs() as f64 * if px > 0.0 { px } else { 0.0 };
+            if px > 0.0 {
+                priced += g;
+            } else {
+                fixed += g;
+            }
+        }
+        (priced, fixed)
+    }
+
+    /// POOLED MODE — TWO-PHASE reconcile, phase 1 (collect): push THIS
+    /// slot's UNTRIMMED book (pool-owned at `p.book(idx)`; fresh
+    /// overwritten in step 1, grossed in `fund_gross`) and the sleeve
+    /// equity + gross components for the vintage. The completing push runs
+    /// phase 2 (the ONE uniform central trim over the complete vintage) and
+    /// emits the scaled sheet for the WHOLE slot; non-completing sleeves
+    /// emit NOTHING (their books entered the pool via the push).
+    fn participate_and_trim(
+        &self,
+        p: &PoolState,
+        idx: usize,
+        ctx: &ClockCtx,
+        priced: f64,
+        fixed: f64,
+    ) -> Result<Payload, String> {
+        // Edge: shared by the pooled collect + central trim (the
+        // completer's ctx decides for the whole slot — all sleeves flush
+        // the same bar).
+        let eod_edge = slot_eod_edge(ctx.close_window, ctx.day_last);
+        let gross = priced + fixed;
+        if diag_on() {
+            tracing::info!(
+                slot = %ctx.et_date,
+                owner = %self.own,
+                own_gross = format!("{gross:.2}"),
+                own_priced = format!("{priced:.2}"),
+                own_fixed = format!("{fixed:.2}"),
+                bg = if eod_edge { "close|day_last" } else { "intra" },
+                "[POOLED] collect"
+            );
+        }
+
+        match p.push(
+            &self.producer,
+            &self.own,
+            ctx.et_date,
+            ctx.mso,
+            ctx.own_eq_sgd,
+            p.book(idx),
+            priced,
+            fixed,
+        ) {
+            Some(vintage) => Ok(pooled_intents(p, vintage, ctx.et_date, eod_edge)),
+            None => Ok(Payload::Intents(Vec::new())),
+        }
+    }
+
+    /// BROKE-SLEEVE PARTICIPATION: the sleeve's flush early-returns BEFORE
+    /// `run_chain`, so its gate never pushes — the pool mask must complete
+    /// EVERY slot or the whole fund stalls (a broke sleeve often still
+    /// holds positions, and the trim needs everyone's book). Pushes the
+    /// CARRIED positions as an absolute book (derived sleeve-side — engine
+    /// state in replay, DB positions in live; priced off THIS flush's
+    /// frame here; absent bars contribute `fixed`, exactly like the
+    /// gate's `last_px` miss path)
+    /// and, when THIS push completes the slot, runs the ONE central trim
+    /// itself (the gate path is unavailable: no chain ran). Does NOT touch
+    /// `p.book(idx)` — write-back happens only at the trim; the fresh
+    /// overwrite on the sleeve's first non-broke flush self-heals the
+    /// book.
+    pub fn push_carried(
+        &mut self,
+        et_date: chrono::NaiveDate,
+        mso: i32,
+        eq_sgd: f64,
+        carried_book: BTreeMap<String, i64>,
+        frame: &BarFrame,
+        close_window: bool,
+        day_last: bool,
+    ) -> Option<Vec<ShareOut>> {
+        let Some(p) = PoolState::current() else {
+            return None;
+        };
+        let mut book: BTreeMap<String, i64> = BTreeMap::new();
+        let mut priced = 0.0f64;
+        let mut fixed = 0.0f64;
+        // The carried book arrives derived (engine state in replay, DB
+        // positions in live — see `SleeveExecutor::carried_book`); the gate
+        // prices it off THIS frame: a sym absent from the frame (or a
+        // non-finite price) falls to the FIXED bucket — the legacy
+        // last_px-miss parity.
+        for (sym, q) in carried_book.iter() {
+            if *q == 0 {
+                continue;
+            }
+            book.insert(sym.clone(), *q);
+            let px = frame
+                .get(sym)
+                .map(|b| b.get_price())
+                .filter(|p| p.is_finite() && *p > 0.0)
+                .unwrap_or(0.0);
+            let g = q.abs() as f64 * if px > 0.0 { px } else { 0.0 };
+            if px > 0.0 {
+                priced += g;
+            } else {
+                fixed += g;
+            }
+        }
+        let vintage = p.push(
+            &self.producer,
+            &self.own,
+            et_date,
+            mso,
+            eq_sgd,
+            &book,
+            priced,
+            fixed,
+        )?;
+        let eod_edge = slot_eod_edge(close_window, day_last);
+        Some(p.trim(vintage, et_date, eod_edge))
+    }
 }
 
 impl GateLogic for FundGate {
@@ -913,7 +1186,7 @@ impl GateLogic for FundGate {
         // DIAG seam: the chain output AT THE GATE BOUNDARY splits the signal
         // blackout: n_intents==0 → upstream chain silent; n_intents>0 with
         // the book staying empty → fresh_shares omitted every entry.
-        if crate::backtester::methods::in_memory::diag::diag_fills() {
+        if diag_on() {
             let n = items.len();
             let abs_n: f64 = items.iter().map(|(_, it)| it.n_base.abs()).sum();
             tracing::info!(
@@ -925,214 +1198,54 @@ impl GateLogic for FundGate {
             );
         }
 
-        // Slot edge shared by the pooled collect + central trim (the
-        // completer's ctx decides for the whole slot).
-        let eod_edge = slot_eod_edge(ctx.close_window, ctx.day_last);
-
-        // Adopt the previous slot's centrally-trimmed book BEFORE the fresh
-        // overwrite (the cumulative ratchet lives in the pool LAST_TRIMMED
-        // write-back now — the completer trims books belonging to OTHER
-        // gate objects, so each gate reloads its trimmed carry here; fresh
-        // emissions overwrite absolutely in step 1).
-        if let Some(idx) = pool_own_idx(&self.own) {
-            if let Some((tkey, tbook)) = last_trimmed_for(idx) {
-                if tkey != self.last_trim_key {
-                    self.book = tbook.as_ref().clone();
-                    self.last_trim_key = tkey;
+        // POOLED MODE (every production gate — `FundGate::new` mints its
+        // producer handle, and the binary inits the pool before any flush):
+        // the participant index is the handle's producer idx, and the book
+        // itself lives in the POOL (keyed by that idx).
+        let idx = self.producer.get_producer_idx();
+        match PoolState::current() {
+            Some(p) if p.ready() => {
+                // ── 1) fresh emissions overwrite the pool-owned book
+                //       (absolute, legacy `sub_cur[si][sym] = q`); unnamed
+                //       syms retain. ──
+                let fresh: Vec<(String, i64)> = items
+                    .iter()
+                    .filter_map(|(sym, it)| {
+                        Self::fresh_shares(it, sym, bars).map(|q| (sym.clone(), q))
+                    })
+                    .collect();
+                p.update_book(idx, |book| {
+                    for (sym, q) in fresh {
+                        book.insert(sym, q);
+                    }
+                });
+                // ── 2) gross the FULL book over all carried + fresh rows,
+                //       then participate: pool push; the completing push
+                //       runs the ONE uniform central trim over the complete
+                //       vintage and emits the scaled sheet for the WHOLE
+                //       slot (non-completing sleeves emit NOTHING — their
+                //       books entered the pool via the push). ──
+                // All-zero book: `fund_gross` self-yields exactly the
+                // (0.0, 0.0) the legacy early gate hardcoded — the flush
+                // still participates (an all-zero sleeve can be the
+                // completer; the engine accounts true up from the sheet's
+                // explicit zeros when the strategy had held positions).
+                let (priced, fixed) = self.fund_gross(p.book(idx), bars);
+                self.participate_and_trim(p, idx, ctx, priced, fixed)
+            }
+            // Unready pool (bare constructions, pool_init not yet called)
+            // fails CLOSED: emit nothing — the legacy non-pooled fail-open
+            // pass-through arm was deleted with its kernels.
+            _ => {
+                if !WARNED_NO_REGISTRY.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        owner = %self.own,
+                        "FundGate: gate is not a pool participant — bare construction emits nothing"
+                    );
                 }
+                Ok(Payload::Intents(Vec::new()))
             }
         }
-
-        // ── 1) fresh emissions overwrite the book (absolute, legacy
-        //       `sub_cur[si][sym] = q`); unnamed syms retain. Track which
-        //       syms are fresh (output order = fresh first). ──
-        let mut fresh_syms: HashSet<String> = HashSet::new();
-        let mut fresh_order: Vec<String> = Vec::with_capacity(items.len());
-        for (sym, it) in items.iter() {
-            if let Some(q) = Self::fresh_shares(it, sym, bars) {
-                if fresh_syms.insert(sym.clone()) {
-                    fresh_order.push(sym.clone());
-                }
-                self.book.insert(sym.clone(), q);
-            }
-        }
-
-        // ── 1b) legacy step 3 all-zero early gate on the PRE-scale book ──
-        // (basket all-zero → emit NOTHING — legacy short-circuit before the
-        // classification/scale pass; the engine accounts true up from the
-        // sheet's explicit zeros when the strategy had held positions).
-        // POOLED mode pushes even the all-zero book (completion counting)
-        // before the early return; if THIS push completes the slot, the
-        // sheet assembles HERE (an all-zero sleeve can be the completer).
-        let all_zero = self.book.values().all(|q| *q == 0);
-        if all_zero {
-            if let Some(idx) = pool_own_idx(&self.own) {
-                if pool_push(
-                    idx,
-                    pack_key(ctx.et_date, ctx.mso),
-                    ctx.own_eq_sgd,
-                    &self.book,
-                    0.0,
-                    0.0,
-                ) {
-                    return Ok(pooled_intents(
-                        pack_key(ctx.et_date, ctx.mso),
-                        ctx.et_date,
-                        eod_edge,
-                    ));
-                }
-            }
-            return Ok(Payload::Intents(Vec::new()));
-        }
-
-        // ── 2) gross over the FULL book (legacy gross_pv verbatim) ──
-        let mut priced = 0.0f64;
-        let mut fixed = 0.0f64; // ≡ 0 by construction (legacy parity), kept
-        let book_items: Vec<(String, i64)> = self
-            .book
-            .iter()
-            .map(|(s, q)| (s.clone(), *q))
-            .collect();
-        for (sym, q) in book_items.iter() {
-            if *q == 0 {
-                continue;
-            }
-            let px = self.price_for(sym, bars);
-            let g = (*q).abs() as f64 * if px > 0.0 { px } else { 0.0 };
-            if px > 0.0 {
-                priced += g;
-            } else {
-                fixed += g;
-            }
-        }
-
-        // ── 2b) POOLED MODE — TWO-PHASE reconcile, phase 1 (collect):
-        // push THIS slot's UNTRIMMED book (carry adopted at the top of the
-        // flush, fresh overwritten in step 1, grossed in step 2). The
-        // completing push runs phase 2 (the ONE uniform central trim over
-        // the complete vintage) and emits the scaled sheet; non-completing
-        // sleeves emit NOTHING (their books entered the pool via the push). ──
-        if let Some(idx) = pool_own_idx(&self.own) {
-            let fund_eq_sgd = pool_fund_equity();
-            // Pre-trim panel (diagnostic only — the trim decision happens
-            // once, centrally, at complete vintage).
-            let peer_gross = pool_peer_gross(idx);
-            let gross = priced + fixed;
-            if crate::backtester::methods::in_memory::diag::diag_fills() {
-                tracing::info!(
-                    slot = %ctx.et_date,
-                    owner = %self.own,
-                    fund_eq = format!("{fund_eq_sgd:.2}"),
-                    own_gross = format!("{gross:.2}"),
-                    own_priced = format!("{priced:.2}"),
-                    own_fixed = format!("{fixed:.2}"),
-                    peer_gross = format!("{peer_gross:.2}"),
-                    bg = if eod_edge { "close|day_last" } else { "intra" },
-                    "[POOLED] collect"
-                );
-            }
-
-            if pool_push(
-                idx,
-                pack_key(ctx.et_date, ctx.mso),
-                ctx.own_eq_sgd,
-                &self.book,
-                priced,
-                fixed,
-            ) {
-                return Ok(pooled_intents(
-                    pack_key(ctx.et_date, ctx.mso),
-                    ctx.et_date,
-                    eod_edge,
-                ));
-            }
-            return Ok(Payload::Intents(Vec::new()));
-        }
-
-        // ── 3) fund equity + cap + fire classification (exact port) ──
-        // The engine registry is GONE (strategy-layer pool owns the fund
-        // state now). A FundGate running WITHOUT pool initialisation
-        // (bare unit constructions) fail-opens: peer gross 0, fund equity
-        // NaN → pass-through unscaled.
-        let fund_eq_sgd = {
-            if !WARNED_NO_REGISTRY.swap(true, Ordering::Relaxed) {
-                tracing::warn!(
-                    "FundGate: no fund pool initialised — cap DISABLED (fail-open pass-through)"
-                );
-            }
-            f64::NAN
-        };
-        let eq_usd = fund_eq_sgd / USD_FX;
-        let cap = if eod_edge { self.eod_cap } else { self.intra_cap };
-
-        let (scale, viol, liquidate) = classify_scale(eq_usd, priced, fixed, 0.0, cap);
-        if viol {
-            if eod_edge {
-                N_VIOL_EOD.fetch_add(1, Ordering::Relaxed);
-                if liquidate || scale < 1.0 {
-                    N_FIRE_EOD.fetch_add(1, Ordering::Relaxed);
-                }
-            } else {
-                N_VIOL_INTRA.fetch_add(1, Ordering::Relaxed);
-                if liquidate || scale < 1.0 {
-                    N_FIRE_INTRA.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
-
-        // ── 4) scale pass over the FULL book (legacy step 8 verbatim:
-        //       in-place, CUMULATIVE across fires, explicit zeros kept) ──
-        apply_scale_to_book(
-            &mut self.book,
-            &|sym| self.last_px.get(sym).copied().unwrap_or(0.0),
-            scale,
-            liquidate,
-        );
-
-        // ── 5) emit the FULL scaled book: fresh syms at their scaled size,
-        //       carried syms as frozen-share per-share intents (SharesGate
-        //       truncates them to the exact carried count — legacy carried
-        //       SHARES, not re-truncated notionals). ──
-        let out = Self::book_to_intents(&self.book, &fresh_order, &fresh_syms);
-        Ok(Payload::Intents(out))
-    }
-}
-
-impl FundGate {
-    /// The FULL book as the emit format: fresh syms first (at their — here
-    /// unscaled — size), carried syms after; zeros → `Intent::flat()`,
-    /// else frozen-share intents (raw = |q| shares at sc=1).
-    fn book_to_intents(
-        book: &BTreeMap<String, i64>,
-        fresh_order: &[String],
-        fresh_syms: &HashSet<String>,
-    ) -> crate::strategy_wrappers::intent::IntentMap {
-        let mut out: crate::strategy_wrappers::intent::IntentMap = Vec::new();
-        for sym in fresh_order {
-            let q = book[sym];
-            if q == 0 {
-                out.push((sym.clone(), Intent::flat()));
-            } else {
-                out.push((
-                    sym.clone(),
-                    Intent::per_share(q.signum() as i32, q.abs() as f64, 1.0),
-                ));
-            }
-        }
-        for (sym, q) in book.iter() {
-            if fresh_syms.contains(sym) {
-                continue;
-            }
-            if *q == 0 {
-                out.push((sym.clone(), Intent::flat()));
-            } else {
-                out.push((
-                    sym.clone(),
-                    Intent::per_share(q.signum() as i32, q.abs() as f64, 1.0),
-                ));
-            }
-        }
-        out
     }
 }
 
@@ -1266,8 +1379,14 @@ impl FundLedger {
 }
 
 /// Env gate: fund-equity ledger sizing mode (default OFF = §8 own-eq).
+/// Ledger-mode gate (env `BLENDED5_FUND_LEDGER`, DEFAULT ON — the pin
+/// `BLENDED5_FUND_LEDGER=1` baked in as the default; set `0` to run the
+/// plain own-equity §8 mode): each sleeve sizes off its fund-share book.
 pub fn env_fund_ledger() -> bool {
-    std::env::var("BLENDED5_FUND_LEDGER").ok().as_deref() == Some("1")
+    match std::env::var("BLENDED5_FUND_LEDGER").ok().as_deref() {
+        None | Some("1") => true,
+        _ => false,
+    }
 }
 
 /// Env gate: size every sleeve off the TOTAL pool equity (Python shared-fund
@@ -1291,133 +1410,10 @@ pub fn env_subscription() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Wire the ledger from the pool init (names + fund capital). Reads
-/// BLENDED5_SUBSCRIPTION. Called by `pool_init` — the backtest binaries
-/// make NO separate ledger call.
-fn ledger_init(names: &[String], capital: f64) {
-    let mut led = FundLedger::new(names, capital);
-    let sub = env_subscription();
-    if sub > 0.0 {
-        led.set_subscription(sub);
-        tracing::info!("fund ledger: monthly subscription {sub:.2} SGD enabled");
-    }
-    FUND_LEDGER.with(|l| *l.borrow_mut() = Some(led));
-    tracing::info!(
-        "fund ledger installed: {} sleeves, e_i = {:.2} SGD each (capital {capital:.2})",
-        names.len(),
-        capital / names.len() as f64
-    );
-}
-
 /// Clear the thread-local ledger (run end / tests).
 #[allow(dead_code)]
 pub fn ledger_clear() {
     FUND_LEDGER.with(|l| *l.borrow_mut() = None);
-}
-
-/// Per-participant last-pushed equity (the running vintage the ledger
-/// reconciles against) — updated on every pool push.
-static POOL_LAST_EQ: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
-/// Presence mask: bit i set once participant i has pushed AT LEAST ONCE.
-/// The ledger reconcile never fires before EVERY participant has pushed —
-/// pre-push reads are zeros (a sleeve's flush reads the vintage BEFORE its
-/// own chain pushes), and seeding `saved_own` from the day-1 zero vintage
-/// would corrupt every later reconcile by +SE_SLEEVE per sleeve.
-static POOL_SEEN: AtomicU32 = AtomicU32::new(0);
-
-/// Per-participant last-pushed priced / fixed gross (f64 bits) — the peers'
-/// freshest known gross for the per-sleeve cap classification. Legacy used
-/// the engine-registry SLOT-START snapshot (peer gross identical for every
-/// gate in the slot); here the statics roll forward on every push, so a
-/// late completer sees its peers' CURRENT-slot (already-trimmed) pushes —
-/// strictly tighter enforcement, same observable property: the LAST trim
-/// of each slot pins the fund total under the cap.
-static POOL_LAST_PRICED: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
-static POOL_LAST_FIXED: [AtomicU64; FUND_MAX_PARTICIPANTS] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
-
-/// Fund inputs for the ledger reconcile: (residual, {name → last-pushed
-/// sleeve eq SGD}). No-op-safe: empty map when the pool is absent.
-pub(crate) fn pool_fund_inputs() -> (f64, HashMap<String, f64>) {
-    let Some(ring) = pool() else { return (0.0, HashMap::new()) };
-    let eqs = ring
-        .names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| {
-            (
-                n.clone(),
-                f64::from_bits(POOL_LAST_EQ[i].load(Ordering::Relaxed)),
-            )
-        })
-        .collect();
-    (f64::from_bits(POOL_RESIDUAL.load(Ordering::Relaxed)), eqs)
-}
-
-/// Sleeve flush hook: advance the ledger against the CURRENT pool vintage
-/// (each sleeve's last push = the previous session's day-last). No-op when
-/// the ledger is not installed (default env-off §8 mode) or the pool is
-/// absent (bare unit constructions).
-pub fn ledger_on_flush(et_date: chrono::NaiveDate) {
-    FUND_LEDGER.with(|l| {
-        if let Some(l) = l.borrow_mut().as_mut() {
-            // Vintage gate: the reconcile fires only once EVERY participant
-            // has pushed at least once (pre-push POOL_LAST_EQ reads are
-            // zeros — seeding saved_own from them would add the full seed
-            // to every e_i at the next session boundary).
-            let Some(ring) = pool() else { return };
-            let full = (1u32 << ring.names.len()) - 1;
-            if POOL_SEEN.load(Ordering::Relaxed) != full {
-                return;
-            }
-            let (residual, eqs) = pool_fund_inputs();
-            if eqs.is_empty() {
-                return;
-            }
-            l.on_slot(residual, &eqs, et_date);
-        }
-    });
-}
-
-/// Total pool equity (residual + Σ sleeve eq) for pool-share sizing.
-/// `None` when the pool is absent (bare unit constructions, solo runs).
-pub fn pool_total_equity() -> Option<f64> {
-    let (residual, eqs) = pool_fund_inputs();
-    if eqs.is_empty() {
-        return None;
-    }
-    let total = residual + eqs.values().sum::<f64>();
-    if total.is_finite() {
-        Some(total)
-    } else {
-        None
-    }
 }
 
 /// Sleeve's sizing base: the fund-share book when the ledger mode is on and
@@ -1429,7 +1425,7 @@ pub fn sizing_base(name: &str) -> Option<f64> {
         return None;
     }
     if env_pool_sizing() {
-        if let Some(total) = pool_total_equity() {
+        if let Some(total) = PoolState::current().and_then(|p| p.total_equity()) {
             return Some(total);
         }
     }
@@ -1442,26 +1438,6 @@ mod two_phase_tests {
 
     fn book(pairs: &[(&str, i64)]) -> BTreeMap<String, i64> {
         pairs.iter().map(|(s, q)| (s.to_string(), *q)).collect()
-    }
-
-    #[test]
-    fn classify_scale_under_budget_passes_through() {
-        let (s, v, l) = classify_scale(100_000.0, 50_000.0, 0.0, 20_000.0, 1.95);
-        assert_eq!((s, v, l), (1.0, false, false));
-    }
-
-    #[test]
-    fn classify_scale_peer_deduction_matches_legacy_math() {
-        // (cap*eq − fixed − peer)/priced = (1.95*100k − 0 − 100k)/100k = 0.95
-        let (s, v, l) = classify_scale(100_000.0, 100_000.0, 0.0, 100_000.0, 1.95);
-        assert!((s - 0.95).abs() < 1e-12);
-        assert!((v, l) == (true, false));
-    }
-
-    #[test]
-    fn classify_scale_nan_fund_fail_open() {
-        let (s, v, l) = classify_scale(f64::NAN, 50_000.0, 0.0, 0.0, 1.95);
-        assert_eq!((s, v, l), (1.0, false, false));
     }
 
     #[test]
@@ -1509,8 +1485,9 @@ mod pool_sizing_tests {
 
     #[test]
     fn sizing_base_ignores_pool_flag_without_ledger() {
-        // LEDGER unset in unit tests (env-gated) → None regardless of the
-        // pool-sizing seam: default-off paths are untouched.
+        // Ledger mode is DEFAULT-ON, but no ledger is installed in unit
+        // tests (pool absent → FUND_LEDGER empty) → None regardless of the
+        // pool-sizing seam.
         assert_eq!(sizing_base("blended5_tc1"), None);
     }
 }

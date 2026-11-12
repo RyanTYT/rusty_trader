@@ -58,6 +58,27 @@ macro_rules! strategy_gate_enum {
             pub fn chain(self, w: impl Into<GateEnum>) -> GateEnum {
                 GateEnum::Chain(Box::new(self), Box::new(w.into()))
             }
+
+            /// Generic tree walk: first leaf whose concrete type is `T`,
+            /// downcast. `Chain` recurses head-then-tail (mirrors `chain()`
+            /// construction order, head applied first). The boxed-dyn
+            /// variants (BasicStrategy/Dyn) can never type-match — they
+            /// yield None; concrete gate structs downcast iff `T` is their
+            /// type. First match wins: callers assume at most one instance
+            /// per type per chain (true by construction — FundGate /
+            /// OrderGate / Shares are each inserted exactly once in
+            /// blended5 `build()`).
+            pub fn find_gate_mut<T: std::any::Any>(&mut self) -> Option<&mut T> {
+                match self {
+                    GateEnum::Chain(h, t) => match h.find_gate_mut::<T>() {
+                        Some(g) => Some(g),
+                        None => t.find_gate_mut::<T>(),
+                    },
+                    $(GateEnum::$variant(g) => {
+                        $crate::strategy_wrappers::gate::downcast_leaf::<T, $type>(g)
+                    })*
+                }
+            }
         }
 
         impl crate::strategy_wrappers::GateLogic for GateEnum {
@@ -119,6 +140,17 @@ strategy_gate_enum! {
 /// Convenience constructor for the `BasicStrategy` head variant.
 pub fn basic(s: impl BasicStrategy + 'static) -> GateEnum {
     GateEnum::BasicStrategy(Box::new(s))
+}
+
+/// Leaf downcast helper for [`GateEnum::find_gate_mut`]: works uniformly for
+/// concrete gate structs AND the boxed-dyn variants (whose wrappers are
+/// sized and 'static, so the wrapper itself implements `Any` — it can never
+/// match a caller's `T`, yielding None, since no caller requests the
+/// wrapper type itself; the inner `dyn` object cannot coerce to `dyn Any`).
+pub fn downcast_leaf<T: std::any::Any, A: std::any::Any>(g: &mut A) -> Option<&mut T> {
+    // sized A → &mut dyn Any unsize coercion (Box<dyn BasicStrategy> etc.
+    // is sized and 'static, so the wrapper itself is a valid Any).
+    (g as &mut dyn std::any::Any).downcast_mut::<T>()
 }
 
 /// Introspection: a mutable handle to the chain HEAD as `dyn Any`, when the
