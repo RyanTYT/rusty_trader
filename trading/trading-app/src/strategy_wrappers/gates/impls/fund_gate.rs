@@ -356,10 +356,13 @@ impl PoolState {
         unsafe { *self.ready.get() }
     }
 
-    /// Month reallocation trigger (LIVE — called from the sleeve's flush
-    /// path): `true` on the FIRST flush of a new calendar month, at which
-    /// point the caller runs `realloc_equal_weights`. Memory-only state: a
-    /// restart re-anchors (restart-as-anchor semantics).
+    /// Month reallocation trigger (called from the sleeve's flush path in
+    /// EVERY regime): `true` on the FIRST flush of a new calendar month,
+    /// at which point the caller runs `realloc_equal_weights`. The first
+    /// recorded month does NOT trigger (month 1 of a run never reallocates
+    /// — the ledger's original behavior). Memory-only: a restart records
+    /// the current month without reallocating (restart-safety is
+    /// structural — the equalized accounts persist).
     pub fn advance_month_anchor(&self, d: chrono::NaiveDate) -> bool {
         let month = (d.year(), d.month());
         let prev = unsafe { &mut *self.realloc_month.get() };
@@ -371,26 +374,29 @@ impl PoolState {
             Some(_) => false,
             None => {
                 *prev = Some(month);
-                true
+                false
             }
         }
     }
 
-    /// LIVE month-end equal-weight reallocation: reads each sleeve's equity
-    /// from the SAME source per-flush sizing reads (`get_strategy_sgd_value`
-    /// — fresh, memoised), computes `fund = Σ eq` (live carries NO unbooked
-    /// residual — the seeding transferred ALL capital into the sleeves), and
-    /// writes the equalising `CASH:SGD` deltas (positions untouched). The
-    /// DB cash move IS the live analog of the ledger's monthly `e_i`
-    /// re-anchor — sizing then reads real equity per flush. Mid-month
-    /// restarts re-anchor (restart-as-anchor). Subscriptions
-    /// (BLENDED5_SUBSCRIPTION) are not yet supported live.
+    /// UNIFIED month-end equal-weight reallocation (the engine's allocation
+    /// engine, BOTH regimes): the vintage is the pool's LAST-PUSHED equity
+    /// (previous day-last — the identical source in the replay and live,
+    /// since the trigger fires before the day's first push); fund =
+    /// residual + Σ vintage; share = fund/N; each sleeve's `CASH:SGD` row
+    /// moves by share − eq (positions untouched) via the mode-blind
+    /// `update_positions_additive` (SQL additive upsert live/Db, the
+    /// strategy's InMemoryState additive update in the replay). The pool's
+    /// residual is distributed into the sleeves (set to 0) — the moved
+    /// accounts carry what the ledger's notional re-anchor used to carry,
+    /// so the sizing trajectories agree. Subscriptions
+    /// (BLENDED5_SUBSCRIPTION) are not yet supported here.
     pub fn realloc_equal_weights(
         &self,
-        consolidator: &std::sync::Arc<crate::market_data::consolidator::Consolidator>,
         handle: &tokio::runtime::Handle,
         pool: &sqlx::PgPool,
     ) -> Result<(), String> {
+        use crate::database::crud::CRUDTrait;
         use crate::database::models::{
             AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
         };
@@ -398,42 +404,46 @@ impl PoolState {
             CurrentPositionsCRUD, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
             CurrentPositionsUpdateKeys,
         };
-        use crate::database::crud::CRUDTrait;
-        use crate::market_data::traits::strategy_value::GetStrategyValue;
 
         let names = unsafe { &*self.names.get() }.clone();
         if env_subscription() > 0.0 {
             tracing::warn!(
                 "BLENDED5_SUBSCRIPTION set — subscriptions are not yet \
-                 supported in the live month reallocation; ignoring"
+                 supported in the month reallocation; ignoring"
             );
         }
-        let mut eqs = Vec::with_capacity(names.len());
-        for name in &names {
-            let eq = consolidator
-                .get_strategy_sgd_value(name)
-                .map_err(|e| format!("realloc equity read '{name}': {e}"))?;
-            eqs.push(eq);
+        // Vintage = last-pushed equity per sleeve (the flush-time day
+        // reconcile's source). An incomplete vintage (a sleeve has never
+        // pushed — month 1 of a run) skips the reallocation; the month
+        // marker is already consumed, matching the old ledger where month 1
+        // never anchored.
+        let vintage = unsafe { &*self.last_eqs.get() }.clone();
+        if vintage.len() < names.len() {
+            return Ok(());
         }
-        // Fund = Σ sleeve equity — live carries NO unbooked residual
-        // (seed_fund_cash transfers ALL capital into the sleeves).
-        let fund = eqs.iter().sum::<f64>();
+        let residual = unsafe { *self.residual.get() };
+        let fund = residual + vintage.values().sum::<f64>();
         let share = fund / names.len() as f64;
         tracing::info!(
             fund = format!("{fund:.2}"),
             share = format!("{share:.2}"),
             "month-end equal-weight reallocation"
         );
-        for (name, eq) in names.iter().zip(&eqs) {
+        for name in &names {
+            let eq = vintage.get(name).copied().unwrap_or(0.0);
             let delta = share - eq;
             if delta.abs() < 0.005 {
                 continue;
             }
-            let jh = handle.spawn({
-                let pool = pool.clone();
-                let name = name.clone();
-                async move {
-                    let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+            // Bridge split (see the sleeve's load_db_working_state): in the
+            // replay the CRUD future's backtest arm is an instant in-memory
+            // account write — poll it INLINE on this thread so the
+            // thread-locals are read on their owning thread; live/Db writes
+            // are sqlx queries needing the reactor — spawn onto the runtime.
+            let write = {
+                #[cfg(feature = "backtest")]
+                let write = futures::executor::block_on(async {
+                    let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
                     let pk = CurrentPositionsPrimaryKeys::Stock(
                         CurrentStockPositionsPrimaryKeys {
                             strategy: name.clone(),
@@ -450,11 +460,51 @@ impl PoolState {
                         },
                     );
                     cp.update_positions_additive(pk, uk).await
-                }
-            });
-            futures::executor::block_on(jh)
-                .map_err(|e| format!("realloc join: {e}"))?
-                .map_err(|e| format!("realloc write '{name}': {e}"))?;
+                });
+                #[cfg(not(feature = "backtest"))]
+                let write = {
+                    let jh = handle.spawn({
+                        let pool = pool.clone();
+                        let name = name.clone();
+                        async move {
+                            let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+                            let pk = CurrentPositionsPrimaryKeys::Stock(
+                                CurrentStockPositionsPrimaryKeys {
+                                    strategy: name.clone(),
+                                    stock: "CASH:SGD".to_string(),
+                                    primary_exchange: "".to_string(),
+                                    currency: "SGD".to_string(),
+                                },
+                            );
+                            let uk = CurrentPositionsUpdateKeys::Stock(
+                                CurrentStockPositionsUpdateKeys {
+                                    quantity: Some(delta),
+                                    avg_price: Some(1.0),
+                                    last_updated: None,
+                                },
+                            );
+                            cp.update_positions_additive(pk, uk).await
+                        }
+                    });
+                    futures::executor::block_on(jh)
+                        .map_err(|e| format!("realloc write join: {e}"))?
+                };
+                write
+            }
+            .map_err(|e| format!("realloc write '{name}': {e}"))?;
+        }
+        // The pool's unallocated capital is now distributed into the
+        // sleeves' accounts.
+        unsafe { *self.residual.get() = 0.0 };
+        // The vintage moves with the accounts: the ledger's next daily
+        // reconcile (e_i += eq − saved_own) must not ingest the reallocation
+        // delta as P&L — re-base last_eqs to the post-move share so the
+        // drift resumes from the anchor exactly like the pre-unified ledger.
+        unsafe {
+            let le = self.last_eqs.get().as_mut().unwrap();
+            for name in &names {
+                le.insert(name.clone(), share);
+            }
         }
         Ok(())
     }
