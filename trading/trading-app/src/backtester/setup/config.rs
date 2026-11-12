@@ -86,6 +86,12 @@ pub struct BacktestConfig {
     /// read their params from `spec.params` (cfg-gated; fall back to
     /// hardcoded defaults for unset keys).
     pub strategies: HashMap<String, StrategySpec>,
+    /// Run the active strategies TOGETHER in one multi pass (shared clock,
+    /// one equity rollup) instead of separately, one per-strategy run each.
+    /// Parsed from `backtest.json`'s config object (`"multi_run": true`);
+    /// the multi route seeds each strategy `starting_capital_sgd / n` and
+    /// keeps the residual ≈ 0.
+    pub multi_run: bool,
 }
 
 impl BacktestConfig {
@@ -109,12 +115,20 @@ impl BacktestConfig {
             )],
             output_path: "backtest_results.json".to_string(),
             strategies: HashMap::new(),
+            multi_run: false,
         }
     }
 
     /// Bar granularity for stocks (e.g., `Duration::minutes(5)`).
     pub fn stock_bar_interval(mut self, d: Duration) -> Self {
         self.stock_bar_interval = d;
+        self
+    }
+
+    /// Run the active strategies together in one multi pass instead of
+    /// separately (see the field docs).
+    pub fn multi_run(mut self, multi_run: bool) -> Self {
+        self.multi_run = multi_run;
         self
     }
 

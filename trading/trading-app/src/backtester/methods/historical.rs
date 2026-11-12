@@ -9,6 +9,20 @@ use crate::database::models::{Status, StrategyFullKeys};
 use crate::database::models_crud::strategy::StrategyCRUD;
 use crate::strategy::strategy::StrategyExecutor;
 
+use std::sync::Arc;
+
+use sqlx::PgPool;
+
+use crate::backtester::execution::broker::BacktestBroker;
+use crate::backtester::oracle::price_supplier::BacktestPriceSupplier;
+use crate::backtester::setup::clock::BacktestClock;
+use crate::backtester::setup::config::BacktestConfig;
+use crate::execution::fx_backed_up_order::OrderStore;
+use crate::execution::order_engine::OrderEngine;
+use crate::market_data::consolidator::Consolidator;
+use crate::market_data::traits::current_price::PriceSupplier;
+use crate::strategy::strategy::{StrategyDetails, StrategyEnum};
+
 use crate::backtester::methods::load_bars;
 use crate::backtester::methods::{BacktestMethod, transpose};
 use crate::backtester::output::equity::EquityCurve;
@@ -156,5 +170,197 @@ impl BacktestMethod for HistoricalReplay {
         }
 
         Ok(equity)
+    }
+}
+
+/// Db-lane multi context: everything the shared replay loop needs to advance
+/// several strategies against ONE bar matrix on the Db (DB-backed) lane.
+/// Strategies arrive ALREADY warmed (`warm_up_data` ran in the async caller);
+/// `run_multi` owns the sync replay loop. NO `InMemoryState` is installed
+/// anywhere — equity snapshots read the DB (`BacktestMode::Db` reads) and
+/// fills attribute to the owning strategy by construction (`order_ref` =
+/// strategy name keys every broker write).
+pub struct DbMultiContext {
+    pub config: BacktestConfig,
+    pub pool: PgPool,
+    pub handle: tokio::runtime::Handle,
+    pub clock: Arc<BacktestClock>,
+    pub prices: Arc<BacktestPriceSupplier>,
+    pub consolidator: Arc<Consolidator>,
+    pub strategies: Vec<StrategyEnum>,
+}
+
+pub struct DbMultiOutput {
+    pub names: Vec<String>,
+    pub curves: Vec<EquityCurve>,
+    pub residual: f64,
+    pub rollup: EquityCurve,
+}
+
+impl HistoricalReplay {
+    /// Run all strategies in ONE pass over the shared bar matrix, mirroring
+    /// `run_multi_with_bars`' slot semantics (clock + close publish happen
+    /// ONCE per bar before any strategy sees it) with the single-route
+    /// execution machinery (real `BacktestBroker` fills + fill hooks).
+    pub fn run_multi(
+        &self,
+        mut ctx: DbMultiContext,
+        bars: &[Vec<
+            Option<
+                crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys,
+            >,
+        >],
+    ) -> Result<DbMultiOutput, String> {
+        let names: Vec<String> = ctx.strategies.iter().map(|s| s.get_name()).collect();
+        let details: Vec<StrategyDetails> = ctx
+            .strategies
+            .iter()
+            .map(|s| s.get_strategy_details())
+            .collect();
+
+        // Per-strategy brokers (own cash / order-id / execution-backlog);
+        // ONE shared OrderStore + OrderEngine (matches live semantics).
+        let brokers: Vec<Arc<BacktestBroker>> = names
+            .iter()
+            .map(|_| {
+                Arc::new(BacktestBroker::new(
+                    ctx.pool.clone(),
+                    ctx.handle.clone(),
+                    ctx.config.clone(),
+                    ctx.prices.clone() as Arc<dyn PriceSupplier + Send + Sync>,
+                ))
+            })
+            .collect();
+        let order_engine = OrderEngine::new(ctx.pool.clone(), ctx.handle.clone());
+        let order_store =
+            Arc::new(OrderStore::open().expect("Expected to open OrderStore for backtest"));
+
+        // Equal-split seeding residual: each participant seeds
+        // starting_capital_sgd / n, so the residual is ≈ 0 up to float
+        // rounding (kept for the non-fund rollup path; fund runs read the
+        // LIVE pool residual per slot instead).
+        let n_f = names.len() as f64;
+        let seeds_total = n_f * (ctx.config.starting_capital_sgd / n_f);
+        let residual = ctx.config.starting_capital_sgd - seeds_total;
+        assert!(
+            residual >= -1e-6,
+            "equal-split seeding over-commits: capital {} < Σ seeds {}",
+            ctx.config.starting_capital_sgd,
+            seeds_total
+        );
+        let residual = if residual.abs() < 1e-6 { 0.0 } else { residual.max(0.0) };
+
+        let mut curves: Vec<EquityCurve> = (0..names.len()).map(|_| EquityCurve::new()).collect();
+        let mut rollup = EquityCurve::new();
+        let contract0 = ctx
+            .config
+            .subscribed_contracts
+            .first()
+            .cloned()
+            .expect("BacktestConfig.subscribed_contracts must be non-empty");
+
+        for bars_in_time in bars {
+            let mut this_time = None;
+            for idx in 0..bars_in_time.len() {
+                let bar = match bars_in_time.get(idx) {
+                    Some(Some(v)) => v,
+                    _ => continue,
+                };
+                let contract = ctx
+                    .config
+                    .subscribed_contracts
+                    .get(idx)
+                    .expect("Expected contract aligned with bar in multi replay");
+                let time = bar.get_time();
+                this_time = Some(time);
+                // Shared market surface: clock + close publish happen ONCE per
+                // bar, before any strategy sees it.
+                ctx.clock.set(time);
+                let close = bar.get_price();
+                ctx.prices.publish_close(&contract, close);
+
+                for i in 0..ctx.strategies.len() {
+                    brokers[i].set_current_bar(bar.clone());
+                    let outcome = ctx.strategies[i]
+                        .on_bar_update(&contract, bar, &ctx.consolidator)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("on_bar_update error [{}]: {e:?}", names[i]);
+                            crate::strategy::strategy::BarUpdateOutcome::NoAction
+                        });
+                    order_engine.handle_bar_update_outcome(
+                        &*brokers[i],
+                        &*ctx.prices,
+                        outcome,
+                        &details[i],
+                        &order_store,
+                    );
+                    if details[i].hooks_execution {
+                        for execution_data in brokers[i].take_execution_backlog() {
+                            if let Err(e) = ctx.strategies[i].on_fill(execution_data) {
+                                tracing::error!("on_fill error: {e:?}");
+                            }
+                        }
+                    } else {
+                        brokers[i].take_execution_backlog();
+                    }
+                }
+            }
+
+            // Equity snapshots: per-strategy (DB-backed) + rollup (residual + Σ).
+            let t = this_time.expect("bar row produced no bars");
+            let snaps = ctx.handle.block_on(async {
+                let mut snaps = Vec::with_capacity(names.len());
+                for name in &names {
+                    snaps.push(
+                        crate::backtester::output::equity::compute_snapshot(
+                            &ctx.pool,
+                            &*ctx.prices,
+                            name,
+                            t,
+                            &contract0,
+                            0.0,
+                        )
+                        .await,
+                    );
+                }
+                snaps
+            });
+            // Rollup adds the FUND-LEVEL unallocated residual. Read the LIVE
+            // value each slot: the strategy-layer month-end realloc zeroes
+            // PoolState's residual and distributes it into the sleeves, so a
+            // frozen initial value would double-count from then on. Runs with
+            // no pool (non-fund strategies) keep the frozen initial value.
+            let live_residual = crate::strategy_wrappers::gates::impls::fund_gate::PoolState
+                ::current()
+                .map(|p| p.residual())
+                .unwrap_or(residual);
+            let mut sum_cash = live_residual;
+            let mut sum_pv = 0.0;
+            let mut sum_eq = live_residual;
+            for (i, snap) in snaps.into_iter().enumerate() {
+                sum_cash += snap.cash;
+                sum_pv += snap.positions_value;
+                sum_eq += snap.equity;
+                curves[i].push(snap);
+            }
+            rollup.push(crate::backtester::output::equity::EquitySnapshot {
+                time: t,
+                cash: sum_cash,
+                positions_value: sum_pv,
+                equity: sum_eq,
+            });
+        }
+
+        Ok(DbMultiOutput {
+            names,
+            curves,
+            // Final live residual (0 after the month-end realloc distributed
+            // it); frozen initial value only when no pool exists.
+            residual: crate::strategy_wrappers::gates::impls::fund_gate::PoolState
+                ::current()
+                .map(|p| p.residual())
+                .unwrap_or(residual),
+            rollup,
+        })
     }
 }

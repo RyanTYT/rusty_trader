@@ -46,6 +46,8 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use crate::database::crud::CRUDTrait;
+
 use crate::backtester::methods::load_bars;
 use crate::backtester::oracle::data_loader::refresh_continuous_aggregate;
 use crate::strategy::strategy::StrategyExecutor;
@@ -194,8 +196,12 @@ async fn run_single_route(
 /// and their own accounts; fills attribute to the owning strategy by
 /// construction (`PositionKey.strategy` = the account's strategy name).
 pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
-    if config.mode != BacktestMode::InMemory {
-        return Err("run_multi_route: only BacktestMode::InMemory is supported".into());
+    // Db lane: ONE shared pass over the union of contracts driving every
+    // active sleeve on real DB state (`run_multi_route_db`). The ≥2 guard
+    // stays on the InMemory lane only — solo Db runs are legitimate (the
+    // sleeve IS the fund; the mpsc pool handles 1–4 active sleeves).
+    if config.mode == BacktestMode::Db {
+        return run_multi_route_db(pool, config).await;
     }
     let handle = tokio::runtime::Handle::current();
 
@@ -236,19 +242,16 @@ pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(),
             .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
         strategies.push(strategy);
     }
-    if strategies.len() < 2 {
-        return Err(
-            "run_multi_route: needs ≥ 2 active strategies (single-strategy runs use run_single_route)"
-                .into(),
-        );
+    if strategies.is_empty() {
+        return Err("run_multi_route: no active strategies".into());
     }
 
-    // 3. Transfer seeding: each sleeve account seeds independently; the
-    //    residual (config capital − Σ seeds) stays un-traded with the rollup.
-    let seeds = vec![
-        crate::strategy::blended5_fund::fund::SE_SLEEVE;
-        strategies.len()
-    ];
+    // 3. Equal-split seeding: each participant account seeds
+    //    starting_capital_sgd / n (generic multi-run semantics — any mode,
+    //    any strategy set); the residual (≈ 0 for an even split) stays
+    //    un-traded with the rollup.
+    let seed = config.starting_capital_sgd / strategies.len() as f64;
+    let seeds = vec![seed; strategies.len()];
 
     // 4. Load bars once (the deepest warmup hint), then one blocking pass.
     let max_warm = strategies
@@ -321,5 +324,223 @@ pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(),
     )
     .map_err(|e| format!("write rollup: {e}"))?;
     tracing::info!("multi pass: rollup → backtest_results_blended5_multi.json");
+    Ok(())
+}
+
+/// Db-lane multi runner: ONE `HistoricalReplay`-shaped pass over the union
+/// of contracts, driving every active sleeve on REAL DB state. NO
+/// InMemoryState is installed; equity snapshots read the DB per slot.
+/// Accepts 1–4 active sleeves (no ≥2 guard here — solo = the sleeve IS the
+/// fund). NOT pin-comparable with the InMemory lane (BacktestBroker fills
+/// materialize at the current bar's close).
+async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
+    let handle = tokio::runtime::Handle::current();
+
+    // 1. Data check / aggregate refresh (same as the InMemory arm).
+    if let BacktestPeriod::TimeRange { start, end } = &config.period {
+        let bars_per_contract = load_bars(&config, &pool, 0)
+            .await
+            .map_err(|e| format!("load_bars check: {e}"))?;
+        let has_empty_bars = bars_per_contract.iter().any(|bars| bars.is_empty());
+        if !has_empty_bars {
+            tracing::info!(
+                "Data already loaded for [{}, {}] — refreshing the continuous aggregate.",
+                *start,
+                *end
+            );
+            refresh_continuous_aggregate(&pool, *start, *end).await;
+        } else {
+            tracing::info!(
+                "Data not loaded for [{}, {}] — OFFLINE MODE: skipping IBKR/Alpaca load.",
+                *start,
+                *end
+            );
+        }
+    }
+
+    // 2. Active strategies in deterministic (name-sorted) order.
+    let mut entries: Vec<(&String, &crate::strategy::StrategySpec)> =
+        config.strategies.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    let mut strategies: Vec<crate::strategy::strategy::StrategyEnum> = Vec::new();
+    for (name, spec) in &entries {
+        if !spec.active {
+            tracing::info!("Strategy '{name}' inactive (active=false) — skipping");
+            continue;
+        }
+        let strategy = crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
+            .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
+        strategies.push(strategy);
+    }
+    if strategies.is_empty() {
+        return Err("run_multi_route (Db): no active strategies".into());
+    }
+
+    // 3. Strategy rows (FK targets for transactions/positions).
+    for s in &strategies {
+        let name = s.get_name();
+        let crud = crate::database::models_crud::strategy::StrategyCRUD::new(pool.clone());
+        if let Err(e) = crud
+            .create_or_ignore(&crate::database::models::StrategyFullKeys {
+                strategy: name,
+                status: crate::database::models::Status::Active,
+            })
+            .await
+        {
+            tracing::error!("backtest: create strategy row failed: {e:?}");
+        }
+    }
+
+    // 4. Load bars once (deepest warmup hint) + warm each strategy at its
+    //    OWN window start (mirrors run_multi_with_warm_up's per-strategy
+    //    bar_times). warm_up_data reads the DB (read_last_n) in Db mode.
+    let max_warm = strategies
+        .iter()
+        .map(|s| s.warmup_bars_required())
+        .max()
+        .unwrap_or(0);
+    let bars = load_bars(&config, &pool, max_warm).await?;
+    let bars_arc = Arc::new(crate::backtester::methods::transpose(bars));
+    #[cfg(feature = "backtest")]
+    let bar_times: Result<Vec<_>, String> = match &config.period {
+        BacktestPeriod::TimeRange { .. } => strategies
+            .iter()
+            .map(|s| {
+                let n = s.warmup_bars_required();
+                bars_arc
+                    .get(n)
+                    .and_then(|slot| slot.iter().find_map(|b| b.as_ref()))
+                    .map(|b| b.get_time())
+                    .ok_or_else(|| {
+                        format!("insufficient bars for the warmup lookback (need {n})")
+                    })
+            })
+            .collect(),
+        BacktestPeriod::NumBars(_) => {
+            Err("run_multi_route (Db): NumBars period is not supported with warmup_bars".into())
+        }
+    };
+    #[cfg(not(feature = "backtest"))]
+    let bar_times: Result<Vec<chrono::DateTime<chrono::Utc>>, String> =
+        if let BacktestPeriod::NumBars(_) = &config.period {
+            Err("run_multi_route (Db): NumBars period is not supported with warmup_bars".into())
+        } else {
+            Ok(Vec::new())
+        };
+    let bar_times = bar_times?;
+
+    let light = build_light_context(&pool, &config);
+    let mut warm_ends = Vec::with_capacity(strategies.len());
+    for (i, s) in strategies.iter_mut().enumerate() {
+        #[cfg(feature = "backtest")]
+        let end = s
+            .warm_up_data(&light.consolidator, bar_times[i])
+            .await
+            .map_err(|e| format!("warm_up_data: {e}"))?;
+        #[cfg(not(feature = "backtest"))]
+        let end = s
+            .warm_up_data(&light.consolidator)
+            .await
+            .map_err(|e| format!("warm_up_data: {e}"))?;
+        warm_ends.push(end);
+    }
+
+    // 5. Trim to post-warm-up (no shared bar cache in Db mode — trim at the
+    //    deepest warmup_end, the analogue of cache.max_end_time).
+    let trim_t = warm_ends.iter().copied().max().expect("strategies non-empty");
+    let split = bars_arc
+        .iter()
+        .position(|row| {
+            row.iter()
+                .any(|b| b.as_ref().is_some_and(|bar| bar.get_time() > trim_t))
+        })
+        .unwrap_or(0);
+
+    // 6. Seed each participant account (equal split of the fund capital).
+    let seed = config.starting_capital_sgd / strategies.len() as f64;
+    for s in &strategies {
+        crate::backtester::setup::seed::seed_initial_capital(&pool, &s.get_name(), seed).await?;
+    }
+
+    // 7. One blocking pass. The fund pool is initialised INSIDE the closure
+    //    (FUND_LEDGER is a thread-local; non-blended5 runs have no pool and
+    //    skip the init).
+    let config_clone = config.clone();
+    let pool_clone = pool.clone();
+    let handle_clone = handle.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        if let Some(p) =
+            crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
+        {
+            #[cfg(feature = "backtest")]
+            p.init(
+                config_clone.starting_capital_sgd,
+                config_clone.starting_capital_sgd, // equal-split seeds: Σ = capital
+                BacktestMode::Db,
+            );
+            #[cfg(not(feature = "backtest"))]
+            p.init(config_clone.starting_capital_sgd, config_clone.starting_capital_sgd);
+        }
+        crate::backtester::methods::HistoricalReplay.run_multi(
+            crate::backtester::methods::historical::DbMultiContext {
+                config: config_clone,
+                pool: pool_clone,
+                handle: handle_clone,
+                clock: light.clock,
+                prices: light.prices,
+                consolidator: light.consolidator,
+                strategies,
+            },
+            &bars_arc[split..],
+        )
+    })
+    .await
+    .map_err(|e| format!("multi replayer join: {e:?}"))??;
+
+    // 8. Per-strategy results (each account's own starting capital) + rollup.
+    for (i, name) in out.names.iter().enumerate() {
+        let results = BacktestResults::compute(
+            &pool,
+            &out.curves[i],
+            seed,
+            config.stock_bar_interval,
+        )
+        .await?;
+        let output_path = format!("backtest_results_{name}.json");
+        results.write_json(&output_path)?;
+        tracing::info!("multi pass (Db): {name} results → {output_path}");
+    }
+
+    let mut per_final = serde_json::Map::new();
+    for (i, name) in out.names.iter().enumerate() {
+        per_final.insert(
+            name.clone(),
+            serde_json::json!(out.curves[i].last_equity().unwrap_or(f64::NAN)),
+        );
+    }
+    let rollup_json = serde_json::json!({
+        "mode": "multi_rollup_db",
+        "starting_capital_sgd": config.starting_capital_sgd,
+        "residual_sgd": out.residual,
+        "per_strategy_final_equity_sgd": per_final,
+        "rollup_equity_curve": out
+            .rollup
+            .snapshots
+            .iter()
+            .map(|s| serde_json::json!({
+                "time_ms": s.time.timestamp_millis(),
+                "cash": s.cash,
+                "positions_value": s.positions_value,
+                "equity": s.equity,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        "backtest_results_blended5_multi_db.json",
+        serde_json::to_string_pretty(&rollup_json)
+            .map_err(|e| format!("serialize rollup: {e}"))?,
+    )
+    .map_err(|e| format!("write rollup: {e}"))?;
+    tracing::info!("multi pass (Db): rollup → backtest_results_blended5_multi_db.json");
     Ok(())
 }

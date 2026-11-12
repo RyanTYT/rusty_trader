@@ -68,6 +68,9 @@ struct BacktestConfigSection {
     slippage_bps: Option<f64>,
     commission_model: Option<String>,
     output_path: Option<String>,
+    /// Run the active strategies together in one multi pass instead of
+    /// separately (default false = one run per strategy, the legacy shape).
+    multi_run: Option<bool>,
 }
 
 /// The top-level `backtest.json` — the `config` section + the per-strategy
@@ -151,6 +154,7 @@ async fn main() -> Result<(), String> {
         .output_path
         .clone()
         .unwrap_or_else(|| "backtest_results.json".to_string());
+    let multi_run = file.config.multi_run.unwrap_or(false);
 
     // 3. Build the subscribed contracts — the union of all ACTIVE strategies'
     //    contracts + their benchmark (the relative strategy's benchmark is
@@ -180,6 +184,36 @@ async fn main() -> Result<(), String> {
         file.strategies.values().filter(|s| s.active).count(),
         subscribed.len(),
     );
+
+    // Multi dispatch: when the config requests it, run the ACTIVE
+    // strategies together in ONE multi pass over the union of contracts
+    // (each strategy universe-filters foreign bars internally) — any mode,
+    // any strategy set. Otherwise fall through to the legacy per-strategy
+    // loop below.
+    let active: Vec<(&String, &StrategySpec)> = file
+        .strategies
+        .iter()
+        .filter(|(_, s)| s.active)
+        .collect();
+    if multi_run && !active.is_empty() {
+        let strategies: HashMap<String, StrategySpec> = active
+            .iter()
+            .map(|(name, s)| ((*name).clone(), (*s).clone()))
+            .collect();
+        let config = BacktestConfig::new(capital)
+            .stock_bar_interval(stock_bar_interval)
+            .forex_bar_interval(forex_bar_interval)
+            .period(period.clone())
+            .slippage_bps(slippage_bps)
+            .commission_model(commission_model)
+            .mode(mode)
+            .contracts(subscribed)
+            .output_path(&output_path)
+            .multi_run(true)
+            .strategies(strategies);
+        trading_app::backtester::run_multi_route(pool.clone(), config).await?;
+        return Ok(());
+    }
 
     for (strategy_name, strategy_config) in file.strategies.iter() {
         if !strategy_config.active {
