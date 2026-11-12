@@ -80,6 +80,8 @@ use super::mpsc::{MpscRingBuffer, MpscRingBufferProducer};
 // engine. Live runs with it off (`diag_on()` helper below).
 #[cfg(feature = "backtest")]
 use crate::backtester::methods::in_memory::diag;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX};
 use crate::strategy_wrappers::gate::GateLogic;
 use crate::strategy_wrappers::intent::Intent;
@@ -235,6 +237,12 @@ pub struct PoolState {
     /// construct). Bare constructions mint a pool but never ready it —
     /// unready pools fail CLOSED at the gate (emit nothing).
     ready: UnsafeCell<bool>,
+    /// The lane this pool runs in (backtest builds only). The cfg'd CRUD
+    /// seams (the sleeve's working-state reads, the realloc's CASH write)
+    /// pass it through instead of assuming the in-memory lane — the
+    /// Db-multi replay initialises the pool with `BacktestMode::Db`.
+    #[cfg(feature = "backtest")]
+    mode: UnsafeCell<BacktestMode>,
 }
 
 // SAFETY (single-threaded engine — ONE argument covers every field): the
@@ -267,7 +275,26 @@ impl PoolState {
             last_eqs: UnsafeCell::new(HashMap::new()),
             seen: UnsafeCell::new(Vec::new()),
             ready: UnsafeCell::new(false),
+            #[cfg(feature = "backtest")]
+            mode: UnsafeCell::new(BacktestMode::InMemory),
         }
+    }
+
+    /// The lane the pool was initialised for (backtest builds only). The
+    /// cfg'd CRUD call sites pass it through — `InMemory` for the pinned
+    /// in-memory replay, `Db` for the Db-multi replay.
+    #[cfg(feature = "backtest")]
+    pub fn mode(&self) -> BacktestMode {
+        unsafe { *self.mode.get() }
+    }
+
+    /// Live unallocated-residual report (the realloc rewrites it through
+    /// `&self`, so readers must go through the UnsafeCell too). Used by the
+    /// Db-multi rollup: after the strategy-layer month-end realloc zeroes
+    /// and distributes the residual, the rollup must stop adding the frozen
+    /// initial value.
+    pub fn residual(&self) -> f64 {
+        unsafe { *self.residual.get() }
     }
 
     /// Mint ONE producer handle + append the participant name — identity
@@ -293,19 +320,31 @@ impl PoolState {
 
     /// Initialise ONCE per program lifetime (the binary calls it after all
     /// strategies construct, so `names` is the complete participant set).
-    /// Residual: the binary seeds each sleeve `SE_SLEEVE`, so
-    /// `residual = capital − N·SE_SLEEVE` (the same math the binary used to
-    /// pass explicitly). Also wires the fund LEDGER (the ledger reconciles
-    /// from the flush-time day reconcile — see `reconcile_day`).
-    pub fn init(&self, ledger_capital: f64) {
+    /// `seeded_total` is what the caller actually seeded across the sleeves
+    /// (the pins binary seeds `SE_SLEEVE` each; generic multi-runs seed
+    /// `capital/N` each), so `residual = capital − seeded_total`. Also wires
+    /// the fund LEDGER (the ledger reconciles from the flush-time day
+    /// reconcile — see `reconcile_day`). The `mode` param (backtest builds
+    /// only) is the lane the CRUD seams route to.
+    pub fn init(
+        &self,
+        ledger_capital: f64,
+        seeded_total: f64,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
+    ) {
         let names = unsafe { &mut *self.names.get() };
-        let residual = (ledger_capital - names.len() as f64 * SE_SLEEVE).max(0.0);
+        let residual = ledger_capital - seeded_total;
+        let residual = if residual.abs() < 1e-6 { 0.0 } else { residual.max(0.0) };
         self.ring
             .set_active_producers(&(0..names.len()).collect::<Vec<usize>>());
         unsafe {
             *self.residual.get() = residual;
             *self.capital.get() = ledger_capital;
             *self.ready.get() = true;
+            #[cfg(feature = "backtest")]
+            {
+                *self.mode.get() = mode;
+            }
         }
         Self::install_ledger(names, ledger_capital);
         tracing::info!(
@@ -437,32 +476,61 @@ impl PoolState {
             if delta.abs() < 0.005 {
                 continue;
             }
-            // Bridge split (see the sleeve's load_db_working_state): in the
-            // replay the CRUD future's backtest arm is an instant in-memory
-            // account write — poll it INLINE on this thread so the
-            // thread-locals are read on their owning thread; live/Db writes
-            // are sqlx queries needing the reactor — spawn onto the runtime.
+            // Bridge split (see the sleeve's load_db_working_state): the
+            // write bridges depend on the LANE, not just the feature — the
+            // in-memory lane's CRUD write arm is an instant thread-local
+            // account write (poll it INLINE on the owning thread); a Db
+            // write (live OR the Db-multi replay) is a sqlx query needing
+            // the reactor — spawn onto the runtime.
             let write = {
                 #[cfg(feature = "backtest")]
-                let write = futures::executor::block_on(async {
-                    let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
-                    let pk = CurrentPositionsPrimaryKeys::Stock(
-                        CurrentStockPositionsPrimaryKeys {
-                            strategy: name.clone(),
-                            stock: "CASH:SGD".to_string(),
-                            primary_exchange: "".to_string(),
-                            currency: "SGD".to_string(),
-                        },
-                    );
-                    let uk = CurrentPositionsUpdateKeys::Stock(
-                        CurrentStockPositionsUpdateKeys {
-                            quantity: Some(delta),
-                            avg_price: Some(1.0),
-                            last_updated: None,
-                        },
-                    );
-                    cp.update_positions_additive(pk, uk, BacktestMode::InMemory).await
-                });
+                let write = if matches!(self.mode(), BacktestMode::InMemory) {
+                    futures::executor::block_on(async {
+                        let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+                        let pk = CurrentPositionsPrimaryKeys::Stock(
+                            CurrentStockPositionsPrimaryKeys {
+                                strategy: name.clone(),
+                                stock: "CASH:SGD".to_string(),
+                                primary_exchange: "".to_string(),
+                                currency: "SGD".to_string(),
+                            },
+                        );
+                        let uk = CurrentPositionsUpdateKeys::Stock(
+                            CurrentStockPositionsUpdateKeys {
+                                quantity: Some(delta),
+                                avg_price: Some(1.0),
+                                last_updated: None,
+                            },
+                        );
+                        cp.update_positions_additive(pk, uk, BacktestMode::InMemory).await
+                    })
+                } else {
+                    let jh = handle.spawn({
+                        let pool = pool.clone();
+                        let name = name.clone();
+                        async move {
+                            let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+                            let pk = CurrentPositionsPrimaryKeys::Stock(
+                                CurrentStockPositionsPrimaryKeys {
+                                    strategy: name.clone(),
+                                    stock: "CASH:SGD".to_string(),
+                                    primary_exchange: "".to_string(),
+                                    currency: "SGD".to_string(),
+                                },
+                            );
+                            let uk = CurrentPositionsUpdateKeys::Stock(
+                                CurrentStockPositionsUpdateKeys {
+                                    quantity: Some(delta),
+                                    avg_price: Some(1.0),
+                                    last_updated: None,
+                                },
+                            );
+                            cp.update_positions_additive(pk, uk, BacktestMode::Db).await
+                        }
+                    });
+                    futures::executor::block_on(jh)
+                        .map_err(|e| format!("realloc write join: {e}"))?
+                };
                 #[cfg(not(feature = "backtest"))]
                 let write = {
                     let jh = handle.spawn({
