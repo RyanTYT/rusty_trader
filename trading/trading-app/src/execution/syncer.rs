@@ -6,6 +6,8 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::Utc;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use ibapi::{
     Client,
     accounts::{PositionUpdateMulti, types::AccountId},
@@ -520,38 +522,42 @@ async fn sync_fx_positions(
         tracing::warn!(
             "Reconciling current & broker FX positions: Adding {adjustment} of {currency}"
         );
-        if let Err(e) = current_stock_positions_crud
-            .update_positions_additive(
-                CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
-                    strategy: default_strategy.to_string(),
-                    stock: format!("CASH:{currency}"),
-                    primary_exchange: "".to_string(),
-                    currency: "SGD".to_string(),
-                }),
-                CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
-                    quantity: Some(adjustment),
-                    avg_price: if currency == "SGD" {
-                        Some(1.0)
-                    } else {
-                        consolidator
-                            .get_current_price(
-                                Contract {
-                                    symbol: currency.into(),
-                                    security_type: ibapi::prelude::SecurityType::ForexPair,
-                                    exchange: "IDEALPRO".into(),
-                                    currency: "SGD".into(),
-                                    ..Default::default()
-                                },
-                                false,
-                                &[],
-                            )
-                            .ok()
-                    },
-                    last_updated: None,
-                }),
-            )
-            .await
-        {
+        let pk = CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
+            strategy: default_strategy.to_string(),
+            stock: format!("CASH:{currency}"),
+            primary_exchange: "".to_string(),
+            currency: "SGD".to_string(),
+        });
+        let uk = CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
+            quantity: Some(adjustment),
+            avg_price: if currency == "SGD" {
+                Some(1.0)
+            } else {
+                consolidator
+                    .get_current_price(
+                        Contract {
+                            symbol: currency.into(),
+                            security_type: ibapi::prelude::SecurityType::ForexPair,
+                            exchange: "IDEALPRO".into(),
+                            currency: "SGD".into(),
+                            ..Default::default()
+                        },
+                        false,
+                        &[],
+                    )
+                    .ok()
+            },
+            last_updated: None,
+        });
+        #[cfg(feature = "backtest")]
+        let reconcile = current_stock_positions_crud
+            .update_positions_additive(pk, uk, BacktestMode::Db)
+            .await;
+        #[cfg(not(feature = "backtest"))]
+        let reconcile = current_stock_positions_crud
+            .update_positions_additive(pk, uk)
+            .await;
+        if let Err(e) = reconcile {
             tracing::error!(
                 "Error trying to update current stock positions for reconciliation of FX positions: {e:?}"
             );
@@ -657,10 +663,19 @@ async fn sync_stock_and_option_positions(
             CurrentPositionsUpdateKeys::from(&asset_type, Some(discrepancy), Some(current_price));
         let default_strategy = strategy.to_string();
         tokio::spawn(async move {
-            match current_positions_crud
+            #[cfg(feature = "backtest")]
+            let res = current_positions_crud
+                .update_positions_additive(
+                    current_positions_pk,
+                    current_positions_uk,
+                    BacktestMode::Db,
+                )
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = current_positions_crud
                 .update_positions_additive(current_positions_pk, current_positions_uk)
-                .await
-            {
+                .await;
+            match res {
                 Ok(_) => {
                     tracing::warn!(
                         message=%format!(

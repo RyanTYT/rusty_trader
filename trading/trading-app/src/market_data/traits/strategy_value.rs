@@ -1,5 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use ibapi::{Client, contracts::Contract, prelude::SecurityType};
 use sqlx::PgPool;
 
@@ -59,9 +61,15 @@ impl Consolidator {
         // 1. Offload the async task to Runtime 1's worker threads
         let strategy = strategy.to_string();
         let join_handle = handle.spawn(async move {
-            current_stock_positions_crud
+            #[cfg(feature = "backtest")]
+            let res = current_stock_positions_crud
+                .get_pos_by_strat(&strategy, BacktestMode::Db)
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = current_stock_positions_crud
                 .get_pos_by_strat(&strategy)
-                .await
+                .await;
+            res
         });
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 
@@ -175,9 +183,15 @@ impl Consolidator {
 
         let strategy = strategy.to_string();
         let join_handle = tokio::spawn(async move {
-            current_stock_positions_crud
+            #[cfg(feature = "backtest")]
+            let res = current_stock_positions_crud
+                .get_pos_by_strat(&strategy, BacktestMode::Db)
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = current_stock_positions_crud
                 .get_pos_by_strat(&strategy)
-                .await
+                .await;
+            res
         });
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 

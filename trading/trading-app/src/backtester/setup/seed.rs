@@ -6,6 +6,8 @@
 //! transactions from a previous run (idempotent re-runs).
 
 use sqlx::PgPool;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::{
@@ -48,9 +50,16 @@ pub async fn seed_initial_capital(
         avg_price: Some(1.0),
         last_updated: None,
     });
-    cp_crud
+    #[cfg(feature = "backtest")]
+    let res = cp_crud
+        .update_positions_additive(cash_pk, cash_uk, BacktestMode::Db)
+        .await
+        .map_err(|e| format!("seed CASH:SGD: {e}"));
+    #[cfg(not(feature = "backtest"))]
+    let res = cp_crud
         .update_positions_additive(cash_pk, cash_uk)
         .await
-        .map_err(|e| format!("seed CASH:SGD: {e}"))?;
+        .map_err(|e| format!("seed CASH:SGD: {e}"));
+    res?;
     Ok(())
 }

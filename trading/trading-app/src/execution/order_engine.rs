@@ -24,6 +24,8 @@ use ibapi::{
     prelude::Contract,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(feature = "backtest"))]
@@ -302,7 +304,15 @@ impl OrderEngine {
                     let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
                     let strategy_name = strategy_name_orig.clone();
                     let mut open_orders = match self.tokio_handle.block_on(async move {
-                        open_orders_crud.get_orders_for_strat(&strategy_name).await
+                        #[cfg(feature = "backtest")]
+                        let res = open_orders_crud
+                            .get_orders_for_strat(&strategy_name, BacktestMode::Db)
+                            .await;
+                        #[cfg(not(feature = "backtest"))]
+                        let res = open_orders_crud
+                            .get_orders_for_strat(&strategy_name)
+                            .await;
+                        res
                     }) {
                         Ok(v) => v,
                         Err(e) => {
@@ -730,9 +740,15 @@ impl OrderEngine {
         let open_orders = {
             let mut open_orders_db = match hotpath::measure_block!("get_orders_for_strat", {
                 self.tokio_handle.block_on(async {
-                    open_orders_crud
+                    #[cfg(feature = "backtest")]
+                    let res = open_orders_crud
+                        .get_orders_for_strat(&order.order_ref, BacktestMode::Db)
+                        .await;
+                    #[cfg(not(feature = "backtest"))]
+                    let res = open_orders_crud
                         .get_orders_for_strat(&order.order_ref)
-                        .await
+                        .await;
+                    res
                 })
             }) {
                 Ok(v) => v,

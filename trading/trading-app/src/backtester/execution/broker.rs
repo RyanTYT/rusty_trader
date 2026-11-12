@@ -21,6 +21,8 @@ use ibapi::contracts::Contract;
 use ibapi::orders::{Order, ExecutionData};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
@@ -262,7 +264,13 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                 CurrentPositionsPrimaryKeys::from_strat_and_contract(&strat, &contract_owned);
             let cp_uk =
                 CurrentPositionsUpdateKeys::from(&asset_type, Some(fill_qty), Some(fill_price));
-            if let Err(e) = cp_crud.update_positions_additive(cp_pk, cp_uk).await {
+            #[cfg(feature = "backtest")]
+            let res = cp_crud
+                .update_positions_additive(cp_pk, cp_uk, BacktestMode::Db)
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = cp_crud.update_positions_additive(cp_pk, cp_uk).await;
+            if let Err(e) = res {
                 tracing::error!("BacktestBroker: update_positions_additive failed: {e:?}");
             }
 
@@ -282,7 +290,13 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                 avg_price: Some(1.0),
                 last_updated: None,
             });
-            if let Err(e) = cash_cp_crud.update_positions_additive(cash_pk, cash_uk).await {
+            #[cfg(feature = "backtest")]
+            let res = cash_cp_crud
+                .update_positions_additive(cash_pk, cash_uk, BacktestMode::Db)
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = cash_cp_crud.update_positions_additive(cash_pk, cash_uk).await;
+            if let Err(e) = res {
                 tracing::error!("BacktestBroker: CASH:SGD update failed: {e:?}");
             }
         });

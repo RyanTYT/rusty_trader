@@ -5,6 +5,8 @@ use std::{
 };
 
 use ibapi::{Client, orders::ExecutionData};
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
@@ -189,10 +191,19 @@ pub fn on_execution_update(
             );
             let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
             tokio::spawn(async move {
-                if let Err(e) = current_positions_crud
+                #[cfg(feature = "backtest")]
+                let res = current_positions_crud
+                    .update_positions_additive(
+                        current_positions_pk,
+                        current_positions_uk,
+                        BacktestMode::Db,
+                    )
+                    .await;
+                #[cfg(not(feature = "backtest"))]
+                let res = current_positions_crud
                     .update_positions_additive(current_positions_pk, current_positions_uk)
-                    .await
-                {
+                    .await;
+                if let Err(e) = res {
                     tracing::error!(
                         "Error inserting into CurrentPositions for unknown strategy: {e:?}"
                     )
@@ -343,10 +354,19 @@ pub fn on_execution_update(
         let current_positions_crud_cloned = current_positions_crud.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = current_positions_crud
+            #[cfg(feature = "backtest")]
+            let res = current_positions_crud
+                .update_positions_additive(
+                    current_positions_pk,
+                    current_positions_uk,
+                    BacktestMode::Db,
+                )
+                .await;
+            #[cfg(not(feature = "backtest"))]
+            let res = current_positions_crud
                 .update_positions_additive(current_positions_pk, current_positions_uk)
-                .await
-            {
+                .await;
+            if let Err(e) = res {
                 tracing::error!("Failed to update positions in new execution update: {e:?}");
             };
         });
@@ -373,10 +393,15 @@ async fn update_currency_and_place_backed_up_orders(
     backed_up_orders: Arc<OrderStore>,
     strategy_name: &str,
 ) {
-    if let Err(e) = current_positions_crud
+    #[cfg(feature = "backtest")]
+    let res = current_positions_crud
+        .update_positions_additive(pk.clone(), uk, BacktestMode::Db)
+        .await;
+    #[cfg(not(feature = "backtest"))]
+    let res = current_positions_crud
         .update_positions_additive(pk.clone(), uk)
-        .await
-    {
+        .await;
+    if let Err(e) = res {
         tracing::error!("Error inserting into CurrentPositions for unknown strategy: {e:?}");
         return;
     };
