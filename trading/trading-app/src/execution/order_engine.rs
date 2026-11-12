@@ -216,7 +216,10 @@ impl OrderEngine {
     ) {
         let strategy_name_orig = strategy_detail.name.clone();
         match bar_update_outcome {
-            BarUpdateOutcome::EmitOrders(orders_ibkr) => {
+            BarUpdateOutcome::EmitOrders {
+                place_orders: orders_ibkr,
+                cancel_orders: orders_to_cancel,
+            } => {
                 #[cfg(not(feature = "backtest"))]
                 Self::place_orders(
                     self.tokio_handle.clone(),
@@ -230,6 +233,44 @@ impl OrderEngine {
                     self.pool.clone(),
                     submitter,
                     orders_ibkr,
+                );
+                let stock_orders_to_cancel = orders_to_cancel
+                    .iter()
+                    .filter_map(|order| match order {
+                        OpenOrdersFullKeys::Stock(_) => Some(LocalOpenOrder {
+                            order: order.clone(),
+                            is_from_db: true,
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                let option_orders_to_cancel = orders_to_cancel
+                    .iter()
+                    .filter_map(|order| match order {
+                        OpenOrdersFullKeys::Options(_) => Some(LocalOpenOrder {
+                            order: order.clone(),
+                            is_from_db: true,
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                self.cancel_orders(
+                    &AssetType::Stock,
+                    #[cfg(not(feature = "backtest"))]
+                    weak_client,
+                    #[cfg(feature = "backtest")]
+                    submitter,
+                    stock_orders_to_cancel,
+                    &order_store,
+                );
+                self.cancel_orders(
+                    &AssetType::Option,
+                    #[cfg(not(feature = "backtest"))]
+                    weak_client,
+                    #[cfg(feature = "backtest")]
+                    submitter,
+                    option_orders_to_cancel,
+                    &order_store,
                 );
             }
             BarUpdateOutcome::PendingDbQuery(asset_types) => {

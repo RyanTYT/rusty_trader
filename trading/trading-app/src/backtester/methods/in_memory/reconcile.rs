@@ -29,7 +29,9 @@ use crate::backtester::execution::{
     fill_model::{BarOhlc, FillEval, MarketFillModel, commission, decide_fill},
 };
 use crate::backtester::setup::config::BacktestConfig;
+use crate::database::models::OpenStockOrdersFullKeys;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
+use crate::database::models_crud::open_orders::open_orders::OpenOrdersFullKeys;
 use crate::helpers::contract::get_local_symbol;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::StrategyExecutor;
@@ -130,11 +132,23 @@ fn defer_market_entry(
     }
 }
 
+/// Buy = +1, Sell = −1 — mirrors `OpenOrdersFullKeys::from_contract_and_order`'s
+/// signed-quantity convention (Sell → negative), used by the cancel seam to
+/// match an emitted cancel key's side against a resting order's action.
+fn action_signum(action: &ibapi::orders::Action) -> f64 {
+    if matches!(action, ibapi::orders::Action::Buy) {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
 /// In-memory reconcile. Mirrors the prod `handle_bar_update_outcome`'s
 /// `EmitOrders` + `PendingDbQuery` arms but operates on `InMemoryState` with
 /// no DB I/O.
 ///
-/// - `EmitOrders(orders)` — the strategy pre-built the orders; fill each one
+/// - `EmitOrders { place_orders, cancel_orders }` — the strategy pre-built the
+///   orders to place AND the open-order keys to cancel; place each one
 ///   directly via [`fill_order_in_memory`].
 /// - `PendingDbQuery(asset_types)` — read the mocked targets, compute the
 ///   delta vs current, build an order per delta, fill via
@@ -162,7 +176,55 @@ pub fn handle_bar_update_outcome_in_memory(
     )?;
 
     match outcome {
-        BarUpdateOutcome::EmitOrders(orders) => {
+        BarUpdateOutcome::EmitOrders {
+            place_orders: orders,
+            cancel_orders,
+        } => {
+            // ── Cancel seam: the strategy's cancel_orders carry the OPEN-order
+            // keys it read BEFORE this emission (live: exact DB pks + IBKR ids;
+            // here: the resting book's coarse identity — there is no perm_id in
+            // the backtest book). Swept FIRST: a cancel + same-key re-place in
+            // ONE emission must not kill the fresh placement (live is immune
+            // because it cancels by exact order_id; the backtest book matches
+            // by symbol + order_ref + side, so a place-then-cancel sweep would
+            // hit the just-placed rest).
+            // Resting status only (same convention as the ogcancel- seam below):
+            // filled/cancelled entries can't be cancelled, and this also sweeps
+            // parked deferrals — a cancelled deferred entry must never fill later.
+            {
+                let mut guard = state
+                    .resting_orders
+                    .write()
+                    .expect("InMemoryState resting_orders poisoned");
+                for cancel_key in cancel_orders {
+                    match cancel_key {
+                        OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                            strategy: ref_,
+                            stock,
+                            quantity,
+                            ..
+                        }) => {
+                            // Buy = +1 / Sell = −1 — the signed-quantity
+                            // convention of `OpenOrdersFullKeys::from_contract_and_order`.
+                            // Side filter: rule-(b) cancels the OPPOSING group
+                            // only, never a same-key rest on the other side.
+                            let side = quantity.signum();
+                            guard.retain(|r| {
+                                !(r.contract.symbol.as_str() == stock.as_str()
+                                    && r.order_ref == *ref_
+                                    && r.status == RestingStatus::Resting
+                                    && action_signum(&r.action) == side)
+                            });
+                        }
+                        OpenOrdersFullKeys::Options(_) => {
+                            tracing::warn!(
+                                "backtest EmitOrders cancel_orders: Options key unsupported — ignored"
+                            );
+                        }
+                    }
+                }
+            }
+
             // Build the resting-order book from the emitted bracket orders: each
             // order carries a FillModel (market/midprice fill now; limit/stop-limit
             // rest). Market entries fill immediately on THIS bar; limit entries rest
@@ -1015,6 +1077,37 @@ mod tests {
         OrderIBKR::new(c.clone(), order, -1)
     }
 
+    /// A cancel key as a strategy would read it from the open-orders DB:
+    /// `from_contract_and_order` applies the signed-quantity convention
+    /// (Sell → negative), which the cancel seam's side filter relies on.
+    fn mk_cancel_key(c: &Contract, qty: f64, buy: bool, order_ref: &str) -> OpenOrdersFullKeys {
+        let action = if buy { ibapi::orders::Action::Buy } else { ibapi::orders::Action::Sell };
+        let order = Order {
+            action,
+            total_quantity: qty,
+            order_ref: order_ref.to_string(),
+            ..Default::default()
+        };
+        OpenOrdersFullKeys::from_contract_and_order(c, &order, 0.0)
+    }
+
+    /// A resting LMT entry — limit entries rest (the immediate-fill loop skips
+    /// non-immediate models), and `cancel_stale_deferrals` does NOT touch
+    /// market-class-only deferrals, so a cancel+replace of the SAME key is
+    /// discriminated by the cancel seam's ordering, not by the re-flush dedup.
+    fn mk_limit_order(c: &Contract, qty: f64, px: f64, buy: bool) -> OrderIBKR {
+        let action = if buy { ibapi::orders::Action::Buy } else { ibapi::orders::Action::Sell };
+        let order = Order {
+            action,
+            order_type: "LMT".to_string(),
+            limit_price: Some(px),
+            total_quantity: qty,
+            order_ref: "test".to_string(),
+            ..Default::default()
+        };
+        OrderIBKR::new(c.clone(), order, -1)
+    }
+
     fn key(state: &InMemoryState, sym: &str) -> PositionKey {
         PositionKey {
             strategy: state.strategy_name.clone(),
@@ -1056,7 +1149,10 @@ mod tests {
         // shares must NOT fill — and certainly not at AAPL's 200.00 close.
         let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
         let contracts = vec![Some(aapl_bar.clone()), None];
-        let outcome = BarUpdateOutcome::EmitOrders(vec![mk_order(&aris(), 10.0, true)]);
+        let outcome = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_order(&aris(), 10.0, true)],
+            cancel_orders: vec![],
+        };
         handle_bar_update_outcome_in_memory(
             &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
         )
@@ -1092,7 +1188,10 @@ mod tests {
 
         let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
         let contracts = vec![Some(aapl_bar.clone()), None];
-        let outcome = BarUpdateOutcome::EmitOrders(vec![mk_order(&aris(), 10.0, true)]);
+        let outcome = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_order(&aris(), 10.0, true)],
+            cancel_orders: vec![],
+        };
         for _ in 0..2 {
             handle_bar_update_outcome_in_memory(
                 &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
@@ -1112,6 +1211,141 @@ mod tests {
         )
         .expect("reconcile fill");
         assert_eq!(txn_prices(&state, "ARIS"), vec![10.0], "exactly ONE fill at own close");
+    }
+
+    // ── Cancel seam (EmitOrders.cancel_orders, 2026-11-11) ────────────────────
+    // A strategy's cancel_orders carry the open-order keys it read BEFORE the
+    // emission (live: DB pks; here: coarse identity — symbol + order_ref +
+    // side). The seam sweeps Resting entries FIRST so a cancel + same-key
+    // re-place in one emission never kills the fresh placement.
+
+    #[test]
+    fn cancel_orders_sweeps_matching_resting_entry_and_blocks_later_fill() {
+        let config = cfg();
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        let prices = NoFx;
+
+        // Slot 1 (09:30): ARIS bar absent → MKT buy 10 parks as a deferral.
+        let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
+        let contracts = vec![Some(aapl_bar.clone()), None];
+        let outcome = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_order(&aris(), 10.0, true)],
+            cancel_orders: vec![],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile slot1");
+        assert_eq!(resting_count(&state, "ARIS"), 1, "deferral parked");
+
+        // Slot 2: emit a cancel key for the parked deferral (same identity the
+        // sleeve reads off its open-order book: ARIS, order_ref "test", BUY side).
+        let outcome2 = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![],
+            cancel_orders: vec![mk_cancel_key(&aris(), 10.0, true, "test")],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile cancel");
+        assert_eq!(resting_count(&state, "ARIS"), 0, "matching key swept the deferral");
+        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0, "cancel is not a fill");
+
+        // Slot 3: ARIS's own bar arrives — the cancelled deferral must NOT fill.
+        let aris_bar3 = stock_bar(&aris(), slot(35), 10.0);
+        let contracts3 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar3.clone())];
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar3,
+            &contracts3, &mut order_id,
+        )
+        .expect("reconcile slot3");
+        assert_eq!(txn_prices(&state, "ARIS").len(), 0, "cancelled deferral never fills");
+        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
+    }
+
+    #[test]
+    fn cancel_orders_never_cancels_a_non_matching_key() {
+        let config = cfg();
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        let prices = NoFx;
+
+        let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
+        let contracts = vec![Some(aapl_bar.clone()), None];
+        let outcome = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_order(&aris(), 10.0, true)],
+            cancel_orders: vec![],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile slot1");
+        assert_eq!(resting_count(&state, "ARIS"), 1);
+
+        // Three wrong keys in ONE emission: wrong symbol, wrong order_ref,
+        // wrong side (SELL vs the parked BUY). None may sweep the deferral.
+        let outcome2 = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![],
+            cancel_orders: vec![
+                mk_cancel_key(&apple(), 10.0, true, "test"),  // wrong symbol
+                mk_cancel_key(&aris(), 10.0, true, "other"),  // wrong order_ref
+                mk_cancel_key(&aris(), 10.0, false, "test"),  // wrong side
+            ],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile non-matching");
+        assert_eq!(resting_count(&state, "ARIS"), 1, "only an exact (symbol, order_ref, side) match cancels");
+        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
+    }
+
+    #[test]
+    fn cancel_then_replace_same_key_in_one_emission_keeps_new_rest() {
+        let config = cfg();
+        let state = InMemoryState::new("t".to_string(), 10_000.0);
+        let mut order_id = 0;
+        let prices = NoFx;
+
+        // Slot 1: a resting ARIS LMT buy 10 @ 10.00 (limit entries rest).
+        let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
+        let contracts = vec![Some(aapl_bar.clone()), None];
+        let outcome = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_limit_order(&aris(), 10.0, 10.0, true)],
+            cancel_orders: vec![],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile slot1");
+        assert_eq!(resting_count(&state, "ARIS"), 1, "LMT entry rests");
+
+        // Slot 2: cancel the SAME key + re-place an identical LMT in ONE
+        // emission. The sweep runs FIRST: old rest swept, new rest parks.
+        // (A place-then-cancel sweep would kill BOTH — the ordering pin.)
+        let outcome2 = BarUpdateOutcome::EmitOrders {
+            place_orders: vec![mk_limit_order(&aris(), 10.0, 10.0, true)],
+            cancel_orders: vec![mk_cancel_key(&aris(), 10.0, true, "test")],
+        };
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+        )
+        .expect("reconcile cancel+replace");
+        assert_eq!(resting_count(&state, "ARIS"), 1, "old swept, fresh placement survives");
+        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
+
+        // Slot 3: ARIS's own bar (9.00) crosses the 10.00 buy limit — the
+        // replacement fills exactly once.
+        let aris_bar3 = stock_bar(&aris(), slot(35), 9.0);
+        let contracts3 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar3.clone())];
+        handle_bar_update_outcome_in_memory(
+            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar3,
+            &contracts3, &mut order_id,
+        )
+        .expect("reconcile slot3");
+        assert_eq!(txn_prices(&state, "ARIS").len(), 1, "replacement fills exactly once");
+        assert_eq!(state.current_qty(&key(&state, "ARIS")), 10.0);
     }
 
     #[test]
