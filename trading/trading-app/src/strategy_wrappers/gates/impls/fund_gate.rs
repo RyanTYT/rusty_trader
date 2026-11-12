@@ -396,6 +396,8 @@ impl PoolState {
         handle: &tokio::runtime::Handle,
         pool: &sqlx::PgPool,
     ) -> Result<(), String> {
+        #[cfg(feature = "backtest")]
+        use crate::backtester::setup::config::BacktestMode;
         use crate::database::crud::CRUDTrait;
         use crate::database::models::{
             AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
@@ -459,7 +461,7 @@ impl PoolState {
                             last_updated: None,
                         },
                     );
-                    cp.update_positions_additive(pk, uk).await
+                    cp.update_positions_additive(pk, uk, BacktestMode::InMemory).await
                 });
                 #[cfg(not(feature = "backtest"))]
                 let write = {
@@ -529,11 +531,19 @@ impl PoolState {
             CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
         };
         use crate::database::crud::CRUDTrait;
+        #[cfg(feature = "backtest")]
+        use crate::backtester::setup::config::BacktestMode;
 
         /// Σ CASH:SGD quantity for one strategy (negative = drained).
         async fn strategy_cash(pool: &sqlx::PgPool, strategy: &str) -> Result<f64, String> {
+            #[cfg(not(feature = "backtest"))]
             let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
                 .get_pos_by_strat(strategy)
+                .await
+                .map_err(|e| format!("seed read '{strategy}': {e}"))?;
+            #[cfg(feature = "backtest")]
+            let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
+                .get_pos_by_strat(strategy, BacktestMode::Db)
                 .await
                 .map_err(|e| format!("seed read '{strategy}': {e}"))?;
             Ok(rows
@@ -566,9 +576,17 @@ impl PoolState {
                 avg_price: Some(1.0),
                 last_updated: None,
             });
-            cp.update_positions_additive(pk, uk)
+            #[cfg(not(feature = "backtest"))]
+            let res = cp
+                .update_positions_additive(pk, uk)
                 .await
-                .map_err(|e| format!("seed cash write '{strategy}': {e}"))
+                .map_err(|e| format!("seed cash write '{strategy}': {e}"));
+            #[cfg(feature = "backtest")]
+            let res = cp
+                .update_positions_additive(pk, uk, BacktestMode::Db)
+                .await
+                .map_err(|e| format!("seed cash write '{strategy}': {e}"));
+            res
         }
 
         let Some(p) = PoolState::current() else {
@@ -579,8 +597,14 @@ impl PoolState {
         // Restart no-op: every sleeve already funded.
         let mut all_funded = true;
         for name in &names {
+            #[cfg(not(feature = "backtest"))]
             let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
                 .get_pos_by_strat(name)
+                .await
+                .map_err(|e| format!("seed read '{name}': {e}"))?;
+            #[cfg(feature = "backtest")]
+            let rows = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone())
+                .get_pos_by_strat(name, BacktestMode::Db)
                 .await
                 .map_err(|e| format!("seed read '{name}': {e}"))?;
             if !rows
