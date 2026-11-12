@@ -8,13 +8,12 @@
 //! - [`run_chain`]: one forward pass, head → tail. The tail MUST be a
 //!   `SharesGate` (`Payload::Shares` out); anything else is a construction
 //!   error (the single battery truncation happens at that tail and nowhere
-//!   else — intent.py docstring contract).
-//! - [`apply_realised`]: route engine-cleared fills head-first through every
-//!   gate (fund's `on_fill` → per-sleeve chains; streaming builders accumulate
-//!   their maps here).
+//!   else — intent.py docstring contract). Realised fills route head-first
+//!   through every gate via `GateLogic::on_realised` (fund's `on_fill` →
+//!   per-sleeve chains; streaming builders accumulate their maps there).
 
 use super::gate::{GateEnum, GateLogic};
-use super::payload::{BarFrame, Payload, RealisedFill, ShareOut};
+use super::payload::{BarFrame, Payload, ShareOut};
 use super::strategy::ClockCtx;
 
 /// Drive the chain for one tick: head produces, gates transform, tail
@@ -34,9 +33,4 @@ pub fn run_chain(
                 .to_string(),
         ),
     }
-}
-
-/// Route realised fills head-first through every gate (no consumption).
-pub fn apply_realised(chain: &mut GateEnum, fills: &[RealisedFill], ctx: &ClockCtx) {
-    GateLogic::on_realised(chain, fills, ctx);
 }
