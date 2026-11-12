@@ -334,64 +334,116 @@ impl OpenOrdersOps for OpenOrdersCRUD {
         &self,
         strategy: &str,
     ) -> Result<Vec<OpenOrdersFullKeys>, String> {
-        let result = match self {
-            Self::Stock(_) => sqlx::query_as!(
-                OpenStockOrdersFullKeys,
-                r#"
-                    SELECT 
-                        order_perm_id as "order_perm_id!",
-                        order_id as "order_id!",
-                        strategy as "strategy!",
-                        stock as "stock!",
-                        primary_exchange as "primary_exchange!",
-                        currency as "currency!",
-                        time as "time!",
-                        quantity as "quantity!",
-                        parent_order_id as "parent_order_id!",
-                        executions as "executions!",
-                        filled as "filled!"
-                    FROM trading.open_stock_orders
-                    WHERE strategy = $1;
-                    "#,
-                strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .map(OpenOrdersFullKeys::Stock)
-                    .collect::<Vec<OpenOrdersFullKeys>>()
-            }),
-            Self::Options(_) => sqlx::query_as!(
-                OpenOptionOrdersFullKeys,
-                r#"
-                    SELECT 
-                        order_perm_id as "order_perm_id!",
-                        order_id as "order_id!",
-                        strategy as "strategy!",
-                        stock as "stock!",
-                        primary_exchange as "primary_exchange!",
-                        currency as "currency!",
-                        expiry as "expiry!",
-                        strike as "strike!",
-                        multiplier as "multiplier!",
-                        option_type AS "option_type!:OptionType",
-                        time as "time!",
-                        quantity as "quantity!",
-                        parent_order_id as "parent_order_id!",
-                        executions as "executions!",
-                        filled as "filled!"
-                    FROM trading.open_option_orders
-                    WHERE strategy = $1;
-                    "#,
-                strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|rows| rows.into_iter().map(OpenOrdersFullKeys::Options).collect()),
-        };
+        #[cfg(feature = "backtest")]
+        {
+            // Backtest-in-memory arm (mode-blind CRUD seam): read the
+            // strategy's InMemoryState resting book instead of the DB.
+            // Resting+ACTIVE rows only — the in-memory book marks fills via
+            // RestingStatus (Filled/Cancelled rows filtered out), so every
+            // remaining row is wholly unfilled (`filled` = 0). order_id /
+            // parent_order_id = 0: the dormant-children exclusion
+            // (parent != 0 ∧ parent exists) never fires — the OCA-active
+            // gate replaces it. Multi replay resolves any strategy via the
+            // fill router; Db mode falls back to the CURRENT strategy's
+            // state; no state → empty Vec.
+            use crate::backtester::methods::in_memory::{bracket::RestingStatus, state as in_memory};
+            let Some(st) =
+                in_memory::routed_state(strategy).or_else(|| in_memory::current())
+            else {
+                return Ok(Vec::new());
+            };
+            let book = st.resting_orders.read().expect("resting_orders poisoned");
+            let rows = book
+                .iter()
+                .filter(|ro| {
+                    ro.status == RestingStatus::Resting
+                        && ro.active
+                        && ro.order_ref == strategy
+                })
+                .map(|ro| {
+                    let signed = if matches!(ro.action, ibapi::orders::Action::Buy) {
+                        ro.qty
+                    } else {
+                        -ro.qty
+                    };
+                    OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                        order_perm_id: 0,
+                        order_id: 0,
+                        strategy: strategy.to_string(),
+                        stock: ro.contract.symbol.to_string(),
+                        primary_exchange: ro.contract.primary_exchange.to_string(),
+                        currency: ro.contract.currency.to_string(),
+                        time: chrono::Utc::now(),
+                        quantity: signed,
+                        parent_order_id: 0,
+                        executions: Vec::new(),
+                        filled: 0.0,
+                    })
+                })
+                .collect();
+            return Ok(rows);
+        }
+        #[cfg(not(feature = "backtest"))]
+        {
+            let result = match self {
+                Self::Stock(_) => sqlx::query_as!(
+                    OpenStockOrdersFullKeys,
+                    r#"
+                        SELECT 
+                            order_perm_id as "order_perm_id!",
+                            order_id as "order_id!",
+                            strategy as "strategy!",
+                            stock as "stock!",
+                            primary_exchange as "primary_exchange!",
+                            currency as "currency!",
+                            time as "time!",
+                            quantity as "quantity!",
+                            parent_order_id as "parent_order_id!",
+                            executions as "executions!",
+                            filled as "filled!"
+                        FROM trading.open_stock_orders
+                        WHERE strategy = $1;
+                        "#,
+                    strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(OpenOrdersFullKeys::Stock)
+                        .collect::<Vec<OpenOrdersFullKeys>>()
+                }),
+                Self::Options(_) => sqlx::query_as!(
+                    OpenOptionOrdersFullKeys,
+                    r#"
+                        SELECT 
+                            order_perm_id as "order_perm_id!",
+                            order_id as "order_id!",
+                            strategy as "strategy!",
+                            stock as "stock!",
+                            primary_exchange as "primary_exchange!",
+                            currency as "currency!",
+                            expiry as "expiry!",
+                            strike as "strike!",
+                            multiplier as "multiplier!",
+                            option_type AS "option_type!:OptionType",
+                            time as "time!",
+                            quantity as "quantity!",
+                            parent_order_id as "parent_order_id!",
+                            executions as "executions!",
+                            filled as "filled!"
+                        FROM trading.open_option_orders
+                        WHERE strategy = $1;
+                        "#,
+                    strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|rows| rows.into_iter().map(OpenOrdersFullKeys::Options).collect()),
+            };
 
-        result.map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"))
+            return result.map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"));
+        }
     }
 
     async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String> {

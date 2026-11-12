@@ -350,67 +350,105 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
         &self,
         strategy: &str,
     ) -> Result<Vec<CurrentPositionsFullKeys>, String> {
-        let result = match self {
-            Self::Stock(_) => sqlx::query_as!(
-                CurrentStockPositionsFullKeys,
-                r#"
-                    SELECT 
-                        stock as "stock!", 
-                        primary_exchange as "primary_exchange!", 
-                        currency as "currency!", 
-                        strategy as "strategy!", 
-                        quantity as "quantity!", 
-                        avg_price as "avg_price!",
-                        last_updated as "last_updated!"
-                    FROM trading.current_stock_positions
-                    WHERE strategy = $1;
-                    "#,
-                &strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|positions| {
-                positions
-                    .into_iter()
-                    .map(CurrentPositionsFullKeys::Stock)
-                    .collect()
-            }),
-            Self::Options(_) => sqlx::query_as!(
-                CurrentOptionPositionsFullKeys,
-                r#"
-                    SELECT 
-                        stock as "stock!", 
-                        primary_exchange as "primary_exchange!", 
-                        currency as "currency!", 
-                        expiry as "expiry!",
-                        strike as "strike!",
-                        multiplier as "multiplier!",
-                        option_type as "option_type!:OptionType",
-                        strategy as "strategy!", 
-                        quantity as "quantity!", 
-                        avg_price as "avg_price!",
-                        last_updated as "last_updated!"
-                    FROM trading.current_option_positions
-                    WHERE strategy = $1;
-                    "#,
-                &strategy
-            )
-            .fetch_all(self.get_pg_pool())
-            .await
-            .map(|positions| {
-                positions
-                    .into_iter()
-                    .map(CurrentPositionsFullKeys::Options)
-                    .collect()
-            }),
-        };
+        #[cfg(feature = "backtest")]
+        {
+            // Backtest-in-memory arm (mode-blind CRUD seam): read the
+            // strategy's InMemoryState snapshot instead of the DB. The
+            // multi replay installs the fill router (name → state) so ANY
+            // strategy's positions resolve; Db mode (router absent) falls
+            // back to the CURRENT strategy's thread-local state, filtered
+            // to the requested name; no state at all → empty Vec (same as
+            // a fresh DB row set).
+            use crate::backtester::methods::in_memory::state as in_memory;
+            let Some(st) =
+                in_memory::routed_state(strategy).or_else(|| in_memory::current())
+            else {
+                return Ok(Vec::new());
+            };
+            let rows = st
+                .current_positions_snapshot()
+                .into_iter()
+                .filter(|(k, _)| k.strategy == strategy)
+                .map(|(k, p)| {
+                    CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
+                        strategy: k.strategy,
+                        stock: k.stock,
+                        primary_exchange: k.primary_exchange,
+                        currency: k.currency,
+                        quantity: p.quantity,
+                        avg_price: p.avg_price,
+                        // Replay-time stamp; consumers read only
+                        // stock/currency/quantity/avg_price.
+                        last_updated: chrono::Utc::now(),
+                    })
+                })
+                .collect();
+            return Ok(rows);
+        }
+        #[cfg(not(feature = "backtest"))]
+        {
+            let result = match self {
+                Self::Stock(_) => sqlx::query_as!(
+                    CurrentStockPositionsFullKeys,
+                    r#"
+                        SELECT 
+                            stock as "stock!", 
+                            primary_exchange as "primary_exchange!", 
+                            currency as "currency!", 
+                            strategy as "strategy!", 
+                            quantity as "quantity!", 
+                            avg_price as "avg_price!",
+                            last_updated as "last_updated!"
+                        FROM trading.current_stock_positions
+                        WHERE strategy = $1;
+                        "#,
+                    &strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|positions| {
+                    positions
+                        .into_iter()
+                        .map(CurrentPositionsFullKeys::Stock)
+                        .collect()
+                }),
+                Self::Options(_) => sqlx::query_as!(
+                    CurrentOptionPositionsFullKeys,
+                    r#"
+                        SELECT 
+                            stock as "stock!", 
+                            primary_exchange as "primary_exchange!", 
+                            currency as "currency!", 
+                            expiry as "expiry!",
+                            strike as "strike!",
+                            multiplier as "multiplier!",
+                            option_type as "option_type!:OptionType",
+                            strategy as "strategy!", 
+                            quantity as "quantity!", 
+                            avg_price as "avg_price!",
+                            last_updated as "last_updated!"
+                        FROM trading.current_option_positions
+                        WHERE strategy = $1;
+                        "#,
+                    &strategy
+                )
+                .fetch_all(self.get_pg_pool())
+                .await
+                .map(|positions| {
+                    positions
+                        .into_iter()
+                        .map(CurrentPositionsFullKeys::Options)
+                        .collect()
+                }),
+            };
 
-        result.map_err(|e| {
-            format!(
-                "Error occurred fetching local positions for strategy {}: {}",
-                strategy, e
-            )
-        })
+            return result.map_err(|e| {
+                format!(
+                    "Error occurred fetching local positions for strategy {}: {}",
+                    strategy, e
+                )
+            });
+        }
     }
 
     async fn get_pos_by_pk(
@@ -566,6 +604,45 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
         pk: CurrentPositionsPrimaryKeys,
         uk: CurrentPositionsUpdateKeys,
     ) -> Result<(), String> {
+        #[cfg(feature = "backtest")]
+        {
+            // Mode-blind write seam (mirrors the read dispatch): in the
+            // in-memory replay the additive update lands in the strategy's
+            // InMemoryState — the SAME weighted-avg semantics as the SQL
+            // upsert below. With no state installed (Db lane) fall through
+            // to the DB body.
+            use crate::backtester::methods::in_memory::state as in_memory;
+            if let (
+                CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
+                    stock,
+                    primary_exchange,
+                    currency,
+                    strategy,
+                }),
+                CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
+                    quantity: Some(quantity),
+                    avg_price,
+                    last_updated: _,
+                }),
+            ) = (&pk, &uk)
+            {
+                if let Some(st) =
+                    in_memory::routed_state(strategy).or_else(|| in_memory::current())
+                {
+                    st.update_current_additive(
+                        in_memory::PositionKey {
+                            strategy: strategy.clone(),
+                            stock: stock.clone(),
+                            primary_exchange: primary_exchange.clone(),
+                            currency: currency.clone(),
+                        },
+                        *quantity,
+                        avg_price.unwrap_or(0.0),
+                    );
+                    return Ok(());
+                }
+            }
+        }
         match (pk, uk) {
             (
                 CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
