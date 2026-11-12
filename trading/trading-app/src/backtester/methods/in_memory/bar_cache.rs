@@ -17,7 +17,7 @@
 //! its own lookback + tracks its own end bar).
 
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 
@@ -34,7 +34,7 @@ use crate::database::models_crud::historical_data::historical_data::{
 /// the replay stream to post-warm-up.
 pub struct BarCache {
     bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>,
-    max_end_time: RefCell<Option<DateTime<Utc>>>,
+    max_end_time: Mutex<Option<DateTime<Utc>>>,
 }
 
 impl BarCache {
@@ -43,7 +43,7 @@ impl BarCache {
     pub fn new(bars: Arc<Vec<Vec<Option<HistoricalDataFullKeys>>>>) -> Self {
         Self {
             bars,
-            max_end_time: RefCell::new(None),
+            max_end_time: Mutex::new(None),
         }
     }
 
@@ -101,7 +101,7 @@ impl BarCache {
         // Track the most-recent bar (the end of the window) — excluded in the backtest.
         if let Some(latest) = window.last() {
             let t = latest.get_time();
-            let mut max_end = self.max_end_time.borrow_mut();
+            let mut max_end = self.max_end_time.lock().expect("bar cache max_end_time poisoned");
             match *max_end {
                 Some(cur) if t > cur => *max_end = Some(t),
                 None => *max_end = Some(t),
@@ -115,7 +115,7 @@ impl BarCache {
     /// backtest. The backtester reads this after warm-up to trim the replay
     /// stream (discard bars <= this time).
     pub fn max_end_time(&self) -> Option<DateTime<Utc>> {
-        *self.max_end_time.borrow()
+        *self.max_end_time.lock().expect("bar cache max_end_time poisoned")
     }
 }
 
