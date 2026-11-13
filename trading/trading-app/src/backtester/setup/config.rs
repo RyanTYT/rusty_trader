@@ -92,6 +92,13 @@ pub struct BacktestConfig {
     /// the multi route seeds each strategy `starting_capital_sgd / n` and
     /// keeps the residual ≈ 0.
     pub multi_run: bool,
+    /// Fill lag in the ORDER's own printed bars: a submitted order parks as a
+    /// pending fill intent and evaluates `fill_lag_bars` own bars AFTER the
+    /// decision bar (0 = fill immediately on the decision bar's own bar, the
+    /// previous always-on behavior). Slots where the symbol printed no bar
+    /// don't count toward the lag. While parked the order is visible to the
+    /// strategy as an `open_stock_orders` row (deleted on fill/cancel).
+    pub fill_lag_bars: u64,
 }
 
 impl BacktestConfig {
@@ -116,6 +123,7 @@ impl BacktestConfig {
             output_path: "backtest_results.json".to_string(),
             strategies: HashMap::new(),
             multi_run: false,
+            fill_lag_bars: 0,
         }
     }
 
@@ -129,6 +137,12 @@ impl BacktestConfig {
     /// separately (see the field docs).
     pub fn multi_run(mut self, multi_run: bool) -> Self {
         self.multi_run = multi_run;
+        self
+    }
+
+    /// Lag bar fills by the order's own printed bars (see the field docs).
+    pub fn fill_lag_bars(mut self, n: u64) -> Self {
+        self.fill_lag_bars = n;
         self
     }
 

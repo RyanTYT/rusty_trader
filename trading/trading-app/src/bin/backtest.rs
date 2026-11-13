@@ -71,6 +71,9 @@ struct BacktestConfigSection {
     /// Run the active strategies together in one multi pass instead of
     /// separately (default false = one run per strategy, the legacy shape).
     multi_run: Option<bool>,
+    /// Lag bar fills by the order's own printed bars (default 0 = fill on
+    /// the decision bar's own bar). Absent own-bar slots don't count.
+    fill_lag_bars: Option<u64>,
 }
 
 /// The top-level `backtest.json` — the `config` section + the per-strategy
@@ -155,6 +158,7 @@ async fn main() -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| "backtest_results.json".to_string());
     let multi_run = file.config.multi_run.unwrap_or(false);
+    let fill_lag_bars = file.config.fill_lag_bars.unwrap_or(0);
 
     // 3. Build the subscribed contracts — the union of all ACTIVE strategies'
     //    contracts + their benchmark (the relative strategy's benchmark is
@@ -210,6 +214,7 @@ async fn main() -> Result<(), String> {
             .contracts(subscribed)
             .output_path(&output_path)
             .multi_run(true)
+            .fill_lag_bars(fill_lag_bars)
             .strategies(strategies);
         trading_app::backtester::run_multi_route(pool.clone(), config).await?;
         return Ok(());
@@ -243,6 +248,7 @@ async fn main() -> Result<(), String> {
                     .collect(),
             )
             .output_path(&output_path)
+            .fill_lag_bars(fill_lag_bars)
             .strategies(strategies);
 
         trading_app::backtester::run_backtest(pool.clone(), config).await?;

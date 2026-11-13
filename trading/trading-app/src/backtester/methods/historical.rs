@@ -6,11 +6,14 @@
 
 use crate::database::crud::CRUDTrait;
 use crate::database::models::{Status, StrategyFullKeys};
+use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::database::models_crud::strategy::StrategyCRUD;
+use crate::helpers::sentinel::Sentinel;
 use crate::strategy::strategy::StrategyExecutor;
 
 use std::sync::Arc;
 
+use ibapi::contracts::Contract;
 use sqlx::PgPool;
 
 use crate::backtester::execution::broker::BacktestBroker;
@@ -121,6 +124,13 @@ impl BacktestMethod for HistoricalReplay {
                 let close = bar.get_price();
                 ctx.prices.publish_close(&contract, close);
                 ctx.broker.set_current_bar(bar.clone());
+                // Lag surface (single contract: the latest bar IS the
+                // current bar). advance_slot drains parked intents whose
+                // lag elapsed at this bar — before the strategy acts, so
+                // fills price at the lagged bar and on_fill lands in this
+                // bar's backlog dispatch. No-op with lag 0.
+                ctx.broker.publish_slot_bar(&contract, bar.clone());
+                ctx.broker.advance_slot();
 
                 // --- REAL prod on_bar_update (the strategy signal logic) ---
                 let outcome = strategy
@@ -155,6 +165,31 @@ impl BacktestMethod for HistoricalReplay {
                     ctx.broker.take_execution_backlog();
                 }
             }
+            let sentinel_contract = Contract::sentinel();
+            let sentinel_bar = HistoricalDataFullKeys::sentinel();
+            let outcome = strategy
+                .on_bar_update(&sentinel_contract, &sentinel_bar, &ctx.consolidator)
+                .unwrap_or_else(|e| {
+                    tracing::error!("on_bar_update error: {e:?}");
+                    crate::strategy::strategy::BarUpdateOutcome::NoAction
+                });
+            ctx.order_engine.handle_bar_update_outcome(
+                &*ctx.broker,
+                &*ctx.prices,
+                outcome,
+                &ctx.strategy_details,
+                &ctx.order_store,
+            );
+            if ctx.strategy_details.hooks_execution {
+                for execution_data in ctx.broker.take_execution_backlog() {
+                    if let Err(e) = strategy.on_fill(execution_data) {
+                        tracing::error!("on_fill error: {e:?}");
+                    }
+                }
+            } else {
+                ctx.broker.take_execution_backlog();
+            }
+
             // 4. Equity snapshot.
             let snap = ctx
                 .handle
@@ -248,7 +283,11 @@ impl HistoricalReplay {
             ctx.config.starting_capital_sgd,
             seeds_total
         );
-        let residual = if residual.abs() < 1e-6 { 0.0 } else { residual.max(0.0) };
+        let residual = if residual.abs() < 1e-6 {
+            0.0
+        } else {
+            residual.max(0.0)
+        };
 
         let mut curves: Vec<EquityCurve> = (0..names.len()).map(|_| EquityCurve::new()).collect();
         let mut rollup = EquityCurve::new();
@@ -261,6 +300,19 @@ impl HistoricalReplay {
 
         for bars_in_time in bars {
             let mut this_time = None;
+            // Phase 1 — fill surface ONLY: feed every bar to the brokers'
+            // own-bar stores (complete, like the pins lane's slot-slice
+            // fills, publish-order independent) and drain parked fill
+            // intents before any strategy acts. The PRICE SUPPLIER is NOT
+            // published here: it is published interleaved in Phase 2, so
+            // the sleeve's mid-flush valuation (get_current_price at the
+            // timestamp edge) sees the same 1-fresh/rest-stale supplier
+            // state as the in-memory pins lane. begin_slot clears the
+            // per-slot surface first (a symbol with no bar this slot is a
+            // miss, not a stale fill).
+            for broker in &brokers {
+                broker.begin_slot();
+            }
             for idx in 0..bars_in_time.len() {
                 let bar = match bars_in_time.get(idx) {
                     Some(Some(v)) => v,
@@ -271,16 +323,38 @@ impl HistoricalReplay {
                     .subscribed_contracts
                     .get(idx)
                     .expect("Expected contract aligned with bar in multi replay");
-                let time = bar.get_time();
-                this_time = Some(time);
-                // Shared market surface: clock + close publish happen ONCE per
-                // bar, before any strategy sees it.
-                ctx.clock.set(time);
-                let close = bar.get_price();
-                ctx.prices.publish_close(&contract, close);
+                this_time = Some(bar.get_time());
+                for broker in &brokers {
+                    broker.publish_slot_bar(&contract, bar.clone());
+                }
+            }
+            // Drain parked fill intents (fill_lag_bars) against THIS slot's
+            // published bars, before any strategy acts: a due fill prices at
+            // its own lagged bar and the execution report lands in the
+            // backlog phase 2 dispatches.
+            for broker in &brokers {
+                broker.advance_slot();
+            }
+
+            // Phase 2 — interleaved, mirroring the in-memory runner: publish
+            // ONE contract's close to the price supplier, then let all
+            // strategies react to that bar. A strategy flushing on this bar
+            // therefore values its book with only the published prefix of
+            // the slot fresh — exactly the pins lane's valuation timing.
+            for idx in 0..bars_in_time.len() {
+                let bar = match bars_in_time.get(idx) {
+                    Some(Some(v)) => v,
+                    _ => continue,
+                };
+                let contract = ctx
+                    .config
+                    .subscribed_contracts
+                    .get(idx)
+                    .expect("Expected contract aligned with bar in multi replay");
+                ctx.clock.set(bar.get_time());
+                ctx.prices.publish_close(&contract, bar.get_price());
 
                 for i in 0..ctx.strategies.len() {
-                    brokers[i].set_current_bar(bar.clone());
                     let outcome = ctx.strategies[i]
                         .on_bar_update(&contract, bar, &ctx.consolidator)
                         .unwrap_or_else(|e| {
@@ -303,6 +377,34 @@ impl HistoricalReplay {
                     } else {
                         brokers[i].take_execution_backlog();
                     }
+                }
+            }
+
+            // Bucket-end sentinel (engine convention — helpers::sentinel)
+            let sentinel_contract = Contract::sentinel();
+            let sentinel_bar = HistoricalDataFullKeys::sentinel();
+            for i in 0..ctx.strategies.len() {
+                let outcome = ctx.strategies[i]
+                    .on_bar_update(&sentinel_contract, &sentinel_bar, &ctx.consolidator)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("on_bar_update error [{}]: {e:?}", names[i]);
+                        crate::strategy::strategy::BarUpdateOutcome::NoAction
+                    });
+                order_engine.handle_bar_update_outcome(
+                    &*brokers[i],
+                    &*ctx.prices,
+                    outcome,
+                    &details[i],
+                    &order_store,
+                );
+                if details[i].hooks_execution {
+                    for execution_data in brokers[i].take_execution_backlog() {
+                        if let Err(e) = ctx.strategies[i].on_fill(execution_data) {
+                            tracing::error!("on_fill error: {e:?}");
+                        }
+                    }
+                } else {
+                    brokers[i].take_execution_backlog();
                 }
             }
 
@@ -330,10 +432,10 @@ impl HistoricalReplay {
             // PoolState's residual and distributes it into the sleeves, so a
             // frozen initial value would double-count from then on. Runs with
             // no pool (non-fund strategies) keep the frozen initial value.
-            let live_residual = crate::strategy_wrappers::gates::impls::fund_gate::PoolState
-                ::current()
-                .map(|p| p.residual())
-                .unwrap_or(residual);
+            let live_residual =
+                crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
+                    .map(|p| p.residual())
+                    .unwrap_or(residual);
             let mut sum_cash = live_residual;
             let mut sum_pv = 0.0;
             let mut sum_eq = live_residual;
@@ -356,8 +458,7 @@ impl HistoricalReplay {
             curves,
             // Final live residual (0 after the month-end realloc distributed
             // it); frozen initial value only when no pool exists.
-            residual: crate::strategy_wrappers::gates::impls::fund_gate::PoolState
-                ::current()
+            residual: crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
                 .map(|p| p.residual())
                 .unwrap_or(residual),
             rollup,

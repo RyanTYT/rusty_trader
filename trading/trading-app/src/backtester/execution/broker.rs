@@ -13,7 +13,7 @@
 //! legal — same precondition as prod's `on_bar_update`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use arc_swap::ArcSwapOption;
 use atomic_float::AtomicF64;
@@ -38,13 +38,28 @@ use crate::database::models_crud::historical_data::historical_data::HistoricalDa
 use crate::database::models_crud::transactions::transactions::{
     TransactionsCRUD, TransactionsFullKeys,
 };
-use crate::helpers::contract::get_local_symbol;
+use crate::database::models_crud::open_orders::open_orders::{
+    OpenOrdersCRUD, OpenOrdersPrimaryKeys, OpenOrdersUpdateKeys,
+};
+use crate::helpers::contract::{HashContract, get_local_symbol};
 
 use crate::backtester::execution::{
     execution_report::synthetic_execution,
     fill_model::{commission, decide_fill}
 };
 use crate::backtester::setup::config::BacktestConfig;
+
+/// A submitted order parked until its fill lag elapses (`fill_lag_bars > 0`).
+/// Evaluated once per slot against the order contract's own bar; slots where
+/// the symbol printed no bar don't count toward the lag. Limit orders keep
+/// resting (bars_remaining 0) and re-cross-check on every own bar until
+/// filled or cancelled.
+struct PendingFill {
+    order_id: i32,
+    contract: Contract,
+    order: Order,
+    bars_remaining: u64,
+}
 
 pub struct BacktestBroker {
     pool: PgPool,
@@ -53,7 +68,18 @@ pub struct BacktestBroker {
     next_id: AtomicI32,
     /// The bar `submit_order` should fill against. Set by the replayer before
     /// each tick via [`set_current_bar`]. Lock-free (`ArcSwapOption`).
+    /// Single-contract fallback: the multi replayer publishes per-contract
+    /// bars via [`publish_slot_bar`] instead, and fills resolve the ORDER's
+    /// contract there first.
     current_bar: ArcSwapOption<HistoricalDataFullKeys>,
+    /// Per-slot latest bar per contract, published by the replayer before any
+    /// strategy acts (cleared each slot by [`begin_slot`]).
+    latest_bars: std::sync::Mutex<std::collections::HashMap<HashContract, Arc<HistoricalDataFullKeys>>>,
+    /// Slot counter bumped by [`begin_slot`] — fills park with
+    /// `bars_remaining = fill_lag_bars`, decremented on each own printed bar.
+    slot_counter: AtomicU64,
+    /// Parked fill intents (`fill_lag_bars > 0`), drained by [`advance_slot`].
+    pending_fills: std::sync::Mutex<Vec<PendingFill>>,
     /// Running cash balance (SGD), updated on each fill. Lock-free
     /// (`AtomicF64`) — the broker is single-threaded (only the replayer's
     /// `spawn_blocking` thread), but it's shared via `Arc` + moved into
@@ -82,6 +108,9 @@ impl BacktestBroker {
             config,
             next_id: AtomicI32::new(1),
             current_bar: ArcSwapOption::new(None),
+            latest_bars: std::sync::Mutex::new(std::collections::HashMap::new()),
+            slot_counter: AtomicU64::new(0),
+            pending_fills: std::sync::Mutex::new(Vec::new()),
             cash: AtomicF64::new(starting_cash),
             prices,
             execution_backlog: std::sync::Mutex::new(Vec::new()),
@@ -107,6 +136,93 @@ impl BacktestBroker {
         self.current_bar.store(Some(Arc::new(bar)));
     }
 
+    /// Start a new replay slot: bump the slot counter and clear the per-slot
+    /// latest-bar cache (a symbol with no bar this slot is a MISS, not a
+    /// stale fill — mirroring the in-memory lane's no-fill-this-slot
+    /// semantics). Call before publishing the slot's bars.
+    pub fn begin_slot(&self) {
+        self.slot_counter.fetch_add(1, Ordering::Relaxed);
+        self.latest_bars
+            .lock()
+            .expect("backtest latest_bars poisoned")
+            .clear();
+        // Multi slots resolve fills via `latest_bars`; a symbol with no bar
+        // this slot must NOT fall back to a stale other-contract bar — clear
+        // it so the fill skips (the in-memory lane's no-fill-this-slot rule).
+        self.current_bar.store(None);
+    }
+
+    /// Publish this slot's bar for `contract` (per-contract fill surface).
+    pub fn publish_slot_bar(&self, contract: &Contract, bar: HistoricalDataFullKeys) {
+        self.latest_bars
+            .lock()
+            .expect("backtest latest_bars poisoned")
+            .insert(HashContract { contract: contract.clone() }, Arc::new(bar));
+    }
+
+    /// Drain parked fill intents against THIS slot's published bars. An
+    /// intent whose symbol printed no bar this slot is skipped WITHOUT
+    /// counting toward the lag. An intent reaching `bars_remaining == 0` on
+    /// an own bar is filled via the same `decide_fill` logic as immediate
+    /// fills; a limit order that doesn't cross keeps resting
+    /// (bars_remaining stays 0) and re-cross-checks on every own bar until
+    /// filled or cancelled.
+    pub fn advance_slot(&self) {
+        let mut to_fill: Vec<(PendingFill, f64, f64, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        {
+            let mut pending = self
+                .pending_fills
+                .lock()
+                .expect("backtest pending_fills poisoned");
+            let latest = self.latest_bars.lock().expect("backtest latest_bars poisoned");
+            pending.retain_mut(|pf| {
+                let Some(bar) = latest
+                    .get(&HashContract { contract: pf.contract.clone() })
+                    .cloned()
+                else {
+                    return true; // no own bar this slot — doesn't count
+                };
+                if pf.bars_remaining > 0 {
+                    pf.bars_remaining -= 1;
+                    if pf.bars_remaining > 0 {
+                        return true; // still inside the lag
+                    }
+                }
+                let outcome = decide_fill(&pf.order, &bar, self.config.slippage_bps);
+                if outcome.filled {
+                    to_fill.push((
+                        PendingFill {
+                            order_id: pf.order_id,
+                            contract: pf.contract.clone(),
+                            order: pf.order.clone(),
+                            bars_remaining: 0,
+                        },
+                        outcome.fill_price,
+                        outcome.fill_qty,
+                        bar.get_time(),
+                    ));
+                    false // remove — filled
+                } else {
+                    true // limit not crossed — keeps resting, re-checks next own bar
+                }
+            });
+        }
+        for (pf, fill_price, fill_qty, time) in to_fill {
+            let asset_type = AssetType::from_str(&pf.contract.security_type);
+            self.settle_fill(pf.order_id, &pf.contract, &pf.order, fill_qty, fill_price, time);
+            // The pending open-order row is consumed by the fill.
+            let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, pf.order_id);
+            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            self.handle.block_on(async move {
+                if let Err(e) = oo_crud.delete(&pk).await {
+                    tracing::error!(
+                        "BacktestBroker: delete pending open-order row failed: {e:?}"
+                    );
+                }
+            });
+        }
+    }
+
     /// Drain-and-clear the synthesized execution reports. Mirrors the
     /// consumer contract of the prod ring's `try_pop` drain loop.
     pub fn take_execution_backlog(&self) -> Vec<ExecutionData> {
@@ -128,20 +244,57 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
 
     fn submit_order(&self, order_id: i32, contract: &Contract, order: &Order) {
         let asset_type = AssetType::from_str(&contract.security_type);
-        // Lock-free load of the current bar (ArcSwapOption guard kept alive
-        // for the whole fill — `bar` borrows from it).
-        let bar_guard = self.current_bar.load();
-        let bar: &HistoricalDataFullKeys = match &*bar_guard {
-            Some(arc) => arc,
-            None => {
-                tracing::warn!(
-                    "BacktestBroker submit_order({order_id}): no current bar; skipping fill"
-                );
-                return;
+        // Lag > 0: park the intent instead of filling immediately. The fill
+        // evaluates `fill_lag_bars` own printed bars after the decision bar
+        // (absent own-bar slots don't count — see `advance_slot`); while
+        // parked the order is visible to the strategy as an
+        // `open_stock_orders` row (the live "optimistic open order" write),
+        // deleted on fill or cancel.
+        if self.config.fill_lag_bars > 0 {
+            let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
+            let uk = OpenOrdersUpdateKeys::new(&asset_type, contract, order);
+            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            self.handle.block_on(async move {
+                if let Err(e) = oo_crud.create_or_update(&pk, &uk).await {
+                    tracing::error!(
+                        "BacktestBroker: create pending open-order row failed: {e:?}"
+                    );
+                }
+            });
+            self.pending_fills
+                .lock()
+                .expect("backtest pending_fills poisoned")
+                .push(PendingFill {
+                    order_id,
+                    contract: contract.clone(),
+                    order: order.clone(),
+                    bars_remaining: self.config.fill_lag_bars,
+                });
+            return;
+        }
+        // Fill-bar resolution: the multi replayer publishes the order's OWN
+        // contract's bar per slot (`publish_slot_bar`); the single-contract
+        // `current_bar` is the fallback (single-route ⇒ identical bar).
+        let bar: Arc<HistoricalDataFullKeys> = {
+            let latest = self
+                .latest_bars
+                .lock()
+                .expect("backtest latest_bars poisoned");
+            match latest.get(&HashContract { contract: contract.clone() }) {
+                Some(arc) => arc.clone(),
+                None => match self.current_bar.load_full() {
+                    Some(arc) => arc,
+                    None => {
+                        tracing::warn!(
+                            "BacktestBroker submit_order({order_id}): no current bar; skipping fill"
+                        );
+                        return;
+                    }
+                },
             }
         };
 
-        let outcome = decide_fill(order, bar, self.config.slippage_bps);
+        let outcome = decide_fill(order, &bar, self.config.slippage_bps);
         if !outcome.filled {
             tracing::debug!(
                 "BacktestBroker submit_order({order_id}): no fill (limit not crossed or unsupported asset)"
@@ -149,9 +302,68 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
             return;
         }
 
+        self.settle_fill(
+            order_id,
+            contract,
+            order,
+            outcome.fill_qty,
+            outcome.fill_price,
+            bar.get_time(),
+        );
+    }
+
+    /// Drop a parked fill intent (and its `open_stock_orders` row). No-op
+    /// for immediate fills (lag = 0 — nothing is parked).
+    fn cancel_order(&self, order_id: i32) -> Result<(), String> {
+        let mut security_type: Option<ibapi::prelude::SecurityType> = None;
+        {
+            let mut pending = self
+                .pending_fills
+                .lock()
+                .expect("backtest pending_fills poisoned");
+            let before = pending.len();
+            pending.retain(|pf| {
+                if pf.order_id == order_id {
+                    security_type = Some(pf.contract.security_type.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            if pending.len() == before {
+                tracing::debug!(
+                    "BacktestBroker cancel_order({order_id}): no parked intent (immediate fill or unknown id)"
+                );
+                return Ok(());
+            }
+        }
+        let asset_type = AssetType::from_str(&security_type.expect("set above when removed"));
+        let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
+        let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+        self.handle.block_on(async move {
+            if let Err(e) = oo_crud.delete(&pk).await {
+                tracing::error!("BacktestBroker: delete cancelled open-order row failed: {e:?}");
+            }
+        });
+        Ok(())
+    }
+}
+
+impl BacktestBroker {
+    /// Settle a decided fill: commission, SGD cash, transaction row,
+    /// execution report, current_positions + CASH:SGD. Shared by the
+    /// immediate fill path and the lagged fills drained by `advance_slot`.
+    fn settle_fill(
+        &self,
+        order_id: i32,
+        contract: &Contract,
+        order: &Order,
+        fill_qty: f64,
+        fill_price: f64,
+        time: chrono::DateTime<chrono::Utc>,
+    ) {
+        let asset_type = AssetType::from_str(&contract.security_type);
         let strat = order.order_ref.clone();
-        let fill_price = outcome.fill_price;
-        let fill_qty = outcome.fill_qty; // signed: +buy / -sell
         let fees_f64 = commission(fill_qty, fill_price, self.config.commission_model);
         let fees_decimal = Decimal::from_f64(fees_f64).unwrap_or(Decimal::ZERO);
         // FX rate: contract.currency → SGD. The fill value + commission are in
@@ -191,7 +403,6 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
             .fetch_update(Ordering::Release, Ordering::Acquire, |c| {
                 Some(c + cash_sgd_delta)
             });
-        let time = bar.get_time();
         let execution_id = format!("bt-{order_id}");
 
         tracing::info!(
@@ -252,7 +463,7 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                 .lock()
                 .expect("backtest execution backlog poisoned")
                 .push(synthetic_execution(
-                    order_id, &contract_owned, &order.action, 
+                    order_id, &contract_owned, &order.action,
                     fill_qty, fill_price, time, &strat,
                 ));
 
@@ -300,14 +511,6 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                 tracing::error!("BacktestBroker: CASH:SGD update failed: {e:?}");
             }
         });
-    }
-
-    /// No-op in the backtest (fills are synchronous; no persistent open orders
-    /// to cancel). Present for surface parity with prod's cancel path.
-    fn cancel_order(&self, order_id: i32) -> Result<(), String> {
-        tracing::debug!("BacktestBroker cancel_order({order_id}): no-op (synchronous fills)");
-        let _ = order_id;
-        Ok(())
     }
 }
 
