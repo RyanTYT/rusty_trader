@@ -403,19 +403,15 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
     let bars_arc = Arc::new(crate::backtester::methods::transpose(bars));
     #[cfg(feature = "backtest")]
     let bar_times: Result<Vec<_>, String> = match &config.period {
-        BacktestPeriod::TimeRange { .. } => strategies
-            .iter()
-            .map(|s| {
-                let n = s.warmup_bars_required();
-                bars_arc
-                    .get(n)
-                    .and_then(|slot| slot.iter().find_map(|b| b.as_ref()))
-                    .map(|b| b.get_time())
-                    .ok_or_else(|| {
-                        format!("insufficient bars for the warmup lookback (need {n})")
-                    })
-            })
-            .collect(),
+        // Warm boundary = the config's window start (the pins lane's
+        // warm_cut): warm_up_data feeds every DB bar <= start and returns
+        // start, so the post-warm trim replays from the first bar >= start.
+        // Positioning by the warmup-bars hint instead let the inclusive
+        // read_last_n swallow replay bars into the warm feed and shifted
+        // every sleeve's indicator state (the pins/Db divergence root).
+        BacktestPeriod::TimeRange { start, .. } => {
+            strategies.iter().map(|_| Ok(*start)).collect()
+        }
         BacktestPeriod::NumBars(_) => {
             Err("run_multi_route (Db): NumBars period is not supported with warmup_bars".into())
         }
@@ -481,6 +477,13 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
             #[cfg(not(feature = "backtest"))]
             p.init(config_clone.starting_capital_sgd, config_clone.starting_capital_sgd);
         }
+        // F2 session-calendar: same pre-scan as bin/local_backtest — TIMESTAMPS
+        // ONLY (pure calendar metadata) so sleeves classify rows in the
+        // session's close window. Without this install the Db lane's
+        // close-aware cap basis never engages and de-gross orders fire at the
+        // next session's first slot instead of at the close (the pins-parity
+        // divergence). Env-gated: a no-op unless BLENDED5_CLOSE_AWARE=1.
+        crate::strategy::blended5_fund::session_calendar::install_from_slots(&bars_arc[split..]);
         crate::backtester::methods::HistoricalReplay.run_multi(
             crate::backtester::methods::historical::DbMultiContext {
                 config: config_clone,
