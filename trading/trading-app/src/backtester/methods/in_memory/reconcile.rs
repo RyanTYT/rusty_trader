@@ -929,7 +929,9 @@ fn fill_order_at_price<'a>(
                 quantity: 0.0,
                 avg_price: 1.0,
             });
-            cash.quantity -= sgd_value + fees;
+            // Fees are booked in the contract's currency — convert to SGD like the
+            // notional (fee×fx; matches fill_order_in_memory + the Db broker settle).
+            cash.quantity -= sgd_value + fees * fx_rate;
         }
         super::diag::diag_fill(
             bar_time.timestamp_millis(),
@@ -1013,7 +1015,9 @@ fn fill_order_at_price<'a>(
             quantity: 0.0,
             avg_price: 1.0,
         });
-        cash.quantity -= sgd_value + fees;
+        // Fees are booked in the contract's currency — convert to SGD like the
+        // notional (fee×fx; matches fill_order_in_memory + the Db broker settle).
+        cash.quantity -= sgd_value + fees * fx_rate;
     }
 
     *order_id += 1;
