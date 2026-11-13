@@ -13,6 +13,7 @@ use ibapi::orders::ExecutionData;
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferConsumer;
 
+use crate::helpers::sentinel::Sentinel;
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::execution::fx_backed_up_order::OrderStore;
 use crate::execution::order_engine::OrderEngine;
@@ -228,6 +229,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let mut buffer_bars_interval: u32 = 0;
                 while is_alive.load(Ordering::Acquire) {
                     // clean up buffer bars if interval reached:
+
                     buffer_bars_interval += 1;
                     if buffer_bars_interval >= BUFFER_BARS_CLEANUP_INTERVAL {
                         let cutoff = Utc::now() - BUFFER_BARS_MAX_AGE;
@@ -366,6 +368,25 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     if errs.len() > 0 {
                         tracing::warn!("{}", errs);
                     }
+
+                    // Send Sentinel values to indicate end of data stream for bucket
+                    let bar_update_name: &'static str = Box::leak(
+                        format!("{}_strat_bar_update", strategy.get_name()).into_boxed_str(),
+                    );
+                    hotpath::measure_block!(bar_update_name, {
+                        match strategy.on_bar_update(
+                            &Contract::sentinel(),
+                            &HistoricalDataFullKeys::sentinel(),
+                            &consolidator
+                                .upgrade()
+                                .expect("Expected Consolidator to still be alive on_bar_update"),
+                        ) {
+                            Ok(bar_update_outcome) => 
+                                handle_bar_update_outcome(bar_update_outcome),
+                            Err(e) => 
+                                tracing::error!("Failed to produce bar_update_outcome: {e:?}")
+                        };
+                    });
 
                     next_deadline += BAR_INTERVAL;
                 }

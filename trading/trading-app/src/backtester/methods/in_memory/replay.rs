@@ -22,6 +22,7 @@ use std::sync::Arc;
 use ibapi::contracts::Contract;
 
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
+use crate::helpers::sentinel::Sentinel;
 use crate::market_data::consolidator::Consolidator;
 use crate::market_data::traits::current_price::PriceSupplier;
 use crate::strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor};
@@ -219,6 +220,33 @@ impl InMemoryReplay {
                 ) {
                     tracing::error!("InMemory reconcile error: {e:?}");
                 }
+            }
+
+            // Bucket-end sentinel (engine convention — helpers::sentinel): this
+            // bucket's bars are done arriving. Blended5 sleeves snapshot account
+            // equity on it; every other strategy ignores the sentinel symbol.
+            let sentinel_contract = Contract::sentinel();
+            let sentinel_bar = HistoricalDataFullKeys::sentinel();
+            let outcome = strategy
+                .on_bar_update(&sentinel_contract, &sentinel_bar, ctx.consolidator)
+                .unwrap_or_else(|e| {
+                    tracing::error!("on_bar_update error: {e:?}");
+                    crate::strategy::strategy::BarUpdateOutcome::NoAction
+                });
+            if let Err(e) = handle_bar_update_outcome_in_memory(
+                ctx.config,
+                ctx.strategy_details
+                    .hooks_execution
+                    .then_some(&mut strategy),
+                ctx.prices as &dyn PriceSupplier,
+                &state,
+                &outcome,
+                &sentinel_contract,
+                &sentinel_bar,
+                contracts,
+                &mut order_id,
+            ) {
+                tracing::error!("InMemory reconcile error: {e:?}");
             }
 
             // 4. Equity snapshot (read directly from the InMemoryState — no
@@ -451,14 +479,44 @@ impl InMemoryReplay {
                         });
                     if let Err(e) = handle_bar_update_outcome_in_memory(
                         ctx.config,
-                        details[i]
-                            .hooks_execution
-                            .then_some(&mut ctx.strategies[i]),
+                        details[i].hooks_execution.then_some(&mut ctx.strategies[i]),
                         ctx.prices as &dyn PriceSupplier,
                         &states[i],
                         &outcome,
                         &contract,
                         bar,
+                        slot,
+                        &mut order_ids[i],
+                    ) {
+                        tracing::error!("InMemory multi reconcile error [{}]: {e:?}", names[i]);
+                    }
+                }
+            }
+
+            // Bucket-end sentinel: the slot's bars are done arriving — dispatch once
+            // per strategy (engine convention — helpers::sentinel). Blended5 sleeves
+            // snapshot account equity on it (completed-row marks); every other
+            // strategy ignores the sentinel symbol. No clock/supplier touch — the
+            // sentinel publishes nothing. Skipped when the slot had no bars at all.
+            if let Some(_t) = this_time {
+                let sentinel_contract = Contract::sentinel();
+                let sentinel_bar = HistoricalDataFullKeys::sentinel();
+                for i in 0..ctx.strategies.len() {
+                    state::set(states[i].clone());
+                    let outcome = ctx.strategies[i]
+                        .on_bar_update(&sentinel_contract, &sentinel_bar, ctx.consolidator)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("on_bar_update error [{}]: {e:?}", names[i]);
+                            crate::strategy::strategy::BarUpdateOutcome::NoAction
+                        });
+                    if let Err(e) = handle_bar_update_outcome_in_memory(
+                        ctx.config,
+                        details[i].hooks_execution.then_some(&mut ctx.strategies[i]),
+                        ctx.prices as &dyn PriceSupplier,
+                        &states[i],
+                        &outcome,
+                        &sentinel_contract,
+                        &sentinel_bar,
                         slot,
                         &mut order_ids[i],
                     ) {
@@ -493,11 +551,7 @@ impl InMemoryReplay {
                 equity: sum_eq,
             });
             // §8 diag seam: per-slot equity row (writer closed over env).
-            super::diag::diag_eq_row(
-                t.timestamp_millis(),
-                &cells_eq,
-                sum_eq,
-            );
+            super::diag::diag_eq_row(t.timestamp_millis(), &cells_eq, sum_eq);
         }
 
         // 4. Clear the thread-locals (the Arc states are returned in `output`).
