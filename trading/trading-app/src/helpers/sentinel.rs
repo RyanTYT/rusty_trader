@@ -5,6 +5,7 @@ use crate::database::models_crud::historical_data::historical_data::HistoricalDa
 
 pub trait Sentinel {
     fn sentinel() -> Self;
+    fn is_sentinel(value: &Self) -> bool;
 }
 
 impl Sentinel for Contract {
@@ -13,6 +14,10 @@ impl Sentinel for Contract {
             symbol: "__SENTINEL__".into(),
             ..Default::default()
         }
+    }
+
+    fn is_sentinel(value: &Self) -> bool {
+        return value.symbol.as_str() == "__SENTINEL__";
     }
 }
 
@@ -28,5 +33,9 @@ impl Sentinel for HistoricalDataFullKeys {
             f64::NAN,
             f64::NAN,
         )
+    }
+
+    fn is_sentinel(value: &Self) -> bool {
+        return value.get_time() == DateTime::<Utc>::UNIX_EPOCH;
     }
 }
