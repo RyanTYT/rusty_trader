@@ -45,7 +45,7 @@ use crate::helpers::contract::{HashContract, get_local_symbol};
 
 use crate::backtester::execution::{
     execution_report::synthetic_execution,
-    fill_model::{commission, decide_fill}
+    fill_model::{BarOhlc, commission, decide_fill}
 };
 use crate::backtester::setup::config::BacktestConfig;
 
@@ -244,13 +244,58 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
 
     fn submit_order(&self, order_id: i32, contract: &Contract, order: &Order) {
         let asset_type = AssetType::from_str(&contract.security_type);
-        // Lag > 0: park the intent instead of filling immediately. The fill
-        // evaluates `fill_lag_bars` own printed bars after the decision bar
-        // (absent own-bar slots don't count — see `advance_slot`); while
-        // parked the order is visible to the strategy as an
-        // `open_stock_orders` row (the live "optimistic open order" write),
-        // deleted on fill or cancel.
-        if self.config.fill_lag_bars > 0 {
+        // Fill-bar resolution: the multi replayer publishes the order's OWN
+        // contract's bar per slot (`publish_slot_bar`); the single-contract
+        // `current_bar` is the fallback (single-route ⇒ identical bar).
+        let own_bar: Option<Arc<HistoricalDataFullKeys>> = {
+            let latest = self
+                .latest_bars
+                .lock()
+                .expect("backtest latest_bars poisoned");
+            match latest.get(&HashContract { contract: contract.clone() }) {
+                Some(arc) => Some(arc.clone()),
+                None => self.current_bar.load_full(),
+            }
+        };
+        // Park decision — order-lifecycle parity with the in-memory lane.
+        // Lag > 0 always parks (the intent evaluates `fill_lag_bars` own
+        // printed bars after the decision bar; absent own-bar slots don't
+        // count — see `advance_slot`). Lag 0 parks ONLY when the immediate
+        // fill cannot happen: an order whose own bar has not printed yet
+        // DEFERS to its next printed bar (the in-memory lane's
+        // `defer_market_entry`), and a limit that does not cross yet RESTS
+        // until a bar crosses it (the in-memory resting book). Both park
+        // with bars_remaining = 0, so `advance_slot` re-checks
+        // `decide_fill` on every own bar and fills off the bar that
+        // actually fills. Lifecycle stays owned by explicit cancels
+        // (`cancel_order` deletes the intent + row) — no EOD sweep,
+        // matching the in-memory lane since the 2026-11-05 removal.
+        // Unsupported assets (Forex bars carry bid/ask, no OHLC) still
+        // drop immediately, as before.
+        let park_now: Option<u64> = if self.config.fill_lag_bars > 0 {
+            Some(self.config.fill_lag_bars)
+        } else {
+            match own_bar.as_deref() {
+                None => Some(0),
+                Some(bar) if BarOhlc::from_bar(bar).is_none() => None,
+                Some(bar) => {
+                    if decide_fill(order, bar, self.config.slippage_bps).filled {
+                        None
+                    } else {
+                        Some(0)
+                    }
+                }
+            }
+        };
+        if let Some(bars) = park_now {
+            // While parked the order is visible to the strategy as an
+            // `open_stock_orders` row (the live "optimistic open order"
+            // write), deleted on fill or cancel.
+            if bars == 0 {
+                tracing::debug!(
+                    "BacktestBroker submit_order({order_id}): parked (own bar absent or limit not crossed)"
+                );
+            }
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
             let uk = OpenOrdersUpdateKeys::new(&asset_type, contract, order);
             let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
@@ -268,36 +313,15 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                     order_id,
                     contract: contract.clone(),
                     order: order.clone(),
-                    bars_remaining: self.config.fill_lag_bars,
+                    bars_remaining: bars,
                 });
             return;
         }
-        // Fill-bar resolution: the multi replayer publishes the order's OWN
-        // contract's bar per slot (`publish_slot_bar`); the single-contract
-        // `current_bar` is the fallback (single-route ⇒ identical bar).
-        let bar: Arc<HistoricalDataFullKeys> = {
-            let latest = self
-                .latest_bars
-                .lock()
-                .expect("backtest latest_bars poisoned");
-            match latest.get(&HashContract { contract: contract.clone() }) {
-                Some(arc) => arc.clone(),
-                None => match self.current_bar.load_full() {
-                    Some(arc) => arc,
-                    None => {
-                        tracing::warn!(
-                            "BacktestBroker submit_order({order_id}): no current bar; skipping fill"
-                        );
-                        return;
-                    }
-                },
-            }
-        };
-
+        let bar = own_bar.expect("immediate fill ⇒ own bar present");
         let outcome = decide_fill(order, &bar, self.config.slippage_bps);
         if !outcome.filled {
             tracing::debug!(
-                "BacktestBroker submit_order({order_id}): no fill (limit not crossed or unsupported asset)"
+                "BacktestBroker submit_order({order_id}): no fill (unsupported asset — no OHLC)"
             );
             return;
         }
@@ -312,8 +336,10 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
         );
     }
 
-    /// Drop a parked fill intent (and its `open_stock_orders` row). No-op
-    /// for immediate fills (lag = 0 — nothing is parked).
+    /// Drop a parked fill intent (and its `open_stock_orders` row). Parked
+    /// intents are both lag>0 deferrals and lag-0 deferred/resting orders
+    /// (own bar absent / limit not crossed at submit). No-op when nothing
+    /// is parked under the id.
     fn cancel_order(&self, order_id: i32) -> Result<(), String> {
         let mut security_type: Option<ibapi::prelude::SecurityType> = None;
         {
