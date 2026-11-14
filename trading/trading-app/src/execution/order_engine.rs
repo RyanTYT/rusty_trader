@@ -15,6 +15,8 @@
 // always be 0 && when we delete the open order it is only because the open order is in the
 // opposite direction we want to go in - i.e. under "unknown", position to go to 0 is also fine -
 // just maybe different order types but that is fine - should be minimal impact)
+#[cfg(feature = "backtest")]
+use crate::backtester::setup::config::BacktestMode;
 use ibapi::{
     Client,
     orders::{
@@ -24,8 +26,6 @@ use ibapi::{
     prelude::Contract,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "backtest")]
-use crate::backtester::setup::config::BacktestMode;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(feature = "backtest"))]
@@ -222,20 +222,7 @@ impl OrderEngine {
                 place_orders: orders_ibkr,
                 cancel_orders: orders_to_cancel,
             } => {
-                #[cfg(not(feature = "backtest"))]
-                Self::place_orders(
-                    self.tokio_handle.clone(),
-                    self.pool.clone(),
-                    weak_client,
-                    orders_ibkr,
-                );
-                #[cfg(feature = "backtest")]
-                Self::place_orders(
-                    self.tokio_handle.clone(),
-                    self.pool.clone(),
-                    submitter,
-                    orders_ibkr,
-                );
+                // Cancel BEFORE placing - preventing cancel from polluting just placed orders
                 let stock_orders_to_cancel = orders_to_cancel
                     .iter()
                     .filter_map(|order| match order {
@@ -274,6 +261,20 @@ impl OrderEngine {
                     option_orders_to_cancel,
                     &order_store,
                 );
+                #[cfg(not(feature = "backtest"))]
+                Self::place_orders(
+                    self.tokio_handle.clone(),
+                    self.pool.clone(),
+                    weak_client,
+                    orders_ibkr,
+                );
+                #[cfg(feature = "backtest")]
+                Self::place_orders(
+                    self.tokio_handle.clone(),
+                    self.pool.clone(),
+                    submitter,
+                    orders_ibkr,
+                );
             }
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
@@ -309,9 +310,7 @@ impl OrderEngine {
                             .get_orders_for_strat(&strategy_name, BacktestMode::Db)
                             .await;
                         #[cfg(not(feature = "backtest"))]
-                        let res = open_orders_crud
-                            .get_orders_for_strat(&strategy_name)
-                            .await;
+                        let res = open_orders_crud.get_orders_for_strat(&strategy_name).await;
                         res
                     }) {
                         Ok(v) => v,
@@ -634,30 +633,29 @@ impl OrderEngine {
                 };
                 strategy_name = strategy;
 
+                #[cfg(not(feature = "backtest"))]
                 if *order_perm_id != -1 {
-                    #[cfg(not(feature = "backtest"))]
-                    {
-                        // Cancel on IBKR side
-                        let cloned_weak_client = weak_client.clone();
-                        let owned_order_id = *order_id;
-                        std::thread::spawn(move || {
-                            hotpath::measure_block!("cancel_order_on_ibkr", {
-                                let client_opt = cloned_weak_client.upgrade();
-                                if client_opt.is_none() {
-                                    tracing::warn!("client died while cancelling order!");
-                                    return;
-                                }
-                                let client = client_opt.unwrap();
-                                if let Err(e) = client.cancel_order(owned_order_id, "") {
-                                    tracing::warn!("Could not cancel order: {e:?}");
-                                };
-                            });
+                    // Cancel on IBKR side
+                    let cloned_weak_client = weak_client.clone();
+                    let owned_order_id = *order_id;
+                    std::thread::spawn(move || {
+                        hotpath::measure_block!("cancel_order_on_ibkr", {
+                            let client_opt = cloned_weak_client.upgrade();
+                            if client_opt.is_none() {
+                                tracing::warn!("client died while cancelling order!");
+                                return;
+                            }
+                            let client = client_opt.unwrap();
+                            if let Err(e) = client.cancel_order(owned_order_id, "") {
+                                tracing::warn!("Could not cancel order: {e:?}");
+                            };
                         });
-                    }
-                    #[cfg(feature = "backtest")]
-                    if let Err(e) = submitter.cancel_order(*order_id) {
-                        tracing::error!("Failed to cancel order ({:?}): {e:?}", *order_id)
-                    }
+                    });
+                }
+                #[cfg(feature = "backtest")]
+                // Parked/deferred orders in backtest mode cancel regardless (perm_id means nth thr)
+                if let Err(e) = submitter.cancel_order(*order_id) {
+                    tracing::error!("Failed to cancel order ({:?}): {e:?}", *order_id)
                 }
 
                 if open_order.is_from_db {
