@@ -1,5 +1,16 @@
 # AGENTS.md — operational rules for agents working in this repo
 
+## NEVER READ .env FILES — NO PERMISSION
+
+**Rule: agents have NO PERMISSION to read any `.env` file (any directory, any
+naming variant). Credentials, DB URLs, API keys and secrets live there and are
+the user's private property. If a task genuinely requires a value from a `.env`
+file, STOP and ASK THE USER, clearly flagging what you need and why — before
+any read attempt.** This includes indirect reads (`cat`, `grep`, `source`,
+python dotenv loading, shell expansion of the file, copying it, printing it
+with any tool). Derive connection strings from the user's explicit
+instructions instead.
+
 ## Running long scripts: use opencode's native BACKGROUND FUNCTION
 
 **Rule: run long work with the shell tool's built-in background option
