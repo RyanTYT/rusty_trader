@@ -370,7 +370,26 @@ impl HistoricalReplay {
                     );
                     if details[i].hooks_execution {
                         for execution_data in brokers[i].take_execution_backlog() {
-                            if let Err(e) = ctx.strategies[i].on_fill(execution_data) {
+                            // Fill attribution: §8 pooled emission routes every
+                            // sleeve's fills through the completing sleeve's
+                            // broker, so a backlog is cross-strategy. The
+                            // execution's order_reference carries the owning
+                            // strategy (synthetic_execution preserves it — the
+                            // same convention the transaction rows are keyed
+                            // by); route the fill to that strategy's chain
+                            // instead of positionally to ours.
+                            let owner = execution_data.execution.order_reference.as_str();
+                            let owner_idx = match names.iter().position(|n| n.as_str() == owner) {
+                                Some(idx) => idx,
+                                None => {
+                                    tracing::warn!(
+                                        "execution order_reference '{owner}' matches no strategy — dispatching to '{}'",
+                                        names[i]
+                                    );
+                                    i
+                                }
+                            };
+                            if let Err(e) = ctx.strategies[owner_idx].on_fill(execution_data) {
                                 tracing::error!("on_fill error: {e:?}");
                             }
                         }
@@ -399,7 +418,20 @@ impl HistoricalReplay {
                 );
                 if details[i].hooks_execution {
                     for execution_data in brokers[i].take_execution_backlog() {
-                        if let Err(e) = ctx.strategies[i].on_fill(execution_data) {
+                        // Same fill-attribution rule as the per-pair block
+                        // above: route by order_reference, not positionally.
+                        let owner = execution_data.execution.order_reference.as_str();
+                        let owner_idx = match names.iter().position(|n| n.as_str() == owner) {
+                            Some(idx) => idx,
+                            None => {
+                                tracing::warn!(
+                                    "execution order_reference '{owner}' matches no strategy — dispatching to '{}'",
+                                    names[i]
+                                );
+                                i
+                            }
+                        };
+                        if let Err(e) = ctx.strategies[owner_idx].on_fill(execution_data) {
                             tracing::error!("on_fill error: {e:?}");
                         }
                     }
