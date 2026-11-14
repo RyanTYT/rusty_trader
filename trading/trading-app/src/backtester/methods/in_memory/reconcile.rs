@@ -830,6 +830,186 @@ fn process_resting_orders<'a>(
     Ok(strategy)
 }
 
+/// Db-parity fill-first drain: settle every pre-slot resting order whose own
+/// bar exists in THIS slot, in book (creation) order — the mirror of the Db
+/// lane's Phase 1 `advance_slot`, which drains all parked intents BEFORE any
+/// strategy reacts so their `on_fill` appends precede the slot's immediate
+/// fills. Evaluation math is verbatim [`process_resting_orders`] (same bars,
+/// same fill models — only the dispatch ORDER changes). Rests created
+/// mid-slot are first evaluated at the NEXT slot's drain, matching the Db
+/// intent lifecycle; the per-pair STEP 1 stays as a safety net for them.
+pub fn drain_resting_orders_fill_first(
+    config: &BacktestConfig,
+    strategy: Option<&mut StrategyEnum>,
+    prices: &dyn PriceSupplier,
+    state: &InMemoryState,
+    slot: &[Option<HistoricalDataFullKeys>],
+    contracts: &[Contract],
+    order_id: &mut i32,
+) -> Result<(), String> {
+    let orders: Vec<RestingOrder> = {
+        let guard = state
+            .resting_orders
+            .read()
+            .expect("InMemoryState resting_orders poisoned");
+        guard.clone()
+    };
+    if orders.is_empty() {
+        return Ok(());
+    }
+
+    let mut remaining: Vec<RestingOrder> = Vec::new();
+    let mut filled_entry_brackets: HashSet<usize> = HashSet::new();
+    let mut filled_exit_brackets: HashSet<usize> = HashSet::new();
+    // OrderGate entry-sibling cancel (mirror of process_resting_orders).
+    let mut filled_entry_groups: HashSet<String> = HashSet::new();
+
+    let mut strategy = strategy;
+    for mut order in orders {
+        if order.status != RestingStatus::Resting {
+            continue; // already filled/cancelled — drop
+        }
+
+        // Own bar in THIS slot? Absent → keep resting (drains at a later slot).
+        let own = contracts
+            .iter()
+            .position(|c| c.symbol == order.contract.symbol)
+            .and_then(|idx| slot.get(idx).and_then(|b| b.as_ref()));
+        let Some(bar) = own else {
+            remaining.push(order);
+            continue;
+        };
+        let ohlc = BarOhlc::from_bar(bar);
+        let mso = {
+            let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
+            ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570
+        };
+
+        // Inactive exits wait for their entry to fill.
+        if !order.active {
+            remaining.push(order);
+            continue;
+        }
+
+        // ── Time-gated close ── (verbatim process_resting_orders)
+        if order.close_mso.is_some() {
+            let close_mso = order.close_mso.unwrap();
+            if mso >= close_mso {
+                if let Some(o) = ohlc {
+                    let price = if order.close_is_mid {
+                        (o.high + o.low) / 2.0
+                    } else {
+                        o.close
+                    };
+                    strategy = fill_order_at_price(
+                        config,
+                        strategy,
+                        prices,
+                        state,
+                        &order.contract,
+                        order.action,
+                        order.qty,
+                        price,
+                        bar.get_time(),
+                        order_id,
+                        &order.order_ref,
+                        &order.oca_group,
+                    )?;
+                    order.status = RestingStatus::Filled;
+                    match order.role {
+                        OrderRole::Entry => {
+                            filled_entry_brackets.insert(order.bracket_id);
+                            if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                                filled_entry_groups.insert(order.oca_group.clone());
+                            }
+                        }
+                        OrderRole::Exit(_) => {
+                            filled_exit_brackets.insert(order.bracket_id);
+                        }
+                    }
+                }
+                continue; // drop (filled)
+            }
+            remaining.push(order);
+            continue;
+        }
+
+        // ── Price-gated (limit / stop-limit / market-stop / deferred market) ──
+        let Some(o) = ohlc else {
+            remaining.push(order);
+            continue;
+        };
+        let mut did_fill = false;
+        if let Some(model) = order.fill_model.as_mut() {
+            if let FillEval::Fill { price } = model.evaluate(&o) {
+                strategy = fill_order_at_price(
+                    config,
+                    strategy,
+                    prices,
+                    state,
+                    &order.contract,
+                    order.action,
+                    order.qty,
+                    price,
+                    bar.get_time(),
+                    order_id,
+                    &order.order_ref,
+                    &order.oca_group,
+                )?;
+                order.status = RestingStatus::Filled;
+                did_fill = true;
+                match order.role {
+                    OrderRole::Entry => {
+                        filled_entry_brackets.insert(order.bracket_id);
+                        if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                            filled_entry_groups.insert(order.oca_group.clone());
+                        }
+                    }
+                    OrderRole::Exit(_) => {
+                        filled_exit_brackets.insert(order.bracket_id);
+                    }
+                }
+            }
+        }
+        if !did_fill {
+            remaining.push(order);
+        }
+    }
+
+    // Cross-order side effects (verbatim process_resting_orders).
+    for order in remaining.iter_mut() {
+        if matches!(order.role, OrderRole::Exit(_)) {
+            if filled_entry_brackets.contains(&order.bracket_id) {
+                order.active = true; // entry filled this bar → arm the exits
+            }
+            if filled_exit_brackets.contains(&order.bracket_id) {
+                order.status = RestingStatus::Cancelled; // an exit filled → cancel siblings
+            }
+        }
+        // OrderGate entry-sibling mirror: one "og-" entry of a group filled
+        // this bar → cancel sibling ENTRIES sharing the group (non-empty
+        // groups only — engine-placed orders carry "").
+        else if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+            && filled_entry_groups.contains(&order.oca_group)
+        {
+            order.status = RestingStatus::Cancelled;
+        }
+    }
+
+    {
+        let mut guard = state
+            .resting_orders
+            .write()
+            .expect("InMemoryState resting_orders poisoned");
+        *guard = remaining
+            .into_iter()
+            .filter(|o| o.status == RestingStatus::Resting)
+            .collect();
+    }
+
+    Ok(())
+}
+
 /// Fill an order at a known price (market/limit/stop/mid — the fill model already
 /// resolved the exact price). Updates position + transaction + CASH:SGD, charges
 /// commission, but applies NO extra slippage.
@@ -869,7 +1049,10 @@ fn fill_order_at_price<'a>(
 
     let is_buy = matches!(action, ibapi::orders::Action::Buy);
     let signed_qty = if is_buy { qty } else { -qty };
-    let fees = commission(signed_qty.abs(), fill_price, config.commission_model);
+    // Signed qty: the model's regulatory fees (SEC + FINRA TAF) are
+    // sells-only and keyed off the sign — matching fill_order_in_memory,
+    // the Db broker's settle_fill, and the python engine (thorough.py).
+    let fees = commission(signed_qty, fill_price, config.commission_model);
 
     // ── §8 ROUTED SETTLEMENT: when the fill router resolves `order_ref` to
     // a DIFFERENT strategy's account than the passing reconciler's, the

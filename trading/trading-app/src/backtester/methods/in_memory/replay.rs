@@ -36,7 +36,9 @@ use crate::backtester::setup::config::BacktestPeriod;
 use crate::backtester::setup::context::LightContext;
 
 use crate::backtester::methods::in_memory::bar_cache;
-use crate::backtester::methods::in_memory::reconcile::handle_bar_update_outcome_in_memory;
+use crate::backtester::methods::in_memory::reconcile::{
+    drain_resting_orders_fill_first, handle_bar_update_outcome_in_memory,
+};
 use crate::backtester::methods::in_memory::state;
 use crate::backtester::methods::in_memory::state::InMemoryState;
 
@@ -223,8 +225,11 @@ impl InMemoryReplay {
             }
 
             // Bucket-end sentinel (engine convention — helpers::sentinel): this
-            // bucket's bars are done arriving. Blended5 sleeves snapshot account
-            // equity on it; every other strategy ignores the sentinel symbol.
+            // bucket's bars are done arriving. Blended5 sleeves flush the
+            // pending row on it (emission at completion — user directive
+            // 2026-11-13); every other strategy ignores the sentinel symbol.
+            // The emitted outcome reconciles IMMEDIATELY, with this bucket's
+            // bars as the fill context.
             let sentinel_contract = Contract::sentinel();
             let sentinel_bar = HistoricalDataFullKeys::sentinel();
             let outcome = strategy
@@ -449,6 +454,32 @@ impl InMemoryReplay {
         let mut cells_eq = vec![0.0f64; names.len()];
 
         for slot in bars {
+            // Fill-first drain (Db-parity): every strategy's pre-slot resting
+            // orders that fill against THIS slot's bars settle + dispatch
+            // on_fill BEFORE any on_bar_update of the slot — the mirror of
+            // the Db lane's Phase 1 advance_slot draining parked intents
+            // ahead of the strategies (the deferred-fill on_fill dispatch
+            // order is order-sensitive downstream: MACD/tc1 severity
+            // streams). Rests created mid-slot are first evaluated at the
+            // NEXT slot's drain (same as the Db intent lifecycle); the
+            // per-pair STEP 1 stays as a safety net.
+            for i in 0..ctx.strategies.len() {
+                state::set(states[i].clone());
+                if let Err(e) = drain_resting_orders_fill_first(
+                    ctx.config,
+                    details[i].hooks_execution.then_some(&mut ctx.strategies[i]),
+                    ctx.prices as &dyn PriceSupplier,
+                    &states[i],
+                    slot,
+                    &ctx.config.subscribed_contracts,
+                    &mut order_ids[i],
+                ) {
+                    tracing::error!(
+                        "InMemory multi fill-first drain error [{}]: {e:?}",
+                        names[i]
+                    );
+                }
+            }
             let mut this_time = None;
             for idx in 0..slot.len() {
                 let bar = match slot.get(idx) {
@@ -495,9 +526,11 @@ impl InMemoryReplay {
 
             // Bucket-end sentinel: the slot's bars are done arriving — dispatch once
             // per strategy (engine convention — helpers::sentinel). Blended5 sleeves
-            // snapshot account equity on it (completed-row marks); every other
-            // strategy ignores the sentinel symbol. No clock/supplier touch — the
-            // sentinel publishes nothing. Skipped when the slot had no bars at all.
+            // flush the pending row on it (emission at completion — user directive
+            // 2026-11-13); every other strategy ignores the sentinel symbol. The
+            // emitted outcome reconciles IMMEDIATELY, with this slot's slice as
+            // the fill context. No clock/supplier touch — the sentinel publishes
+            // nothing. Skipped when the slot had no bars at all.
             if let Some(_t) = this_time {
                 let sentinel_contract = Contract::sentinel();
                 let sentinel_bar = HistoricalDataFullKeys::sentinel();
