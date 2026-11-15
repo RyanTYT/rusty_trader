@@ -36,11 +36,10 @@ pub struct ClockCtx {
     pub day_last: bool,
     /// F2 (session end-times): this row sits in the session's final-K-bars
     /// CLOSE WINDOW (the second-last/last bars relative to the session's
-    /// final bar). Derived by the sleeve from the SessionCalendar
-    /// (`BLENDED5_CLOSE_AWARE=1`; a constant `false` everywhere else —
-    /// default OFF keeps every pin verbatim). `fund_gate.rs` switches its
-    /// cap basis (EOD 1.95 vs INTRA 4.0) from `day_last` to this window
-    /// when the env seam is on; live strategies read the same field from
+    /// final bar). Derived by the sleeve from the SessionCalendar (a
+    /// constant `false` everywhere the calendar is absent).
+    /// `fund_gate.rs` switches its cap basis (EOD 1.95 vs INTRA 4.0) from
+    /// `day_last` to this window; live strategies read the same field from
     /// the contract end times.
     pub close_window: bool,
     /// The owning sleeve's OWN SGD equity for this row (fund-pool push

@@ -43,8 +43,9 @@
 //!   structural fidelity).
 //! - else → scale 1.0 (no-op pass-through).
 //!
-//! `cap` = EOD 1.95 when `ctx.day_last` (intrinsic session-last edge) else
-//! INTRA 4.0 — battery-exact constants re-used from `fund.rs`.
+//! `cap` = EOD 1.95 when the row is in the session CLOSE WINDOW
+//! (`ctx.close_window`, stamped by the sleeve from the SessionCalendar)
+//! else INTRA 4.0 — battery-exact constants re-used from `fund.rs`.
 //!
 //! Fund-level inputs come from the SLOT-START registry
 //! (`backtester::methods::in_memory::state::registry`), written by the replay
@@ -222,10 +223,6 @@ pub struct PoolState {
     /// the DB (`realloc_equal_weights`); restarts reset this (in-memory),
     /// which simply re-anchors — restart-as-anchor semantics.
     realloc_month: UnsafeCell<Option<(i32, u32)>>,
-    /// Fund total (residual + Σ sleeve eq) from the LAST completed trim —
-    /// the pool-share sizing vintage (`None` until the first trim; sizing
-    /// falls back to the e_i path).
-    last_total: UnsafeCell<Option<f64>>,
     /// Ledger vintage: each sleeve's LAST-PUSHED equity (name → eq SGD)
     /// plus pushed-at-least-once flags. The FLUSH-TIME day reconcile reads
     /// this pair — at the day's first flush it holds the PREVIOUS
@@ -271,7 +268,6 @@ impl PoolState {
             residual: UnsafeCell::new(0.0),
             capital: UnsafeCell::new(0.0),
             realloc_month: UnsafeCell::new(None),
-            last_total: UnsafeCell::new(None),
             last_eqs: UnsafeCell::new(HashMap::new()),
             seen: UnsafeCell::new(Vec::new()),
             ready: UnsafeCell::new(false),
@@ -890,9 +886,6 @@ impl PoolState {
             // slot trim).
             self.update_book(i, |b| *b = scaled);
         }
-        // Sizing vintage: fund total from THIS completed trim (the
-        // pool-share sizing path reads it; None until the first trim).
-        unsafe { *self.last_total.get() = Some(fund_eq_sgd) };
         if diag_on() {
             let sheet_q: i64 = sheet.iter().map(|s| s.qty.unsigned_abs() as i64).sum();
             tracing::info!(
@@ -903,7 +896,7 @@ impl PoolState {
                 sheet_len = sheet.len(),
                 sheet_abs_q = sheet_q,
                 participants = per_owner.join(" | "),
-                bg = if eod_edge { "close|day_last" } else { "intra" },
+                bg = if eod_edge { "close_window" } else { "intra" },
                 "[POOLED] central trim"
             );
         }
@@ -939,15 +932,6 @@ impl PoolState {
             }
         });
     }
-
-    /// Total pool equity (residual + Σ sleeve eq) from the LAST completed
-    /// trim — the pool-share sizing vintage. `None` until the first trim.
-    /// Sleeve-side sizing vintage: fund total from the last completed trim.
-    /// `None` until the first trim (caller falls back to own equity).
-    pub(crate) fn total_equity(&self) -> Option<f64> {
-        let total = unsafe { (*self.last_total.get()).unwrap_or(f64::NAN) };
-        if total.is_finite() { Some(total) } else { None }
-    }
 }
 
 /// Test-only explicit init: the ledger tests drive the pool WITHOUT live
@@ -963,17 +947,6 @@ pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
         *p.ready.get() = true;
     }
     PoolState::install_ledger(names, ledger_capital);
-}
-
-/// Slot-level EOD edge shared by the central trim: DEFAULT reads the
-/// session close window (the pin `BLENDED5_CLOSE_AWARE=1` baked in);
-/// `BLENDED5_CLOSE_AWARE=0` restores the day-last edge. The completer's
-/// ctx decides for the whole slot (all sleeves flush the same bar).
-pub(crate) fn slot_eod_edge(close_window: bool, day_last: bool) -> bool {
-    match std::env::var("BLENDED5_CLOSE_AWARE").ok().as_deref() {
-        None | Some("1") => close_window,
-        _ => day_last,
-    }
 }
 
 /// Uniform global scale over the concatenated slot books (legacy single-book
@@ -1248,10 +1221,10 @@ impl FundGate {
         priced: f64,
         fixed: f64,
     ) -> Result<Payload, String> {
-        // Edge: shared by the pooled collect + central trim (the
-        // completer's ctx decides for the whole slot — all sleeves flush
-        // the same bar).
-        let eod_edge = slot_eod_edge(ctx.close_window, ctx.day_last);
+        // Edge: the close window stamps the EOD basis for the pooled
+        // collect + central trim (the completer's ctx decides for the
+        // whole slot — all sleeves flush the same bar).
+        let eod_edge = ctx.close_window;
         let gross = priced + fixed;
         if diag_on() {
             tracing::info!(
@@ -1260,7 +1233,7 @@ impl FundGate {
                 own_gross = format!("{gross:.2}"),
                 own_priced = format!("{priced:.2}"),
                 own_fixed = format!("{fixed:.2}"),
-                bg = if eod_edge { "close|day_last" } else { "intra" },
+                bg = if eod_edge { "close_window" } else { "intra" },
                 "[POOLED] collect"
             );
         }
@@ -1301,7 +1274,6 @@ impl FundGate {
         carried_book: BTreeMap<String, i64>,
         frame: &BarFrame,
         close_window: bool,
-        day_last: bool,
     ) -> Option<Vec<ShareOut>> {
         let Some(p) = PoolState::current() else {
             return None;
@@ -1341,7 +1313,7 @@ impl FundGate {
             priced,
             fixed,
         )?;
-        let eod_edge = slot_eod_edge(close_window, day_last);
+        let eod_edge = close_window;
         Some(p.trim(vintage, et_date, eod_edge))
     }
 }
@@ -1429,12 +1401,13 @@ impl GateLogic for FundGate {
 // SleeveEqLedger port). SEPARATE struct, same file (user ruling): the
 // ledger IS fund logic and the FundGate/pool wiring requires it, but it
 // drives a DIFFERENT lever (the sleeve `sc` sizing stamp upstream of the
-// chain, env BLENDED5_FUND_LEDGER) versus the cap gate's in-chain trim.
+// chain) versus the cap gate's in-chain trim.
 //
-// - `BLENDED5_FUND_LEDGER=1` → each sleeve sizes off its fund-share book
-//   `e_i` (init = capital / N = 12.5k each on the 50k fund) instead of its
-//   own account equity — the py single-fund-account compounding base.
-// - default (unset) → §8 own-eq sizing, byte parity with the pins.
+// THE sizing basis: each sleeve sizes off its fund-share book `e_i`
+// (init = capital / N = 12.5k each on the 50k fund) — the py single-fund-
+// account compounding base. The pool-sizing (full-fund) variant was
+// deleted with its env seam; a sleeve the ledger does not cover falls
+// back to own-account equity (uncovered-name robustness, not a mode).
 //
 // Session-boundary reconcile `e_i += Δown_eq_i` fires at the first flush
 // of a new ET date; the vintage = each sleeve's LAST POOL PUSH (the
@@ -1558,30 +1531,6 @@ impl FundLedger {
     }
 }
 
-/// Env gate: fund-equity ledger sizing mode (default OFF = §8 own-eq).
-/// Ledger-mode gate (env `BLENDED5_FUND_LEDGER`, DEFAULT ON — the pin
-/// `BLENDED5_FUND_LEDGER=1` baked in as the default; set `0` to run the
-/// plain own-equity §8 mode): each sleeve sizes off its fund-share book.
-pub fn env_fund_ledger() -> bool {
-    match std::env::var("BLENDED5_FUND_LEDGER").ok().as_deref() {
-        None | Some("1") => true,
-        _ => false,
-    }
-}
-
-/// Env gate: size every sleeve off the TOTAL pool equity (Python shared-fund
-/// parity) instead of the per-sleeve fund-share e_i. Default OFF (unset or
-/// any other value = today's e_i behavior, byte-identical). When ON the pool
-/// must exist (multi replay runner); bare constructions fall back to the
-/// e_i path. Rationale: Python sizes each leg off the full shared fund
-/// equity, so per-sleeve e_i (= fund/N) prices books at ~1/4 scale and the
-/// FundGate caps never bind — starving the floor-to-zero fade-cancel path
-/// of cap pressure. Pool sizing restores Python-scale deployment; the caps,
-/// floors, flats and cancel path are untouched (already ported + verified).
-pub fn env_pool_sizing() -> bool {
-    std::env::var("BLENDED5_POOL_SIZING").ok().as_deref() == Some("1")
-}
-
 /// Env gate: monthly subscription in SGD (default 0 = off).
 pub fn env_subscription() -> f64 {
     std::env::var("BLENDED5_SUBSCRIPTION")
@@ -1596,19 +1545,10 @@ pub fn ledger_clear() {
     FUND_LEDGER.with(|l| *l.borrow_mut() = None);
 }
 
-/// Sleeve's sizing base: the fund-share book when the ledger mode is on and
-/// covers the sleeve, else `None` (caller falls back to own equity).
-/// `BLENDED5_POOL_SIZING=1` overrides with total pool equity (Python
-/// shared-fund parity); absent pool falls back to the e_i path.
+/// Sleeve's sizing base: the fund-share book `e_i` when the ledger covers
+/// the sleeve, else `None` (caller falls back to own-account equity —
+/// uncovered-name robustness, not a sizing mode).
 pub fn sizing_base(name: &str) -> Option<f64> {
-    if !env_fund_ledger() {
-        return None;
-    }
-    if env_pool_sizing() {
-        if let Some(total) = PoolState::current().and_then(|p| p.total_equity()) {
-            return Some(total);
-        }
-    }
     FUND_LEDGER.with(|l| l.borrow().as_ref().and_then(|l| l.eq_for(name)))
 }
 
@@ -1649,26 +1589,6 @@ mod two_phase_tests {
         let b = book(&[("A", 100)]);
         let out = apply_uniform_scale(&b, s, true);
         assert_eq!(out["A"], 0);
-    }
-}
-
-#[cfg(test)]
-mod pool_sizing_tests {
-    use super::*;
-
-    #[test]
-    fn pool_sizing_flag_defaults_off() {
-        // No other test in this binary touches BLENDED5_POOL_SIZING, so the
-        // process env is clean: default must be OFF (today's behavior).
-        assert!(!env_pool_sizing());
-    }
-
-    #[test]
-    fn sizing_base_ignores_pool_flag_without_ledger() {
-        // Ledger mode is DEFAULT-ON, but no ledger is installed in unit
-        // tests (pool absent → FUND_LEDGER empty) → None regardless of the
-        // pool-sizing seam.
-        assert_eq!(sizing_base("blended5_tc1"), None);
     }
 }
 
