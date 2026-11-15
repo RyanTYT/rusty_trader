@@ -230,6 +230,13 @@ pub struct PoolState {
     /// exactly the vintage `FundLedger::on_slot` documents.
     last_eqs: UnsafeCell<HashMap<String, f64>>,
     seen: UnsafeCell<Vec<bool>>,
+    /// FUND-level run params recorded at mint (one per participant,
+    /// parallel to `names`): the m_scale lever and the monthly
+    /// subscription. `init` asserts all participants agree (a mismatch is
+    /// a config bug — fail loud) and installs the ledger with the agreed
+    /// subscription.
+    fund_scales: UnsafeCell<Vec<f64>>,
+    fund_subs: UnsafeCell<Vec<f64>>,
     /// `true` once `init` ran (the binary calls it after all sleeves
     /// construct). Bare constructions mint a pool but never ready it —
     /// unready pools fail CLOSED at the gate (emit nothing).
@@ -270,6 +277,8 @@ impl PoolState {
             realloc_month: UnsafeCell::new(None),
             last_eqs: UnsafeCell::new(HashMap::new()),
             seen: UnsafeCell::new(Vec::new()),
+            fund_scales: UnsafeCell::new(Vec::new()),
+            fund_subs: UnsafeCell::new(Vec::new()),
             ready: UnsafeCell::new(false),
             #[cfg(feature = "backtest")]
             mode: UnsafeCell::new(BacktestMode::InMemory),
@@ -299,7 +308,7 @@ impl PoolState {
     /// behind; duplicates are a loud construction error (a second
     /// `FundGate::new` for one sleeve would double-mint and desync the
     /// name/idx mapping).
-    fn mint(&self, own: &str) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
+    fn mint(&self, own: &str, m_scale: f64, subscription: f64) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
         let producer = self.ring.get_new_producer();
         let names = unsafe { &mut *self.names.get() };
         assert!(
@@ -308,6 +317,8 @@ impl PoolState {
         );
         names.push(own.to_string());
         unsafe { &mut *self.seen.get() }.push(false);
+        unsafe { &mut *self.fund_scales.get() }.push(m_scale);
+        unsafe { &mut *self.fund_subs.get() }.push(subscription);
         producer
     }
 
@@ -343,7 +354,19 @@ impl PoolState {
                 *self.mode.get() = mode;
             }
         }
-        Self::install_ledger(names, ledger_capital);
+        // FUND-level run params (m_scale / subscription) arrive per-sleeve
+        // but bind to the WHOLE fund: a disagreement is a config bug — fail
+        // loud here, before any flush.
+        let scales = unsafe { &*self.fund_scales.get() }.clone();
+        let subs = unsafe { &*self.fund_subs.get() }.clone();
+        assert!(
+            scales.iter().all(|&s| s == scales.first().copied().unwrap_or_default())
+                && subs.iter().all(|&s| s == subs.first().copied().unwrap_or_default()),
+            "fund pool: participants disagree on fund-level run params \
+             (m_scale {scales:?}, subscription {subs:?}) — every sleeve \
+             spec must carry identical values"
+        );
+        Self::install_ledger(names, ledger_capital, subs.first().copied().unwrap_or(0.0));
         tracing::info!(
             participants = names.len(),
             residual,
@@ -365,7 +388,18 @@ impl PoolState {
             *self.capital.get() = capital;
             *self.ready.get() = true;
         }
-        Self::install_ledger(names, capital);
+        // Same fund-level assert as `init` (LIVE defaults are identical by
+        // construction, but the check is cheap and fails loud on drift).
+        let scales = unsafe { &*self.fund_scales.get() }.clone();
+        let subs = unsafe { &*self.fund_subs.get() }.clone();
+        assert!(
+            scales.iter().all(|&s| s == scales.first().copied().unwrap_or_default())
+                && subs.iter().all(|&s| s == subs.first().copied().unwrap_or_default()),
+            "fund pool: participants disagree on fund-level run params \
+             (m_scale {scales:?}, subscription {subs:?}) — every sleeve \
+             spec must carry identical values"
+        );
+        Self::install_ledger(names, capital, subs.first().copied().unwrap_or(0.0));
         tracing::info!(
             participants = names.len(),
             capital,
@@ -425,8 +459,9 @@ impl PoolState {
     /// strategy's InMemoryState additive update in the replay). The pool's
     /// residual is distributed into the sleeves (set to 0) — the moved
     /// accounts carry what the ledger's notional re-anchor used to carry,
-    /// so the sizing trajectories agree. Subscriptions
-    /// (BLENDED5_SUBSCRIPTION) are not yet supported here.
+    /// so the sizing trajectories agree. Subscriptions are not yet
+    /// supported here (the pool's recorded subscription, if any, is
+    /// ignored with a warning).
     pub fn realloc_equal_weights(
         &self,
         handle: &tokio::runtime::Handle,
@@ -443,9 +478,10 @@ impl PoolState {
         };
 
         let names = unsafe { &*self.names.get() }.clone();
-        if env_subscription() > 0.0 {
+        let sub = unsafe { &*self.fund_subs.get() }.first().copied().unwrap_or(0.0);
+        if sub > 0.0 {
             tracing::warn!(
-                "BLENDED5_SUBSCRIPTION set — subscriptions are not yet \
+                "fund subscription set — subscriptions are not yet \
                  supported in the month reallocation; ignoring"
             );
         }
@@ -731,12 +767,11 @@ impl PoolState {
         Ok(required)
     }
 
-    /// Wire the ledger from the pool init (names + fund capital). Reads
-    /// BLENDED5_SUBSCRIPTION. Called by `init` — the binaries make NO
+    /// Wire the ledger from the pool init (names + fund capital +
+    /// subscription). Called by `init`/`init_live` — the binaries make NO
     /// separate ledger call.
-    fn install_ledger(names: &[String], capital: f64) {
+    fn install_ledger(names: &[String], capital: f64, sub: f64) {
         let mut led = FundLedger::new(names, capital);
-        let sub = env_subscription();
         if sub > 0.0 {
             led.set_subscription(sub);
             tracing::info!("fund ledger: monthly subscription {sub:.2} SGD enabled");
@@ -943,10 +978,14 @@ pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
     let p = POOL.get_or_init(PoolState::new);
     unsafe {
         *p.names.get() = names.to_vec();
+        // Default fund-level params (m_scale 2.0 / subscription 0.0 — the
+        // pin defaults; the tests exercise the ledger, not the params).
+        *p.fund_scales.get() = vec![2.0; names.len()];
+        *p.fund_subs.get() = vec![0.0; names.len()];
         *p.residual.get() = residual;
         *p.ready.get() = true;
     }
-    PoolState::install_ledger(names, ledger_capital);
+    PoolState::install_ledger(names, ledger_capital, 0.0);
 }
 
 /// Uniform global scale over the concatenated slot books (legacy single-book
@@ -1097,16 +1136,16 @@ pub struct FundGate {
 unsafe impl Sync for FundGate {}
 
 impl FundGate {
-    pub fn new(own: String) -> Self {
+    pub fn new(own: String, m_scale: f64, subscription: f64) -> Self {
         // Identity + registration in ONE act: the producer handle minted
         // from the pool IS the participant identity (`get_producer_idx()`),
-        // and `mint` appends the sleeve name to the pool's participant
-        // list in the same act (mint order == names order == sleeve-name
-        // order, Parity-risk #1 by construction; minting beyond
-        // FUND_PRODUCERS panics — loud, never silent). The FIRST gate
-        // construction creates the pool; `pool_init` readies it before any
-        // flush.
-        let producer = POOL.get_or_init(PoolState::new).mint(&own);
+        // and `mint` appends the sleeve name + its FUND-level run params
+        // (m_scale / subscription) to the pool in the same act (mint order
+        // == names order == sleeve-name order, Parity-risk #1 by
+        // construction; minting beyond FUND_PRODUCERS panics — loud, never
+        // silent). The FIRST gate construction creates the pool;
+        // `pool_init` readies it before any flush.
+        let producer = POOL.get_or_init(PoolState::new).mint(&own, m_scale, subscription);
         Self {
             own,
             last_px: HashMap::new(),
@@ -1438,7 +1477,7 @@ pub struct FundLedger {
     /// Own equities saved at the previous reconcile (the pool vintage).
     saved_own: HashMap<String, f64>,
     /// Monthly subscription (SGD) deducted from the fund at each month-start
-    /// anchor (env BLENDED5_SUBSCRIPTION; 0 = off). Reduces the ledger base
+    /// anchor (run param, default 0 = off). Reduces the ledger base
     /// the fund compounds from — the sizing path carries the compounding
     /// cost; the cash itself leaves the rollup only in net-of-sub reporting.
     sub_monthly: f64,
@@ -1529,14 +1568,6 @@ impl FundLedger {
         self.prev_month = Some(month);
         self.saved_own = equities.clone();
     }
-}
-
-/// Env gate: monthly subscription in SGD (default 0 = off).
-pub fn env_subscription() -> f64 {
-    std::env::var("BLENDED5_SUBSCRIPTION")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .unwrap_or(0.0)
 }
 
 /// Clear the thread-local ledger (run end / tests).

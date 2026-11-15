@@ -132,8 +132,8 @@ strategy_gate_enum! {
     FundGate(crate::strategy_wrappers::gates::impls::fund_gate::FundGate),
     // §4 hybrid: resting-limit persistence + print-gated TTL + OCA-aware
     // cancels — ONE instance per sleeve, chained AFTER FundGate, BEFORE the
-    // Shares tail (sleeve.rs `with_order_gate`). Env-gated off by default
-    // (BLENDED5_HYB); off-path is a byte-identical pass-through.
+    // Shares tail (sleeve.rs `with_order_gate`). Off by default
+    // (RunParams.hyb); off-path is a byte-identical pass-through.
     OrderGate(crate::strategy_wrappers::gates::impls::order_gate::OrderGate),
 }
 
