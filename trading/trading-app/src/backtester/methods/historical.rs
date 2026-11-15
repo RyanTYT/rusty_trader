@@ -58,9 +58,7 @@ impl BacktestMethod for HistoricalReplay {
             }
         });
 
-        // 2. Load the bar stream (shared with InMemoryReplay) — include the
-        // strategy's warmup prefix so warm_up_data doesn't eat into the
-        // backtest window.
+        // 2. Load the bar stream
         let bars_raw = ctx.handle.block_on(load_bars(
             &ctx.config,
             &ctx.pool,
@@ -82,9 +80,7 @@ impl BacktestMethod for HistoricalReplay {
             }
         };
 
-        // 2.5. Warm up the strategy's data. The strategy is pure (uses `self.data`
-        //      via the rolling fns) — `warm_up_data` builds it. In Db mode there's
-        //      no bar cache, so `read_last_n` hits the DB (one-time, not per-bar).
+        // 2.5. Warm up strategy
         let warmup_end = ctx
             .handle
             .block_on(strategy.warm_up_data(
@@ -103,16 +99,14 @@ impl BacktestMethod for HistoricalReplay {
             })
             .unwrap_or(0);
         let trimmed = bars.split_off(split);
-        let contract = ctx
-            .config
-            .subscribed_contracts
-            .first()
-            .cloned()
-            .expect("BacktestConfig.subscribed_contracts must be non-empty");
         let mut equity = EquityCurve::new();
         for bars_in_time in trimmed {
+            ctx.broker.begin_slot();
             let mut this_time = None;
-            for opt_bar in bars_in_time {
+            for (opt_bar, contract) in bars_in_time
+                .iter()
+                .zip(ctx.config.subscribed_contracts.iter())
+            {
                 let bar = match opt_bar {
                     Some(v) => v,
                     None => continue,
@@ -123,14 +117,8 @@ impl BacktestMethod for HistoricalReplay {
                 ctx.clock.set(time);
                 let close = bar.get_price();
                 ctx.prices.publish_close(&contract, close);
-                ctx.broker.set_current_bar(bar.clone());
-                // Lag surface (single contract: the latest bar IS the
-                // current bar). advance_slot drains parked intents whose
-                // lag elapsed at this bar — before the strategy acts, so
-                // fills price at the lagged bar and on_fill lands in this
-                // bar's backlog dispatch. No-op with lag 0.
                 ctx.broker.publish_slot_bar(&contract, bar.clone());
-                ctx.broker.advance_slot();
+                ctx.broker.drain_parked_orders();
 
                 // --- REAL prod on_bar_update (the strategy signal logic) ---
                 let outcome = strategy
@@ -149,11 +137,6 @@ impl BacktestMethod for HistoricalReplay {
                     &ctx.order_store,
                 );
                 // --- Strategy fill hooks ---
-                // Fills materialized by this bar's reconciliation (inside
-                // `handle_bar_update_outcome` → `BacktestBroker::submit_order`) are
-                // delivered here, BEFORE the next bar's on_bar_update — same
-                // fills-before-signals guarantee the in-memory engine gets by calling
-                // `strategy.on_fill` inside reconcile.
                 if ctx.strategy_details.hooks_execution {
                     for execution_data in ctx.broker.take_execution_backlog() {
                         if let Err(e) = strategy.on_fill(execution_data) {
@@ -198,7 +181,6 @@ impl BacktestMethod for HistoricalReplay {
                     &*ctx.prices,
                     &strat_name,
                     this_time.unwrap(),
-                    &contract,
                     0.0,
                 ));
             equity.push(snap);
@@ -270,10 +252,7 @@ impl HistoricalReplay {
         let order_store =
             Arc::new(OrderStore::open().expect("Expected to open OrderStore for backtest"));
 
-        // Equal-split seeding residual: each participant seeds
-        // starting_capital_sgd / n, so the residual is ≈ 0 up to float
-        // rounding (kept for the non-fund rollup path; fund runs read the
-        // LIVE pool residual per slot instead).
+        // Equal-split seeding residual
         let n_f = names.len() as f64;
         let seeds_total = n_f * (ctx.config.starting_capital_sgd / n_f);
         let residual = ctx.config.starting_capital_sgd - seeds_total;
@@ -291,66 +270,45 @@ impl HistoricalReplay {
 
         let mut curves: Vec<EquityCurve> = (0..names.len()).map(|_| EquityCurve::new()).collect();
         let mut rollup = EquityCurve::new();
-        let contract0 = ctx
-            .config
-            .subscribed_contracts
-            .first()
-            .cloned()
-            .expect("BacktestConfig.subscribed_contracts must be non-empty");
 
         for bars_in_time in bars {
             let mut this_time = None;
-            // Phase 1 — fill surface ONLY: feed every bar to the brokers'
-            // own-bar stores (complete, like the pins lane's slot-slice
-            // fills, publish-order independent) and drain parked fill
-            // intents before any strategy acts. The PRICE SUPPLIER is NOT
-            // published here: it is published interleaved in Phase 2, so
-            // the sleeve's mid-flush valuation (get_current_price at the
-            // timestamp edge) sees the same 1-fresh/rest-stale supplier
-            // state as the in-memory pins lane. begin_slot clears the
-            // per-slot surface first (a symbol with no bar this slot is a
-            // miss, not a stale fill).
+            // Phase 1: feed every bar to the brokers
             for broker in &brokers {
                 broker.begin_slot();
             }
-            for idx in 0..bars_in_time.len() {
-                let bar = match bars_in_time.get(idx) {
-                    Some(Some(v)) => v,
-                    _ => continue,
+            for (contract, opt_bar) in ctx
+                .config
+                .subscribed_contracts
+                .iter()
+                .zip(bars_in_time.iter())
+            {
+                let bar = match opt_bar {
+                    Some(v) => v,
+                    None => continue,
                 };
-                let contract = ctx
-                    .config
-                    .subscribed_contracts
-                    .get(idx)
-                    .expect("Expected contract aligned with bar in multi replay");
                 this_time = Some(bar.get_time());
                 for broker in &brokers {
                     broker.publish_slot_bar(&contract, bar.clone());
                 }
             }
-            // Drain parked fill intents (fill_lag_bars) against THIS slot's
-            // published bars, before any strategy acts: a due fill prices at
-            // its own lagged bar and the execution report lands in the
-            // backlog phase 2 dispatches.
+
+            // Drain parked fill intents
             for broker in &brokers {
-                broker.advance_slot();
+                broker.drain_parked_orders();
             }
 
-            // Phase 2 — interleaved, mirroring the in-memory runner: publish
-            // ONE contract's close to the price supplier, then let all
-            // strategies react to that bar. A strategy flushing on this bar
-            // therefore values its book with only the published prefix of
-            // the slot fresh — exactly the pins lane's valuation timing.
-            for idx in 0..bars_in_time.len() {
-                let bar = match bars_in_time.get(idx) {
-                    Some(Some(v)) => v,
-                    _ => continue,
+            // Phase 2 — interleaved, mirroring the in-memory runner
+            for (contract, opt_bar) in ctx
+                .config
+                .subscribed_contracts
+                .iter()
+                .zip(bars_in_time.iter())
+            {
+                let bar = match opt_bar {
+                    Some(v) => v,
+                    None => continue,
                 };
-                let contract = ctx
-                    .config
-                    .subscribed_contracts
-                    .get(idx)
-                    .expect("Expected contract aligned with bar in multi replay");
                 ctx.clock.set(bar.get_time());
                 ctx.prices.publish_close(&contract, bar.get_price());
 
@@ -370,14 +328,6 @@ impl HistoricalReplay {
                     );
                     if details[i].hooks_execution {
                         for execution_data in brokers[i].take_execution_backlog() {
-                            // Fill attribution: §8 pooled emission routes every
-                            // sleeve's fills through the completing sleeve's
-                            // broker, so a backlog is cross-strategy. The
-                            // execution's order_reference carries the owning
-                            // strategy (synthetic_execution preserves it — the
-                            // same convention the transaction rows are keyed
-                            // by); route the fill to that strategy's chain
-                            // instead of positionally to ours.
                             let owner = execution_data.execution.order_reference.as_str();
                             let owner_idx = match names.iter().position(|n| n.as_str() == owner) {
                                 Some(idx) => idx,
@@ -451,7 +401,6 @@ impl HistoricalReplay {
                             &*ctx.prices,
                             name,
                             t,
-                            &contract0,
                             0.0,
                         )
                         .await,
@@ -459,18 +408,20 @@ impl HistoricalReplay {
                 }
                 snaps
             });
-            // Rollup adds the FUND-LEVEL unallocated residual. Read the LIVE
-            // value each slot: the strategy-layer month-end realloc zeroes
-            // PoolState's residual and distributes it into the sleeves, so a
-            // frozen initial value would double-count from then on. Runs with
-            // no pool (non-fund strategies) keep the frozen initial value.
-            let live_residual =
-                crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
-                    .map(|p| p.residual())
-                    .unwrap_or(residual);
-            let mut sum_cash = live_residual;
+            // // Rollup adds the FUND-LEVEL unallocated residual. Read the LIVE
+            // // value each slot: the strategy-layer month-end realloc zeroes
+            // // PoolState's residual and distributes it into the sleeves, so a
+            // // frozen initial value would double-count from then on. Runs with
+            // // no pool (non-fund strategies) keep the frozen initial value.
+            // let live_residual =
+            //     crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
+            //         .map(|p| p.residual())
+            //         .unwrap_or(residual);
+            // let mut sum_cash = live_residual;
+            let mut sum_cash = 0.0;
             let mut sum_pv = 0.0;
-            let mut sum_eq = live_residual;
+            // let mut sum_eq = live_residual;
+            let mut sum_eq = 0.0;
             for (i, snap) in snaps.into_iter().enumerate() {
                 sum_cash += snap.cash;
                 sum_pv += snap.positions_value;
@@ -488,8 +439,6 @@ impl HistoricalReplay {
         Ok(DbMultiOutput {
             names,
             curves,
-            // Final live residual (0 after the month-end realloc distributed
-            // it); frozen initial value only when no pool exists.
             residual: crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
                 .map(|p| p.residual())
                 .unwrap_or(residual),

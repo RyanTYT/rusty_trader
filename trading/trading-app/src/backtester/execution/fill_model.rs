@@ -166,7 +166,6 @@ pub fn commission(qty: f64, price: f64, model: CommissionModel) -> f64 {
     total
 }
 
-
 // ── Order-driven fill models (the limit-order family) ───────────────────────
 // A *resting* order has a FillModel that is evaluated against successive bars
 // until it fills (Fill{price}) or is cancelled (EOD). Market + Midprice fill
@@ -175,40 +174,40 @@ pub fn commission(qty: f64, price: f64, model: CommissionModel) -> f64 {
 // fills at the exact limit price — NO slippage (commission is charged on top
 // by the caller, but there is no spread/slippage modeled for limit fills).
 
-/// The OHLC fields a fill model needs from one bar.
-#[derive(Debug, Clone, Copy)]
-pub struct BarOhlc {
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-}
-
-impl BarOhlc {
-    pub fn from_bar(bar: &HistoricalDataFullKeys) -> Option<Self> {
-        match bar {
-            HistoricalDataFullKeys::Stock(v) => Some(BarOhlc {
-                open: v.open,
-                high: v.high,
-                low: v.low,
-                close: v.close,
-            }),
-            HistoricalDataFullKeys::Options(v) => Some(BarOhlc {
-                open: v.open,
-                high: v.high,
-                low: v.low,
-                close: v.close,
-            }),
-            HistoricalDataFullKeys::DailyStock(v) => Some(BarOhlc {
-                open: v.open,
-                high: v.high,
-                low: v.low,
-                close: v.close,
-            }),
-            _ => None,
-        }
-    }
-}
+// /// The OHLC fields a fill model needs from one bar.
+// #[derive(Debug, Clone, Copy)]
+// pub struct BarOhlc {
+//     pub open: f64,
+//     pub high: f64,
+//     pub low: f64,
+//     pub close: f64,
+// }
+//
+// impl BarOhlc {
+//     pub fn from_bar(bar: &HistoricalDataFullKeys) -> Option<Self> {
+//         match bar {
+//             HistoricalDataFullKeys::Stock(v) => Some(BarOhlc {
+//                 open: v.open,
+//                 high: v.high,
+//                 low: v.low,
+//                 close: v.close,
+//             }),
+//             HistoricalDataFullKeys::Options(v) => Some(BarOhlc {
+//                 open: v.open,
+//                 high: v.high,
+//                 low: v.low,
+//                 close: v.close,
+//             }),
+//             HistoricalDataFullKeys::DailyStock(v) => Some(BarOhlc {
+//                 open: v.open,
+//                 high: v.high,
+//                 low: v.low,
+//                 close: v.close,
+//             }),
+//             _ => None,
+//         }
+//     }
+// }
 
 /// Result of advancing a fill model one bar.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -220,7 +219,7 @@ pub enum FillEval {
 /// The behavior contract for how a resting order fills.
 pub trait FillModel: Send + Sync {
     /// Advance by one bar. `&mut self` lets StopLimit persist its trigger state.
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval;
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval;
     /// Whether this order fills immediately on placement (market/midprice) rather
     /// than resting until crossed (limit/stop). Used to fill market entries on the
     /// signal bar instead of deferring them to the next bar.
@@ -245,11 +244,13 @@ pub struct MarketFillModel {
     pub is_buy: bool,
 }
 impl FillModel for MarketFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         let dir = if self.is_buy { 1.0 } else { -1.0 };
         FillEval::Fill {
-            price: bar.close * (1.0 + dir * self.slippage_bps / 1e4),
+            price: bar.get_price() * (1.0 + dir * self.slippage_bps / 1e4),
         }
     }
     fn is_immediate(&self) -> bool {
@@ -261,10 +262,12 @@ impl FillModel for MarketFillModel {
 #[derive(Clone)]
 pub struct MidPriceFillModel;
 impl FillModel for MidPriceFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         FillEval::Fill {
-            price: (bar.high + bar.low) / 2.0,
+            price: (bar.get_high_price() + bar.get_low_price()) / 2.0,
         }
     }
     fn is_immediate(&self) -> bool {
@@ -280,14 +283,14 @@ pub struct LimitFillModel {
     pub is_buy: bool,
 }
 impl FillModel for LimitFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
-        // buy limit fills when the market trades down to it; sell limit when it
-        // trades up to it.
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         let crossed = if self.is_buy {
-            bar.low <= self.limit
+            bar.get_low_price() <= self.limit
         } else {
-            bar.high >= self.limit
+            bar.get_high_price() >= self.limit
         };
         if crossed {
             FillEval::Fill { price: self.limit }
@@ -297,32 +300,35 @@ impl FillModel for LimitFillModel {
     }
 }
 
-/// OptimisticLimitFillModel — optimistic (tape-set) passive-limit fill: the
-/// py `thorough.py::_process_pending_limits` port. Same resting/crossing
-/// conditions as [`LimitFillModel`], but on an open that GAPS THROUGH the
-/// limit the fill happens at the OPEN — the market's actual first trade
-/// ("the fund is the passive side, the tape sets the price"; never better
-/// than the tape, never capped at a stale limit on a gap bar). Selected
-/// ENGINE-WIDE at initialisation (`LIMIT_FILL=optimistic`, see
-/// `optimistic_limits()`); strategies are untouched.
+/// OptimisticLimitFillModel — on cross, fills at open if open is at better price
 #[derive(Clone)]
 pub struct OptimisticLimitFillModel {
     pub limit: f64,
     pub is_buy: bool,
 }
 impl FillModel for OptimisticLimitFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         let crossed = if self.is_buy {
-            bar.low <= self.limit
+            bar.get_low_price() <= self.limit
         } else {
-            bar.high >= self.limit
+            bar.get_high_price() >= self.limit
         };
         if crossed {
             let price = if self.is_buy {
-                if bar.open <= self.limit { bar.open } else { self.limit }
+                if bar.get_open_price() <= self.limit {
+                    bar.get_open_price()
+                } else {
+                    self.limit
+                }
             } else {
-                if bar.open >= self.limit { bar.open } else { self.limit }
+                if bar.get_open_price() >= self.limit {
+                    bar.get_open_price()
+                } else {
+                    self.limit
+                }
             };
             FillEval::Fill { price }
         } else {
@@ -360,17 +366,19 @@ pub struct StopMarketFillModel {
     pub is_buy: bool,
 }
 impl FillModel for StopMarketFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         // A close-buy (is_buy=true) exits a short: stop is ABOVE → breach on high.
         // A close-sell (is_buy=false) exits a long: stop is BELOW → breach on low.
         let breached = if self.is_buy {
-            bar.high >= self.stop
+            bar.get_high_price() >= self.stop
         } else {
-            bar.low <= self.stop
+            bar.get_low_price() <= self.stop
         };
         if breached {
-            let range = bar.high - bar.low;
+            let range = bar.get_high_price() - bar.get_low_price();
             let slip = self.pct_of_bar * range;
             let price = if self.is_buy {
                 self.stop + slip // buy back higher = worse
@@ -396,13 +404,15 @@ pub struct StopLimitFillModel {
     pub rest_bars: u8,
 }
 impl FillModel for StopLimitFillModel {
-    fn clone_box(&self) -> Box<dyn FillModel> { Box::new((*self).clone()) }
-    fn evaluate(&mut self, bar: &BarOhlc) -> FillEval {
+    fn clone_box(&self) -> Box<dyn FillModel> {
+        Box::new((*self).clone())
+    }
+    fn evaluate(&mut self, bar: &HistoricalDataFullKeys) -> FillEval {
         if !self.triggered {
             let breached = if self.is_buy {
-                bar.high > self.stop
+                bar.get_high_price() > self.stop
             } else {
-                bar.low < self.stop
+                bar.get_low_price() < self.stop
             };
             if breached {
                 self.triggered = true;
@@ -416,9 +426,9 @@ impl FillModel for StopLimitFillModel {
             return FillEval::Rest;
         }
         let crossed = if self.is_buy {
-            bar.low <= self.limit
+            bar.get_low_price() <= self.limit
         } else {
-            bar.high >= self.limit
+            bar.get_high_price() >= self.limit
         };
         if crossed {
             FillEval::Fill { price: self.limit }
@@ -431,23 +441,24 @@ impl FillModel for StopLimitFillModel {
 /// Build a price-gated fill model from an emitted order's fields. Returns None
 /// for orders that are NOT price-gated (the time-gated close), handled by the
 /// caller via `good_after_time`/order_type.
-pub fn fill_model_for(order: &Order, slippage_bps: f64, stop_pct_of_bar: f64) -> Option<Box<dyn FillModel>> {
+pub fn fill_model_for(
+    order: &Order,
+    slippage_bps: f64,
+    stop_pct_of_bar: f64,
+) -> Option<Box<dyn FillModel>> {
     let is_buy = matches!(order.action, Action::Buy);
     match order.order_type.as_str() {
-        "LMT" => order
-            .limit_price
-            .filter(|&p| p > 0.0)
-            .map(|limit| {
-                // Semantics of plain LMT fills are an ENGINE-LEVEL setting,
-                // chosen once at initialisation (LIMIT_FILL env; default =
-                // touch = the classic at-limit cap). Strategies always emit
-                // LMT as normal; the fill model decides how it fills.
-                if optimistic_limits() {
-                    Box::new(OptimisticLimitFillModel { limit, is_buy }) as Box<dyn FillModel>
-                } else {
-                    Box::new(LimitFillModel { limit, is_buy }) as Box<dyn FillModel>
-                }
-            }),
+        "LMT" => order.limit_price.filter(|&p| p > 0.0).map(|limit| {
+            // Semantics of plain LMT fills are an ENGINE-LEVEL setting,
+            // chosen once at initialisation (LIMIT_FILL env; default =
+            // touch = the classic at-limit cap). Strategies always emit
+            // LMT as normal; the fill model decides how it fills.
+            if optimistic_limits() {
+                Box::new(OptimisticLimitFillModel { limit, is_buy }) as Box<dyn FillModel>
+            } else {
+                Box::new(LimitFillModel { limit, is_buy }) as Box<dyn FillModel>
+            }
+        }),
         "STP" => {
             let stop = order.aux_price.unwrap_or(0.0);
             match order.limit_price.filter(|&p| p > 0.0) {

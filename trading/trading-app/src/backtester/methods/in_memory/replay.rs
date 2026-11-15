@@ -435,11 +435,7 @@ impl InMemoryReplay {
         );
         let residual = residual.max(0.0);
 
-        // Approved pooled-emission seam: install the per-strategy state
-        // router ONCE (fills resolve by order_ref → owning account; the
-        // reconcile fill paths read it). The strategy-layer fund pool
-        // (fund_gate::pool_init) is initialised by the BINARY before this
-        // runner — the engine carries no fund state.
+        // Install state router?
         {
             let router: std::collections::HashMap<String, Arc<InMemoryState>> =
                 names.iter().cloned().zip(states.iter().cloned()).collect();
@@ -454,15 +450,6 @@ impl InMemoryReplay {
         let mut cells_eq = vec![0.0f64; names.len()];
 
         for slot in bars {
-            // Fill-first drain (Db-parity): every strategy's pre-slot resting
-            // orders that fill against THIS slot's bars settle + dispatch
-            // on_fill BEFORE any on_bar_update of the slot — the mirror of
-            // the Db lane's Phase 1 advance_slot draining parked intents
-            // ahead of the strategies (the deferred-fill on_fill dispatch
-            // order is order-sensitive downstream: MACD/tc1 severity
-            // streams). Rests created mid-slot are first evaluated at the
-            // NEXT slot's drain (same as the Db intent lifecycle); the
-            // per-pair STEP 1 stays as a safety net.
             for i in 0..ctx.strategies.len() {
                 state::set(states[i].clone());
                 if let Err(e) = drain_resting_orders_fill_first(
@@ -481,21 +468,13 @@ impl InMemoryReplay {
                 }
             }
             let mut this_time = None;
-            for idx in 0..slot.len() {
-                let bar = match slot.get(idx) {
-                    Some(Some(v)) => v,
-                    _ => continue,
+            for (opt_bar, contract) in slot.iter().zip(ctx.config.subscribed_contracts.iter()) {
+                let bar = match opt_bar {
+                    Some(v) => v,
+                    None => continue,
                 };
-                let contract = ctx
-                    .config
-                    .subscribed_contracts
-                    .get(idx)
-                    .expect("Expected contract aligned with bar in multi replay");
                 let time = bar.get_time();
                 this_time = Some(time);
-                // Shared market surface: clock + close publish happen ONCE per
-                // bar, before any strategy sees it (identical to a solo run's
-                // view — no strategy can observe another's reconcile).
                 ctx.clock.set(time);
                 let close = bar.get_price();
                 ctx.prices.publish_close(&contract, close);
@@ -524,13 +503,7 @@ impl InMemoryReplay {
                 }
             }
 
-            // Bucket-end sentinel: the slot's bars are done arriving — dispatch once
-            // per strategy (engine convention — helpers::sentinel). Blended5 sleeves
-            // flush the pending row on it (emission at completion — user directive
-            // 2026-11-13); every other strategy ignores the sentinel symbol. The
-            // emitted outcome reconciles IMMEDIATELY, with this slot's slice as
-            // the fill context. No clock/supplier touch — the sentinel publishes
-            // nothing. Skipped when the slot had no bars at all.
+            // Handle Bucket-end sentinel
             if let Some(_t) = this_time {
                 let sentinel_contract = Contract::sentinel();
                 let sentinel_bar = HistoricalDataFullKeys::sentinel();

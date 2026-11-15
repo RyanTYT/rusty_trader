@@ -1,9 +1,9 @@
 //! Per-bar equity snapshot, held in-memory by the replayer (no DB schema
 //! change — avoids a new migration that would also touch the prod DB).
 
-use chrono::{DateTime, Utc};
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
+use chrono::{DateTime, Utc};
 use ibapi::contracts::Contract;
 use ibapi::contracts::SecurityType::ForexPair;
 use ibapi::prelude::SecurityType;
@@ -61,7 +61,6 @@ pub async fn compute_snapshot(
     prices: &dyn PriceSupplier,
     strategy_name: &str,
     time: DateTime<Utc>,
-    _contract: &Contract,
     fallback_close: f64,
 ) -> EquitySnapshot {
     // cfg-gated in-memory branch: if the thread-local InMemoryState is set
@@ -80,7 +79,10 @@ pub async fn compute_snapshot(
     // DB-backed path.
     let cp_crud = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
     #[cfg(feature = "backtest")]
-    let positions = match cp_crud.get_pos_by_strat(strategy_name, BacktestMode::Db).await {
+    let positions = match cp_crud
+        .get_pos_by_strat(strategy_name, BacktestMode::Db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("snapshot: get_pos_by_strat failed: {e:?}");

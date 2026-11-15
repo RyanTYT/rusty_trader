@@ -21,12 +21,12 @@ use super::bracket::{
     NEXT_BRACKET_ID, OrderRole, RestingOrder, RestingStatus, build_resting_orders,
 };
 use super::state::{
-    mailbox_push, routed_state, InMemoryPosition, InMemoryState, InMemoryTransaction, MailFill,
-    PositionKey,
+    InMemoryPosition, InMemoryState, InMemoryTransaction, MailFill, PositionKey, mailbox_push,
+    routed_state,
 };
 use crate::backtester::execution::{
     execution_report::synthetic_execution,
-    fill_model::{BarOhlc, FillEval, MarketFillModel, commission, decide_fill},
+    fill_model::{FillEval, MarketFillModel, commission, decide_fill},
 };
 use crate::backtester::setup::config::BacktestConfig;
 use crate::database::models::OpenStockOrdersFullKeys;
@@ -251,10 +251,11 @@ pub fn handle_bar_update_outcome_in_memory(
                     .resting_orders
                     .write()
                     .expect("InMemoryState resting_orders poisoned");
-                for o in orders
-                    .iter()
-                    .filter(|o| o.order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_CANCEL_PREFIX))
-                {
+                for o in orders.iter().filter(|o| {
+                    o.order
+                        .oca_group
+                        .starts_with(crate::strategy_wrappers::payload::OG_CANCEL_PREFIX)
+                }) {
                     guard.retain(|r| {
                         !(r.contract.symbol == o.contract.symbol
                             && r.order_ref == o.order.order_ref
@@ -296,10 +297,8 @@ pub fn handle_bar_update_outcome_in_memory(
                     r.status = RestingStatus::Cancelled;
                     continue;
                 };
-                if let (Some(ohlc), Some(model)) =
-                    (BarOhlc::from_bar(target_bar), r.fill_model.as_mut())
-                {
-                    if let FillEval::Fill { price } = model.evaluate(&ohlc) {
+                if let Some(model) = r.fill_model.as_mut() {
+                    if let FillEval::Fill { price } = model.evaluate(&target_bar) {
                         new_strategy = fill_order_at_price(
                             config,
                             new_strategy,
@@ -499,8 +498,7 @@ fn fill_order_in_memory<'a>(
     // ── §8 ROUTED SETTLEMENT (same seam as `fill_order_at_price`): a
     // routed order_ref ≠ the passing reconciler's state settles into the
     // OWNING account + mailbox; pooled fills bypass every strategy hook.
-    let routed = routed_state(&order.order_ref)
-        .filter(|t| t.strategy_name != state.strategy_name);
+    let routed = routed_state(&order.order_ref).filter(|t| t.strategy_name != state.strategy_name);
     if let Some(tgt) = routed {
         let key = PositionKey {
             strategy: tgt.strategy_name.clone(),
@@ -529,10 +527,7 @@ fn fill_order_in_memory<'a>(
                 sym: key.stock.clone(),
                 qty: fill.fill_qty as i64,
                 px: fill.fill_price,
-                date: bar
-                    .get_time()
-                    .with_timezone(&New_York)
-                    .date_naive(),
+                date: bar.get_time().with_timezone(&New_York).date_naive(),
                 order_id: *order_id as i64,
                 oca_group: order.oca_group.clone(),
             },
@@ -639,7 +634,6 @@ fn process_resting_orders<'a>(
     mso: i32,
     order_id: &mut i32,
 ) -> Result<Option<&'a mut StrategyEnum>, String> {
-    let ohlc = BarOhlc::from_bar(bar);
     let orders: Vec<RestingOrder> = {
         let guard = state
             .resting_orders
@@ -668,43 +662,6 @@ fn process_resting_orders<'a>(
             continue; // already filled/cancelled — drop
         }
 
-        // ── EOD (mso >= 385): force-close active exits at close/mid, cancel
-        // the rest. REMOVED 2026-11-05 (user ruling): the only strategies
-        // that relied on it (vp_touch brackets, orb_general market-stop
-        // closes) are DEPRECATED. Resting entries now persist overnight
-        // exactly like python pending limits; lifecycle is owned by the
-        // OrderGate (TTL expiry / contradicting-intent cancels via the
-        // ogcancel- marker seam in the EmitOrders arm) and by the OCA
-        // sibling cancels below. NOTE: with this block gone there is NO
-        // unconditional sweep — every cancel path is now load-bearing.
-        // if mso >= 385 {
-        //     if order.active && matches!(order.role, OrderRole::Exit(_)) {
-        //         if let Some(o) = ohlc {
-        //             let price = if order.close_is_mid {
-        //                 (o.high + o.low) / 2.0
-        //             } else {
-        //                 o.close
-        //             };
-        //             strategy = fill_order_at_price(
-        //                 config,
-        //                 strategy,
-        //                 prices,
-        //                 state,
-        //                 &order.contract,
-        //                 order.action,
-        //                 order.qty,
-        //                 price,
-        //                 bar.get_time(),
-        //                 order_id,
-        //                 &order.order_ref,
-        //                 &order.oca_group,
-        //             )?;
-        //             filled_exit_brackets.insert(order.bracket_id);
-        //         }
-        //     }
-        //     continue; // everything for this contract is dropped at EOD
-        // }
-
         // Inactive exits wait for their entry to fill.
         if !order.active {
             remaining.push(order);
@@ -715,37 +672,38 @@ fn process_resting_orders<'a>(
         if order.close_mso.is_some() {
             let close_mso = order.close_mso.unwrap();
             if mso >= close_mso {
-                if let Some(o) = ohlc {
-                    let price = if order.close_is_mid {
-                        (o.high + o.low) / 2.0
-                    } else {
-                        o.close
-                    };
-                    strategy = fill_order_at_price(
-                        config,
-                        strategy,
-                        prices,
-                        state,
-                        &order.contract,
-                        order.action,
-                        order.qty,
-                        price,
-                        bar.get_time(),
-                        order_id,
-                        &order.order_ref,
-                        &order.oca_group,
-                    )?;
-                    order.status = RestingStatus::Filled;
-                    match order.role {
-                        OrderRole::Entry => {
-                            filled_entry_brackets.insert(order.bracket_id);
-                            if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
-                                filled_entry_groups.insert(order.oca_group.clone());
-                            }
+                let price = if order.close_is_mid {
+                    (bar.get_high_price() + bar.get_low_price()) / 2.0
+                } else {
+                    bar.get_price()
+                };
+                strategy = fill_order_at_price(
+                    config,
+                    strategy,
+                    prices,
+                    state,
+                    &order.contract,
+                    order.action,
+                    order.qty,
+                    price,
+                    bar.get_time(),
+                    order_id,
+                    &order.order_ref,
+                    &order.oca_group,
+                )?;
+                order.status = RestingStatus::Filled;
+                match order.role {
+                    OrderRole::Entry => {
+                        filled_entry_brackets.insert(order.bracket_id);
+                        if order
+                            .oca_group
+                            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+                        {
+                            filled_entry_groups.insert(order.oca_group.clone());
                         }
-                        OrderRole::Exit(_) => {
-                            filled_exit_brackets.insert(order.bracket_id);
-                        }
+                    }
+                    OrderRole::Exit(_) => {
+                        filled_exit_brackets.insert(order.bracket_id);
                     }
                 }
                 continue; // drop (filled)
@@ -755,13 +713,9 @@ fn process_resting_orders<'a>(
         }
 
         // ── Price-gated (limit / stop-limit / market-stop) ──
-        let Some(o) = ohlc else {
-            remaining.push(order);
-            continue;
-        };
         let mut did_fill = false;
         if let Some(model) = order.fill_model.as_mut() {
-            if let FillEval::Fill { price } = model.evaluate(&o) {
+            if let FillEval::Fill { price } = model.evaluate(&bar) {
                 strategy = fill_order_at_price(
                     config,
                     strategy,
@@ -781,7 +735,10 @@ fn process_resting_orders<'a>(
                 match order.role {
                     OrderRole::Entry => {
                         filled_entry_brackets.insert(order.bracket_id);
-                        if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                        if order
+                            .oca_group
+                            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+                        {
                             filled_entry_groups.insert(order.oca_group.clone());
                         }
                     }
@@ -809,7 +766,9 @@ fn process_resting_orders<'a>(
         // OrderGate entry-sibling mirror: one "og-" entry of a group filled
         // this bar → cancel sibling ENTRIES sharing the group (non-empty
         // groups only — engine-placed orders carry "").
-        else if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+        else if order
+            .oca_group
+            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
             && filled_entry_groups.contains(&order.oca_group)
         {
             order.status = RestingStatus::Cancelled;
@@ -879,7 +838,6 @@ pub fn drain_resting_orders_fill_first(
             remaining.push(order);
             continue;
         };
-        let ohlc = BarOhlc::from_bar(bar);
         let mso = {
             let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
             ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570
@@ -895,37 +853,38 @@ pub fn drain_resting_orders_fill_first(
         if order.close_mso.is_some() {
             let close_mso = order.close_mso.unwrap();
             if mso >= close_mso {
-                if let Some(o) = ohlc {
-                    let price = if order.close_is_mid {
-                        (o.high + o.low) / 2.0
-                    } else {
-                        o.close
-                    };
-                    strategy = fill_order_at_price(
-                        config,
-                        strategy,
-                        prices,
-                        state,
-                        &order.contract,
-                        order.action,
-                        order.qty,
-                        price,
-                        bar.get_time(),
-                        order_id,
-                        &order.order_ref,
-                        &order.oca_group,
-                    )?;
-                    order.status = RestingStatus::Filled;
-                    match order.role {
-                        OrderRole::Entry => {
-                            filled_entry_brackets.insert(order.bracket_id);
-                            if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
-                                filled_entry_groups.insert(order.oca_group.clone());
-                            }
+                let price = if order.close_is_mid {
+                    (bar.get_high_price() + bar.get_low_price()) / 2.0
+                } else {
+                    bar.get_price()
+                };
+                strategy = fill_order_at_price(
+                    config,
+                    strategy,
+                    prices,
+                    state,
+                    &order.contract,
+                    order.action,
+                    order.qty,
+                    price,
+                    bar.get_time(),
+                    order_id,
+                    &order.order_ref,
+                    &order.oca_group,
+                )?;
+                order.status = RestingStatus::Filled;
+                match order.role {
+                    OrderRole::Entry => {
+                        filled_entry_brackets.insert(order.bracket_id);
+                        if order
+                            .oca_group
+                            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+                        {
+                            filled_entry_groups.insert(order.oca_group.clone());
                         }
-                        OrderRole::Exit(_) => {
-                            filled_exit_brackets.insert(order.bracket_id);
-                        }
+                    }
+                    OrderRole::Exit(_) => {
+                        filled_exit_brackets.insert(order.bracket_id);
                     }
                 }
                 continue; // drop (filled)
@@ -935,13 +894,9 @@ pub fn drain_resting_orders_fill_first(
         }
 
         // ── Price-gated (limit / stop-limit / market-stop / deferred market) ──
-        let Some(o) = ohlc else {
-            remaining.push(order);
-            continue;
-        };
         let mut did_fill = false;
         if let Some(model) = order.fill_model.as_mut() {
-            if let FillEval::Fill { price } = model.evaluate(&o) {
+            if let FillEval::Fill { price } = model.evaluate(&bar) {
                 strategy = fill_order_at_price(
                     config,
                     strategy,
@@ -961,7 +916,10 @@ pub fn drain_resting_orders_fill_first(
                 match order.role {
                     OrderRole::Entry => {
                         filled_entry_brackets.insert(order.bracket_id);
-                        if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX) {
+                        if order
+                            .oca_group
+                            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+                        {
                             filled_entry_groups.insert(order.oca_group.clone());
                         }
                     }
@@ -989,7 +947,9 @@ pub fn drain_resting_orders_fill_first(
         // OrderGate entry-sibling mirror: one "og-" entry of a group filled
         // this bar → cancel sibling ENTRIES sharing the group (non-empty
         // groups only — engine-placed orders carry "").
-        else if order.oca_group.starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
+        else if order
+            .oca_group
+            .starts_with(crate::strategy_wrappers::payload::OG_PREFIX)
             && filled_entry_groups.contains(&order.oca_group)
         {
             order.status = RestingStatus::Cancelled;
@@ -1062,8 +1022,7 @@ fn fill_order_at_price<'a>(
     // peer fills into its severity streams). The router is only installed
     // by the multi replay runner; absence (or a self-named order) falls
     // through to the byte-exact legacy path below.
-    let routed = routed_state(order_ref)
-        .filter(|t| t.strategy_name != state.strategy_name);
+    let routed = routed_state(order_ref).filter(|t| t.strategy_name != state.strategy_name);
     if let Some(tgt) = routed {
         let key = PositionKey {
             strategy: tgt.strategy_name.clone(),
@@ -1231,11 +1190,19 @@ mod tests {
     }
 
     fn apple() -> Contract {
-        build_contract_from_stock(&"AAPL".to_string(), &"NASDAQ".to_string(), &"USD".to_string())
+        build_contract_from_stock(
+            &"AAPL".to_string(),
+            &"NASDAQ".to_string(),
+            &"USD".to_string(),
+        )
     }
 
     fn aris() -> Contract {
-        build_contract_from_stock(&"ARIS".to_string(), &"NASDAQ".to_string(), &"USD".to_string())
+        build_contract_from_stock(
+            &"ARIS".to_string(),
+            &"NASDAQ".to_string(),
+            &"USD".to_string(),
+        )
     }
 
     fn cfg() -> BacktestConfig {
@@ -1245,7 +1212,16 @@ mod tests {
     }
 
     fn stock_bar(c: &Contract, time: DateTime<Utc>, close: f64) -> HistoricalDataFullKeys {
-        HistoricalDataFullKeys::from_data(c, &WhatToShow::Trades, time, close, close, close, close, 1_000.0)
+        HistoricalDataFullKeys::from_data(
+            c,
+            &WhatToShow::Trades,
+            time,
+            close,
+            close,
+            close,
+            close,
+            1_000.0,
+        )
     }
 
     /// 09:30 / 09:35 ET on 2024-03-05 (weekly session, no EOD edge).
@@ -1254,7 +1230,11 @@ mod tests {
     }
 
     fn mk_order(c: &Contract, qty: f64, buy: bool) -> OrderIBKR {
-        let action = if buy { ibapi::orders::Action::Buy } else { ibapi::orders::Action::Sell };
+        let action = if buy {
+            ibapi::orders::Action::Buy
+        } else {
+            ibapi::orders::Action::Sell
+        };
         let order = Order {
             action,
             total_quantity: qty,
@@ -1268,7 +1248,11 @@ mod tests {
     /// `from_contract_and_order` applies the signed-quantity convention
     /// (Sell → negative), which the cancel seam's side filter relies on.
     fn mk_cancel_key(c: &Contract, qty: f64, buy: bool, order_ref: &str) -> OpenOrdersFullKeys {
-        let action = if buy { ibapi::orders::Action::Buy } else { ibapi::orders::Action::Sell };
+        let action = if buy {
+            ibapi::orders::Action::Buy
+        } else {
+            ibapi::orders::Action::Sell
+        };
         let order = Order {
             action,
             total_quantity: qty,
@@ -1283,7 +1267,11 @@ mod tests {
     /// market-class-only deferrals, so a cancel+replace of the SAME key is
     /// discriminated by the cancel seam's ordering, not by the re-flush dedup.
     fn mk_limit_order(c: &Contract, qty: f64, px: f64, buy: bool) -> OrderIBKR {
-        let action = if buy { ibapi::orders::Action::Buy } else { ibapi::orders::Action::Sell };
+        let action = if buy {
+            ibapi::orders::Action::Buy
+        } else {
+            ibapi::orders::Action::Sell
+        };
         let order = Order {
             action,
             order_type: "LMT".to_string(),
@@ -1341,13 +1329,33 @@ mod tests {
             cancel_orders: vec![],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile slot1");
 
-        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0, "no phantom fill on deferral");
-        assert_eq!(txn_prices(&state, "ARIS").len(), 0, "no ARIS transaction from an ambient bar");
-        assert_eq!(resting_count(&state, "ARIS"), 1, "exactly one parked deferral");
+        assert_eq!(
+            state.current_qty(&key(&state, "ARIS")),
+            0.0,
+            "no phantom fill on deferral"
+        );
+        assert_eq!(
+            txn_prices(&state, "ARIS").len(),
+            0,
+            "no ARIS transaction from an ambient bar"
+        );
+        assert_eq!(
+            resting_count(&state, "ARIS"),
+            1,
+            "exactly one parked deferral"
+        );
 
         // Slot 2 (09:35): ARIS's OWN bar arrives at close 10.00. The deferral
         // fills there — NOT at AAPL's close.
@@ -1356,12 +1364,28 @@ mod tests {
         let contracts2 = vec![Some(aapl_bar2), Some(aris_bar2.clone())];
         let outcome2 = BarUpdateOutcome::NoAction;
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome2, &aris(), &aris_bar2, &contracts2, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome2,
+            &aris(),
+            &aris_bar2,
+            &contracts2,
+            &mut order_id,
         )
         .expect("reconcile slot2");
 
-        assert_eq!(state.current_qty(&key(&state, "ARIS")), 10.0, "fills once at own bar");
-        assert_eq!(txn_prices(&state, "ARIS"), vec![10.0], "fill price is the OWN close");
+        assert_eq!(
+            state.current_qty(&key(&state, "ARIS")),
+            10.0,
+            "fills once at own bar"
+        );
+        assert_eq!(
+            txn_prices(&state, "ARIS"),
+            vec![10.0],
+            "fill price is the OWN close"
+        );
         assert_eq!(txn_prices(&state, "AAPL").len(), 0, "AAPL untouched");
         assert_eq!(resting_count(&state, "ARIS"), 0, "deferral consumed");
     }
@@ -1381,23 +1405,49 @@ mod tests {
         };
         for _ in 0..2 {
             handle_bar_update_outcome_in_memory(
-                &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+                &config,
+                None,
+                &prices,
+                &state,
+                &outcome,
+                &apple(),
+                &aapl_bar,
+                &contracts,
+                &mut order_id,
             )
             .expect("reconcile reflush");
         }
 
-        assert_eq!(resting_count(&state, "ARIS"), 1, "second flush cancelled the stale deferral");
+        assert_eq!(
+            resting_count(&state, "ARIS"),
+            1,
+            "second flush cancelled the stale deferral"
+        );
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
 
         // The single surviving deferral fills exactly once.
         let aris_bar = stock_bar(&aris(), slot(35), 10.0);
-        let contracts2 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar.clone())];
+        let contracts2 = vec![
+            Some(stock_bar(&apple(), slot(35), 205.0)),
+            Some(aris_bar.clone()),
+        ];
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar, &contracts2,
+            &config,
+            None,
+            &prices,
+            &state,
+            &BarUpdateOutcome::NoAction,
+            &aris(),
+            &aris_bar,
+            &contracts2,
             &mut order_id,
         )
         .expect("reconcile fill");
-        assert_eq!(txn_prices(&state, "ARIS"), vec![10.0], "exactly ONE fill at own close");
+        assert_eq!(
+            txn_prices(&state, "ARIS"),
+            vec![10.0],
+            "exactly ONE fill at own close"
+        );
     }
 
     // ── Cancel seam (EmitOrders.cancel_orders, 2026-11-11) ────────────────────
@@ -1421,7 +1471,15 @@ mod tests {
             cancel_orders: vec![],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile slot1");
         assert_eq!(resting_count(&state, "ARIS"), 1, "deferral parked");
@@ -1433,21 +1491,51 @@ mod tests {
             cancel_orders: vec![mk_cancel_key(&aris(), 10.0, true, "test")],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome2,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile cancel");
-        assert_eq!(resting_count(&state, "ARIS"), 0, "matching key swept the deferral");
-        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0, "cancel is not a fill");
+        assert_eq!(
+            resting_count(&state, "ARIS"),
+            0,
+            "matching key swept the deferral"
+        );
+        assert_eq!(
+            state.current_qty(&key(&state, "ARIS")),
+            0.0,
+            "cancel is not a fill"
+        );
 
         // Slot 3: ARIS's own bar arrives — the cancelled deferral must NOT fill.
         let aris_bar3 = stock_bar(&aris(), slot(35), 10.0);
-        let contracts3 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar3.clone())];
+        let contracts3 = vec![
+            Some(stock_bar(&apple(), slot(35), 205.0)),
+            Some(aris_bar3.clone()),
+        ];
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar3,
-            &contracts3, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &BarUpdateOutcome::NoAction,
+            &aris(),
+            &aris_bar3,
+            &contracts3,
+            &mut order_id,
         )
         .expect("reconcile slot3");
-        assert_eq!(txn_prices(&state, "ARIS").len(), 0, "cancelled deferral never fills");
+        assert_eq!(
+            txn_prices(&state, "ARIS").len(),
+            0,
+            "cancelled deferral never fills"
+        );
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
     }
 
@@ -1465,7 +1553,15 @@ mod tests {
             cancel_orders: vec![],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile slot1");
         assert_eq!(resting_count(&state, "ARIS"), 1);
@@ -1475,16 +1571,28 @@ mod tests {
         let outcome2 = BarUpdateOutcome::EmitOrders {
             place_orders: vec![],
             cancel_orders: vec![
-                mk_cancel_key(&apple(), 10.0, true, "test"),  // wrong symbol
-                mk_cancel_key(&aris(), 10.0, true, "other"),  // wrong order_ref
-                mk_cancel_key(&aris(), 10.0, false, "test"),  // wrong side
+                mk_cancel_key(&apple(), 10.0, true, "test"), // wrong symbol
+                mk_cancel_key(&aris(), 10.0, true, "other"), // wrong order_ref
+                mk_cancel_key(&aris(), 10.0, false, "test"), // wrong side
             ],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome2,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile non-matching");
-        assert_eq!(resting_count(&state, "ARIS"), 1, "only an exact (symbol, order_ref, side) match cancels");
+        assert_eq!(
+            resting_count(&state, "ARIS"),
+            1,
+            "only an exact (symbol, order_ref, side) match cancels"
+        );
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
     }
 
@@ -1503,7 +1611,15 @@ mod tests {
             cancel_orders: vec![],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile slot1");
         assert_eq!(resting_count(&state, "ARIS"), 1, "LMT entry rests");
@@ -1516,22 +1632,48 @@ mod tests {
             cancel_orders: vec![mk_cancel_key(&aris(), 10.0, true, "test")],
         };
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome2, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome2,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile cancel+replace");
-        assert_eq!(resting_count(&state, "ARIS"), 1, "old swept, fresh placement survives");
+        assert_eq!(
+            resting_count(&state, "ARIS"),
+            1,
+            "old swept, fresh placement survives"
+        );
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0);
 
         // Slot 3: ARIS's own bar (9.00) crosses the 10.00 buy limit — the
         // replacement fills exactly once.
         let aris_bar3 = stock_bar(&aris(), slot(35), 9.0);
-        let contracts3 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar3.clone())];
+        let contracts3 = vec![
+            Some(stock_bar(&apple(), slot(35), 205.0)),
+            Some(aris_bar3.clone()),
+        ];
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar3,
-            &contracts3, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &BarUpdateOutcome::NoAction,
+            &aris(),
+            &aris_bar3,
+            &contracts3,
+            &mut order_id,
         )
         .expect("reconcile slot3");
-        assert_eq!(txn_prices(&state, "ARIS").len(), 1, "replacement fills exactly once");
+        assert_eq!(
+            txn_prices(&state, "ARIS").len(),
+            1,
+            "replacement fills exactly once"
+        );
         assert_eq!(state.current_qty(&key(&state, "ARIS")), 10.0);
     }
 
@@ -1550,32 +1692,76 @@ mod tests {
             .target_positions
             .write()
             .expect("targets poisoned")
-            .insert(tkey, InMemoryPosition { quantity: 10.0, avg_price: 0.0 });
+            .insert(
+                tkey,
+                InMemoryPosition {
+                    quantity: 10.0,
+                    avg_price: 0.0,
+                },
+            );
 
         let aapl_bar = stock_bar(&apple(), slot(30), 200.0);
         let contracts = vec![Some(aapl_bar.clone()), None];
         let outcome = BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]);
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &outcome, &apple(), &aapl_bar, &contracts, &mut order_id,
+            &config,
+            None,
+            &prices,
+            &state,
+            &outcome,
+            &apple(),
+            &aapl_bar,
+            &contracts,
+            &mut order_id,
         )
         .expect("reconcile db slot1");
 
-        assert_eq!(state.current_qty(&key(&state, "ARIS")), 0.0, "Db-arm: no phantom ARIS fill at AAPL's close");
-        assert_eq!(txn_prices(&state, "ARIS").len(), 0, "Db-arm: no ARIS transaction from an ambient bar");
+        assert_eq!(
+            state.current_qty(&key(&state, "ARIS")),
+            0.0,
+            "Db-arm: no phantom ARIS fill at AAPL's close"
+        );
+        assert_eq!(
+            txn_prices(&state, "ARIS").len(),
+            0,
+            "Db-arm: no ARIS transaction from an ambient bar"
+        );
         assert_eq!(resting_count(&state, "ARIS"), 1, "Db-arm deferral parked");
-        assert_eq!(txn_prices(&state, "AAPL").len(), 0, "AAPL target flat → no fill");
+        assert_eq!(
+            txn_prices(&state, "AAPL").len(),
+            0,
+            "AAPL target flat → no fill"
+        );
 
         // Slot 2: ARIS's own bar → the deferral fills at the OWN close 10.00;
         // the Db flush (driven by ARIS's bar) tops up 10 − 0 = +10 at own price.
         let aris_bar2 = stock_bar(&aris(), slot(35), 10.0);
-        let contracts2 = vec![Some(stock_bar(&apple(), slot(35), 205.0)), Some(aris_bar2.clone())];
+        let contracts2 = vec![
+            Some(stock_bar(&apple(), slot(35), 205.0)),
+            Some(aris_bar2.clone()),
+        ];
         handle_bar_update_outcome_in_memory(
-            &config, None, &prices, &state, &BarUpdateOutcome::NoAction, &aris(), &aris_bar2, &contracts2,
+            &config,
+            None,
+            &prices,
+            &state,
+            &BarUpdateOutcome::NoAction,
+            &aris(),
+            &aris_bar2,
+            &contracts2,
             &mut order_id,
         )
         .expect("reconcile db slot2");
 
-        assert_eq!(state.current_qty(&key(&state, "ARIS")), 10.0, "Db-arm: single fill at own bar");
-        assert_eq!(txn_prices(&state, "ARIS"), vec![10.0], "Db-arm fill price is the OWN close");
+        assert_eq!(
+            state.current_qty(&key(&state, "ARIS")),
+            10.0,
+            "Db-arm: single fill at own bar"
+        );
+        assert_eq!(
+            txn_prices(&state, "ARIS"),
+            vec![10.0],
+            "Db-arm fill price is the OWN close"
+        );
     }
 }
