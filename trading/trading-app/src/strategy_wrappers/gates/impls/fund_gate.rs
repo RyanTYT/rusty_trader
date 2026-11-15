@@ -82,7 +82,7 @@ use super::mpsc::{MpscRingBuffer, MpscRingBufferProducer};
 use crate::backtester::methods::in_memory::diag;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, SE_SLEEVE, USD_FX};
+use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, USD_FX};
 use crate::strategy_wrappers::gate::GateLogic;
 use crate::strategy_wrappers::intent::Intent;
 use crate::strategy_wrappers::payload::{BarFrame, Payload, ShareOut};
@@ -303,10 +303,7 @@ impl PoolState {
     /// behind; duplicates are a loud construction error (a second
     /// `FundGate::new` for one sleeve would double-mint and desync the
     /// name/idx mapping).
-    fn mint(
-        &self,
-        own: &str,
-    ) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
+    fn mint(&self, own: &str) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
         let producer = self.ring.get_new_producer();
         let names = unsafe { &mut *self.names.get() };
         assert!(
@@ -334,7 +331,11 @@ impl PoolState {
     ) {
         let names = unsafe { &mut *self.names.get() };
         let residual = ledger_capital - seeded_total;
-        let residual = if residual.abs() < 1e-6 { 0.0 } else { residual.max(0.0) };
+        let residual = if residual.abs() < 1e-6 {
+            0.0
+        } else {
+            residual.max(0.0)
+        };
         self.ring
             .set_active_producers(&(0..names.len()).collect::<Vec<usize>>());
         unsafe {
@@ -437,7 +438,6 @@ impl PoolState {
     ) -> Result<(), String> {
         #[cfg(feature = "backtest")]
         use crate::backtester::setup::config::BacktestMode;
-        use crate::database::crud::CRUDTrait;
         use crate::database::models::{
             AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
         };
@@ -482,27 +482,26 @@ impl PoolState {
             // account write (poll it INLINE on the owning thread); a Db
             // write (live OR the Db-multi replay) is a sqlx query needing
             // the reactor — spawn onto the runtime.
-            let write = {
+            {
                 #[cfg(feature = "backtest")]
                 let write = if matches!(self.mode(), BacktestMode::InMemory) {
                     futures::executor::block_on(async {
                         let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
-                        let pk = CurrentPositionsPrimaryKeys::Stock(
-                            CurrentStockPositionsPrimaryKeys {
+                        let pk =
+                            CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
                                 strategy: name.clone(),
                                 stock: "CASH:SGD".to_string(),
                                 primary_exchange: "".to_string(),
                                 currency: "SGD".to_string(),
-                            },
-                        );
-                        let uk = CurrentPositionsUpdateKeys::Stock(
-                            CurrentStockPositionsUpdateKeys {
+                            });
+                        let uk =
+                            CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
                                 quantity: Some(delta),
                                 avg_price: Some(1.0),
                                 last_updated: None,
-                            },
-                        );
-                        cp.update_positions_additive(pk, uk, BacktestMode::InMemory).await
+                            });
+                        cp.update_positions_additive(pk, uk, BacktestMode::InMemory)
+                            .await
                     })
                 } else {
                     let jh = handle.spawn({
@@ -591,6 +590,8 @@ impl PoolState {
     /// reallocation re-derives the true equity split from the
     /// Consolidator). Returns the capital to `init_live` with.
     pub async fn seed_fund_cash(pool: &sqlx::PgPool, required: f64) -> Result<f64, String> {
+        #[cfg(feature = "backtest")]
+        use crate::backtester::setup::config::BacktestMode;
         use crate::database::models::{
             AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
         };
@@ -598,9 +599,6 @@ impl PoolState {
             CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
             CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
         };
-        use crate::database::crud::CRUDTrait;
-        #[cfg(feature = "backtest")]
-        use crate::backtester::setup::config::BacktestMode;
 
         /// Σ CASH:SGD quantity for one strategy (negative = drained).
         async fn strategy_cash(pool: &sqlx::PgPool, strategy: &str) -> Result<f64, String> {
@@ -616,9 +614,9 @@ impl PoolState {
                 .map_err(|e| format!("seed read '{strategy}': {e}"))?;
             Ok(rows
                 .iter()
-                .filter(|r| {
-                    matches!(r, CurrentPositionsFullKeys::Stock(k) if k.stock == "CASH:SGD")
-                })
+                .filter(
+                    |r| matches!(r, CurrentPositionsFullKeys::Stock(k) if k.stock == "CASH:SGD"),
+                )
                 .map(|r| match r {
                     CurrentPositionsFullKeys::Stock(k) => k.quantity,
                     _ => 0.0,
@@ -658,7 +656,9 @@ impl PoolState {
         }
 
         let Some(p) = PoolState::current() else {
-            return Err("seed_fund_cash before any sleeve constructed — no participants".to_string());
+            return Err(
+                "seed_fund_cash before any sleeve constructed — no participants".to_string(),
+            );
         };
         let names = unsafe { &*p.names.get() }.clone();
 
@@ -716,11 +716,17 @@ impl PoolState {
         }
         if take_unknown > 0.0 {
             adjust_cash(pool, "unknown", -take_unknown).await?;
-            tracing::info!(amount = format!("{take_unknown:.2}"), "transferred from 'unknown'");
+            tracing::info!(
+                amount = format!("{take_unknown:.2}"),
+                "transferred from 'unknown'"
+            );
         }
         if take_main > 0.0 {
             adjust_cash(pool, "", -take_main).await?;
-            tracing::info!(amount = format!("{take_main:.2}"), "transferred from '' (main)");
+            tracing::info!(
+                amount = format!("{take_main:.2}"),
+                "transferred from '' (main)"
+            );
         }
         for name in &names {
             adjust_cash(pool, name, share).await?;
@@ -790,7 +796,7 @@ impl PoolState {
                 .unwrap()
                 .insert(own.to_string(), eq);
             let seen = &mut *self.seen.get();
-            let idx = unsafe { &*self.names.get() }
+            let idx = (&*self.names.get())
                 .iter()
                 .position(|n| n == own)
                 .expect("pusher must be a minted participant");
@@ -869,7 +875,13 @@ impl PoolState {
                 }
             }
             for (sym, q) in scaled.iter() {
-                sheet.push(ShareOut::new(sym.clone(), *q, Some(name.clone()), None, None));
+                sheet.push(ShareOut::new(
+                    sym.clone(),
+                    *q,
+                    Some(name.clone()),
+                    None,
+                    None,
+                ));
             }
             // Direct write-back into the pool-owned book — MOVED, no clone:
             // the completer (same thread) is the sanctioned cross-index
@@ -934,11 +946,7 @@ impl PoolState {
     /// `None` until the first trim (caller falls back to own equity).
     pub(crate) fn total_equity(&self) -> Option<f64> {
         let total = unsafe { (*self.last_total.get()).unwrap_or(f64::NAN) };
-        if total.is_finite() {
-            Some(total)
-        } else {
-            None
-        }
+        if total.is_finite() { Some(total) } else { None }
     }
 }
 
@@ -1054,10 +1062,11 @@ fn pooled_intents(
     eod_edge: bool,
 ) -> Payload {
     let sheet = p.trim(vintage, slot_date, eod_edge);
-    let mut out: crate::strategy_wrappers::intent::IntentMap =
-        Vec::with_capacity(sheet.len());
+    let mut out: crate::strategy_wrappers::intent::IntentMap = Vec::with_capacity(sheet.len());
     for s in sheet {
-        let ShareOut { sym, qty: q, owner, .. } = s;
+        let ShareOut {
+            sym, qty: q, owner, ..
+        } = s;
         // q == 0 → explicit flatten. Encoded as per_share(side=0, |q|=0):
         // the foreign SharesGate lane debug-asserts per-share book counts,
         // so the flat MUST stay per-share — side==0 routes it to
@@ -1066,7 +1075,15 @@ fn pooled_intents(
         // limit_px/oca_group explicitly reset: trimmed-sheet intents never
         // inherit stale tags (sheet entries here carry None by construction).
         let it = Intent::per_share(q.signum() as i32, q.abs() as f64, 1.0);
-        out.push((sym, Intent { strategy: owner, limit_px: None, oca_group: None, ..it }));
+        out.push((
+            sym,
+            Intent {
+                strategy: owner,
+                limit_px: None,
+                oca_group: None,
+                ..it
+            },
+        ));
     }
     Payload::Intents(out)
 }
@@ -1126,7 +1143,11 @@ impl FundGate {
 
     /// Fresh close for `sym` (extending `last_px`, legacy gross_pv idiom).
     fn price_for(&mut self, sym: &str, bars: &BarFrame) -> f64 {
-        match bars.get(sym).map(|b| b.get_price()).filter(|p| p.is_finite() && *p > 0.0) {
+        match bars
+            .get(sym)
+            .map(|b| b.get_price())
+            .filter(|p| p.is_finite() && *p > 0.0)
+        {
             Some(p) => {
                 self.last_px.insert(sym.to_string(), p);
                 p
@@ -1143,7 +1164,11 @@ impl FundGate {
         if it.side == 0 {
             // explicit flatten — SharesGate emits (sym, 0) iff printable;
             // unprintable → omitted → carry stands.
-            return if bars.contains_key(sym) { Some(0) } else { None };
+            return if bars.contains_key(sym) {
+                Some(0)
+            } else {
+                None
+            };
         }
         if it.per_share {
             // px = 1.0, never used (battery SH 438-441)
@@ -1155,19 +1180,30 @@ impl FundGate {
             if q <= 0.0 {
                 // zero_is_flat=true on every sleeve chain: explicit 0 iff
                 // printable, else omitted.
-                return if bars.contains_key(sym) { Some(0) } else { None };
+                return if bars.contains_key(sym) {
+                    Some(0)
+                } else {
+                    None
+                };
             }
             Some(q as i64 * it.side as i64)
         } else {
             // dollars: absent/unprintable key = OMIT (carry stands).
-            let px = bars.get(sym).map(|b| b.get_price()).filter(|p| p.is_finite() && *p > 0.0)?;
+            let px = bars
+                .get(sym)
+                .map(|b| b.get_price())
+                .filter(|p| p.is_finite() && *p > 0.0)?;
             let raw = (it.n_base * it.sc) * it.w; // battery association: (N*sc)*w
             if !raw.is_finite() || raw <= 0.0 {
                 return None;
             }
             let q = (raw / px).trunc();
             if q <= 0.0 {
-                return if bars.contains_key(sym) { Some(0) } else { None };
+                return if bars.contains_key(sym) {
+                    Some(0)
+                } else {
+                    None
+                };
             }
             Some(q as i64 * it.side as i64)
         }
@@ -1181,8 +1217,7 @@ impl FundGate {
     fn fund_gross(&mut self, book: &BTreeMap<String, i64>, bars: &BarFrame) -> (f64, f64) {
         let mut priced = 0.0f64;
         let mut fixed = 0.0f64; // ≡ 0 by construction (legacy parity), kept
-        let book_items: Vec<(String, i64)> =
-            book.iter().map(|(s, q)| (s.clone(), *q)).collect();
+        let book_items: Vec<(String, i64)> = book.iter().map(|(s, q)| (s.clone(), *q)).collect();
         for (sym, q) in book_items.iter() {
             if *q == 0 {
                 continue;
@@ -1320,9 +1355,7 @@ impl GateLogic for FundGate {
     ) -> Result<Payload, String> {
         let items = match up {
             Some(Payload::Intents(v)) => v,
-            Some(Payload::Shares(_)) => {
-                return Err("FundGate consumes Intents, not Shares".into())
-            }
+            Some(Payload::Shares(_)) => return Err("FundGate consumes Intents, not Shares".into()),
             None => return Err("FundGate requires upstream intents (never a chain head)".into()),
         };
         // DIAG seam: the chain output AT THE GATE BOUNDARY splits the signal
@@ -1476,7 +1509,12 @@ impl FundLedger {
     /// reconcile against the current pool vintage (each sleeve's last
     /// pushed equity = the previous session's day-last); same-day flushes
     /// are no-ops.
-    pub fn on_slot(&mut self, residual: f64, equities: &HashMap<String, f64>, d: chrono::NaiveDate) {
+    pub fn on_slot(
+        &mut self,
+        residual: f64,
+        equities: &HashMap<String, f64>,
+        d: chrono::NaiveDate,
+    ) {
         use chrono::Datelike;
         if self.prev_date == Some(d) {
             return; // same session — reconcile fires once per day
@@ -1633,3 +1671,4 @@ mod pool_sizing_tests {
         assert_eq!(sizing_base("blended5_tc1"), None);
     }
 }
+

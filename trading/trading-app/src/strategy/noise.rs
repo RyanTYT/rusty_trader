@@ -4,13 +4,11 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::America::New_York;
-use chrono_tz::Tz;
 use ibapi::orders::ExecutionData;
 use ibapi::{Client, prelude::Contract};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
-use yfinance_rs::NewsTab;
 
 // NOTE: adjust this import path if EwmMean doesn't actually live alongside
 // RollingMean/RollingStd/RollingDayVwap in your crate.
@@ -26,7 +24,7 @@ use crate::{
         models_crud::{
             historical_data::historical_data::{
                 HistoricalDataCRUD, HistoricalDataFullKeys, HistoricalDataOps,
-                HistoricalDataPrimaryKeysWoTime, NoiseOps, VwapBarValue,
+                HistoricalDataPrimaryKeysWoTime,
             },
             target_positions::target_positions::{
                 TargetPositionsCRUD, TargetPositionsPrimaryKeys, TargetPositionsUpdateKeys,
@@ -270,7 +268,6 @@ impl NoiseFnData {
 
 #[derive(Debug)]
 pub struct Noise {
-    priority: u32,
     name: String,
     pool: PgPool,
     tokio_handle: tokio::runtime::Handle,
@@ -289,7 +286,6 @@ pub struct Noise {
 impl Noise {
     pub fn new(pool: PgPool, tokio_handle: tokio::runtime::Handle) -> Self {
         Self {
-            priority: 1,
             name: "noise".to_string(),
             pool,
             tokio_handle,
@@ -467,7 +463,7 @@ impl StrategyExecutor for Noise {
             return Err("Failed to fetch any full bars during noise warmup".to_string());
         }
 
-        let day_vwap = RollingDayVwap::new(78);
+        let day_vwap = RollingDayVwap::new();
         let daily_volatility = RollingStd::new(vol_lookback as usize);
 
         let mut data = NoiseFnData {
@@ -517,7 +513,7 @@ impl Noise {
         let bar_time = &bar.get_time().with_timezone(&New_York).time();
         if !noise_data.avg_moves.contains_key(bar_time) {
             if bar_time == &NaiveTime::from_hms_opt(9, 30, 0).unwrap() {
-                let mut noise_data = self
+                let noise_data = self
                     .data
                     .as_mut()
                     .expect("Expected sufficient data in noise fn warm up for on_bar_update");
@@ -535,7 +531,7 @@ impl Noise {
                 match noise_data.avg_move_smoothed(bar_time, DIURNAL_SMOOTH_RADIUS) {
                     Some(v) => v,
                     None => {
-                        let mut noise_data = self.data.as_mut().expect(
+                        let noise_data = self.data.as_mut().expect(
                             "Expected sufficient data in noise fn warm up for on_bar_update",
                         );
                         noise_data.push(bar.clone(), &self.refinements);
@@ -552,7 +548,7 @@ impl Noise {
                 {
                     Some(v) => v,
                     None => {
-                        let mut noise_data = self.data.as_mut().expect(
+                        let noise_data = self.data.as_mut().expect(
                             "Expected sufficient data in noise fn warm up for on_bar_update",
                         );
                         noise_data.push(bar.clone(), &self.refinements);
@@ -569,7 +565,7 @@ impl Noise {
             match noise_data.current_daily_vol(&self.refinements) {
                 Some(v) => v,
                 None => {
-                    let mut noise_data = self
+                    let noise_data = self
                         .data
                         .as_mut()
                         .expect("Expected sufficient data in noise fn warm up for on_bar_update");
@@ -677,7 +673,7 @@ impl Noise {
             .1
             .get_open_price()
             .min(most_recent_open_bars.0.get_price());
-        let (upper_noise, lower_noise) = (
+        let (upper_noise, _lower_noise) = (
             (1.0 + noise_multiplier * avg_move_since_open) * most_recent_open_upper,
             (1.0 - noise_multiplier * avg_move_since_open) * most_recent_open_lower,
         );
@@ -735,7 +731,7 @@ impl Noise {
                         })
                 })
             })?;
-            let mut noise_data = self
+            let noise_data = self
                 .data
                 .as_mut()
                 .expect("Expected sufficient data in noise fn warm up for on_bar_update");
@@ -786,7 +782,7 @@ impl Noise {
                         })
                 })
             })?;
-            let mut noise_data = self
+            let noise_data = self
                 .data
                 .as_mut()
                 .expect("Expected sufficient data in noise fn warm up for on_bar_update");
@@ -794,7 +790,7 @@ impl Noise {
             return Ok(BarUpdateOutcome::PendingDbQuery(vec![AssetType::Stock]));
         }
 
-        let mut noise_data = self
+        let noise_data = self
             .data
             .as_mut()
             .expect("Expected sufficient data in noise fn warm up for on_bar_update");

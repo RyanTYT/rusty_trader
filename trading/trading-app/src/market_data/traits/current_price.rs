@@ -25,7 +25,6 @@ use crate::{
             },
         },
     },
-    helpers::sync_timeout::timeout,
     market_data::consolidator::{Consolidator, MemoisedConsolidatorFns},
 };
 
@@ -594,6 +593,7 @@ impl Consolidator {
         Err(cum_err.join("\n"))
     }
 
+    #[allow(unused)]
     async fn fetch_dukascopy_day(
         pair: &str, // "GBP/USD"
         side: &str, // "BID" or "ASK"

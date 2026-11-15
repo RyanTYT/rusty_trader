@@ -220,6 +220,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 let mut small_bars: Vec<VecDeque<Bar>> = vec![VecDeque::new(); consumers.len()];
                 // Buffering for FX bars
                 let mut buffer_bars: Vec<HashMap<DateTime<Utc>, HistoricalDataFullKeys>> = vec![HashMap::new(); consumers.len()];
+                #[allow(unused_variables)]
                 let gauge_name: &'static str = Box::leak(
                     format!("{}_strat_bar_rcv_spin_loop", strategy_name).into_boxed_str()
                 );
@@ -370,6 +371,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                     }
 
                     // Send Sentinel values to indicate end of data stream for bucket
+                    #[allow(unused_variables)]
                     let bar_update_name: &'static str = Box::leak(
                         format!("{}_strat_bar_update", strategy.get_name()).into_boxed_str(),
                     );
@@ -453,6 +455,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 
                     let full_bar =
                         HistoricalDataFullKeys::from_inter_repr(&contract, &bid_bar, &ask_bar);
+                    #[allow(unused_variables)]
                     let bar_update_name: &'static str = Box::leak(
                         format!("{}_strat_bar_update", strategy.get_name()).into_boxed_str(),
                     );
@@ -486,19 +489,5 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
             }
         }
         Ok(())
-    }
-}
-
-/// Sleeps until `target`, or returns immediately (logging lateness) if
-/// `target` has already passed — e.g. because a previous cycle's hot
-/// window overran.
-fn sleep_until_system_time(target: SystemTime, strategy: &str) {
-    match target.duration_since(SystemTime::now()) {
-        Ok(duration) => std::thread::sleep(duration),
-        Err(_) => {
-            tracing::warn!(
-                "Missed target - strategy {strategy} is running behind time - too slow (not catching up to 5s intervals)"
-            );
-        }
     }
 }

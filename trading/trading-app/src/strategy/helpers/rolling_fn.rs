@@ -1201,7 +1201,6 @@ impl RollingRoc {
 
 #[derive(Debug, Clone)]
 pub struct RollingDayVwap {
-    window: usize,
     date: Option<NaiveDate>,
     cum_price_vol: Decimal,
     cum_vol: Decimal,
@@ -1209,10 +1208,8 @@ pub struct RollingDayVwap {
 
 impl RollingDayVwap {
     // use max no. bars in day - i.e. usually 78
-    pub fn new(window: usize) -> Self {
-        assert!(window > 0);
+    pub fn new() -> Self {
         Self {
-            window,
             date: None,
             cum_price_vol: dec!(0.0),
             cum_vol: dec!(0.0),

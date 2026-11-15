@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use ibapi::{
@@ -18,7 +18,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Manual {
-    priority: u32,
     name: String,
 }
 
@@ -48,7 +47,6 @@ pub struct Manual {
 impl Manual {
     pub fn new(_pool: PgPool) -> Self {
         Self {
-            priority: 1,
             name: "manual".to_string(),
         }
     }

@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Timelike, Utc};
+#[cfg(feature = "backtest")]
+use chrono::TimeZone;
+use chrono::{DateTime, Timelike, Utc};
 use chrono_tz::{America::New_York, Tz};
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use ordered_float::OrderedFloat;
@@ -107,7 +109,7 @@ impl HistoricalDataFullKeys {
     pub fn get_volume(&self) -> Decimal {
         match self {
             Self::Stock(v) => v.volume,
-            Self::Forex(v) => panic!("Tried to get volume from forex bar"),
+            Self::Forex(_) => panic!("Tried to get volume from forex bar"),
             Self::Options(v) => v.volume,
             Self::DailyStock(v) => v.volume,
         }

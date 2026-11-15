@@ -135,7 +135,7 @@ pub async fn run_program<F, Fut>(
                             );
                         }
                     };
-                };
+                }
 
                 let app_return_state_res = with_gateway_retry("...", 3, |_| async {
                     let app_state: Arc<ApplicationState> = match init_application().await {

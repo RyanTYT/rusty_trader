@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use ibapi::orders::ExecutionData;
 use rust_decimal::dec;
 use sqlx::PgPool;

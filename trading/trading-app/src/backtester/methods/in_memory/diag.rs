@@ -77,7 +77,7 @@ fn csv_writer(
         let handle = (File::create(&path), path);
         let file = match handle {
             (Ok(f), _) => f,
-            ((Err(e), path)) => {
+            (Err(e), path) => {
                 eprintln!("diag: cannot create {path}: {e}");
                 return None;
             }

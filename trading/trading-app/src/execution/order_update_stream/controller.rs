@@ -12,7 +12,7 @@ use ibapi::{
     Client,
     orders::{ExecutionData, OrderUpdate},
 };
-use spmc_ring::ring_buffer::spmc_ring_buffer::{SpmcRingBuffer, SpmcRingBufferProducer};
+use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 use tracing::{info, warn};
 

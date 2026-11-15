@@ -169,7 +169,7 @@ pub fn handle_bar_update_outcome_in_memory(
     // (before the strategy runs — stop/TP/midpoint-close from prior bars)
     let mso = {
         let ny_time = bar.get_time().with_timezone(&chrono_tz::America::New_York);
-        (ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570)
+        ny_time.time().num_seconds_from_midnight() as i32 / 60 - 570
     };
     let strategy = process_resting_orders(
         config, strategy, prices, state, contract, bar, mso, order_id,

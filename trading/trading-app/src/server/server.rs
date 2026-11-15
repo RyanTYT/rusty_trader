@@ -7,7 +7,6 @@ use crate::{
     helpers::sync_timeout::timeout,
     init_app::ApplicationState,
     market_data::traits::{current_price::PriceSupplier, strategy_value::GetStrategyValue},
-    schedule::broker_scheduler::IbkrRegion,
 };
 use axum::{
     Json, Router,

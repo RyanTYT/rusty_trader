@@ -4,15 +4,14 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
-use chrono::Utc;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
+use async_trait::async_trait;
 use ibapi::{
     Client,
     accounts::{PositionUpdateMulti, types::AccountId},
     contracts::SecurityType,
-    orders::{Action, ExecutionData, ExecutionFilter, Executions, Order, OrderStatus},
+    orders::{ExecutionData, ExecutionFilter, Executions, Order, OrderStatus},
     prelude::Contract,
 };
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
@@ -24,7 +23,6 @@ use crate::{
         models::{
             AssetType, CurrentOptionPositionsFullKeys, CurrentStockPositionsFullKeys,
             CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
-            OpenOptionOrdersUpdateKeys, OpenStockOrdersUpdateKeys, OptionType,
         },
         models_crud::{
             current_positions::current_positions::{
@@ -37,10 +35,10 @@ use crate::{
         },
     },
     execution::{fx_backed_up_order::OrderStore, order_update_stream},
-    helpers::contract::{HashContract, LocalContractTypes, get_contract_from, get_local_symbol},
+    helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     init_app::StrategyParameters,
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
-    strategy::strategy::{StrategyDetails, StrategyEnum, StrategyExecutor},
+    strategy::strategy::{StrategyDetails, StrategyExecutor},
 };
 
 pub struct SyncerEngine {

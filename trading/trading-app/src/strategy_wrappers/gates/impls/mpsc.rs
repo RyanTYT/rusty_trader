@@ -163,9 +163,8 @@ impl<T, const CAPACITY: usize, const NUM_PRODUCERS: usize>
             // num_producers: NUM_PRODUCERS,
             producer_idx,
             producer_mask: 1 << producer_idx,
-            full_producer_mask: (1 << NUM_PRODUCERS) - 1,
 
-            _buf: Arc::clone(self),
+            buf: Arc::clone(self),
         }
     }
 }
@@ -179,9 +178,8 @@ pub struct MpscRingBufferProducer<T, const CAPACITY: usize, const NUM_PRODUCERS:
 
     // bitmasks
     producer_mask: u32,
-    full_producer_mask: u32,
 
-    _buf: Arc<MpscRingBuffer<T, CAPACITY, NUM_PRODUCERS>>,
+    buf: Arc<MpscRingBuffer<T, CAPACITY, NUM_PRODUCERS>>,
 }
 
 impl<T, const CAPACITY: usize, const NUM_PRODUCERS: usize>
@@ -248,7 +246,7 @@ impl<T, const CAPACITY: usize, const NUM_PRODUCERS: usize>
 
         // Update data buffer - returning vec of T's if filled
         let new_participation_val = participation_val | self.producer_mask;
-        let active_mask = self._buf.active_mask.load(Ordering::Acquire);
+        let active_mask = self.buf.active_mask.load(Ordering::Acquire);
         if new_participation_val & active_mask == active_mask {
             let mut data = Vec::with_capacity(NUM_PRODUCERS);
             // wrapped in Optional ONLY to let compiler know

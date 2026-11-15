@@ -19,10 +19,7 @@ use crate::{
             HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
         },
     },
-    helpers::{
-        contract::HashContract,
-        sync_timeout::{timeout, timeout_panic},
-    },
+    helpers::{contract::HashContract, sync_timeout::timeout_panic},
     market_data::{
         handler::MarketDataHandler,
         memoise::{AnyMemoized, Memoized},
@@ -39,7 +36,7 @@ const OPTION_CLOSE_TIME: (u32, u32) = (16, 0);
 
 const STOCK_BAR_GRANULARITY_MIN: u32 = 5;
 const OPTION_BAR_GRANULARITY_MIN: u32 = 5;
-const FOREX_BAR_GRANULARITY_MIN: u32 = 1;
+// const FOREX_BAR_GRANULARITY_MIN: u32 = 1;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum MemoisedConsolidatorFns {
@@ -49,9 +46,6 @@ pub enum MemoisedConsolidatorFns {
 }
 
 pub struct Consolidator {
-    // StrategyScheduler
-    // pub(super) contract_coordinator: Arc<IbkrContractScheduler>,
-
     // AccountTracker
     pub pool: PgPool,
     pub(crate) market_data_handler: MarketDataHandler,
@@ -97,8 +91,6 @@ impl Consolidator {
         market_data_handler: MarketDataHandler,
         contract_scheduler: Arc<IbkrContractScheduler>,
     ) -> Self {
-        use moka::sync::CacheBuilder;
-
         let price_ttl = Duration::from_mins(15);
         let ttl = Duration::from_secs(60);
         let mut memoisers: HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>> =

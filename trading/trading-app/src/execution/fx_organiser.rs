@@ -101,7 +101,7 @@ impl OrderEngine {
             // We carry the buy_contract's order here so place_order can submit it as a child
             let mut buy_order = market_order(ibapi::orders::Action::Buy, *qty);
             // buy_order.order_ref = strategy.clone();
-            buy_order.order_ref = format!("{}:{}", strategy.clone(), current_price.to_string());
+            buy_order.order_ref = format!("{}:{}", strategy, current_price.to_string());
             buy_order.transmit = true;
             backed_up_orders.push(OrderIBKR::new(buy_contract.contract.clone(), buy_order, -1));
         }

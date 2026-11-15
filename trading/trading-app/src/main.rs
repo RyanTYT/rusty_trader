@@ -29,6 +29,7 @@ pub mod market_data;
 pub mod schedule;
 pub mod server;
 pub mod strategy;
+pub mod strategy_wrappers;
 
 #[macro_export]
 macro_rules! arc_drop_async {

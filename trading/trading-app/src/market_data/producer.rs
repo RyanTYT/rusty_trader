@@ -24,8 +24,6 @@ const BAR_INTERVAL: Duration = Duration::from_secs(5);
 const HOT_WINDOW: Duration = Duration::from_millis(500);
 const SPIN_BACKOFF: Duration = Duration::ZERO;
 
-const MAX_SUB_TRY_TIMES: usize = 50;
-
 pub struct IbkrBarProducer<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> {
     pub contract: Contract,
     pub what_to_show: WhatToShow,
@@ -123,6 +121,7 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
             // Per-contract gauges — pass format!() directly to hotpath::gauge!; it
             // takes impl Into<Arc<str>> and aggregates by content, so no Box::leak
             // / &'static str cache is needed.
+            #[allow(unused_variables)]
             for (_, p) in subscriptions.iter() {
                 hotpath::gauge!(format!("bar_missed_{}", p.contract.symbol)).set(0.0);
                 hotpath::gauge!(format!("bar_sub_errors_{}", p.contract.symbol)).set(0.0);
@@ -449,7 +448,6 @@ pub fn align_and_prime_schedule_producers<
         }
     }
 
-    let now = Utc::now();
     // Get latest observed bar time
     // - then for all consumers slower than that -> wait for pop bar
     //   (for up to 250ms)

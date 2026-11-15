@@ -12,15 +12,15 @@ pub struct OrderStore {
 impl OrderStore {
     /// Opens or creates the redb database file on disk
     pub fn open() -> Result<Self, String> {
-        let ORDERS_FILE_PATH: String =
+        let orders_file_path: String =
             std::env::var("ORDERS_FILE_PATH").expect("Expected ORDERS_FILE_PATH env var to be set");
 
-        if let Some(parent) = std::path::Path::new(&ORDERS_FILE_PATH).parent() {
+        if let Some(parent) = std::path::Path::new(&orders_file_path).parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create orders directory: {e}"))?;
         }
 
-        let db = Database::create(ORDERS_FILE_PATH)
+        let db = Database::create(orders_file_path)
             .map_err(|e| format!("Failed to open redb database: {e}"))?;
 
         // Initialize the table if it does not already exist

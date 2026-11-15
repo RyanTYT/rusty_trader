@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(feature = "backtest"))]
-use std::{sync::Weak, thread::JoinHandle};
+use std::sync::Weak;
 
 use crate::{
     database::{
@@ -51,7 +51,7 @@ use crate::{
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxAttachments},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
-    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyEnum, StrategyExecutor},
+    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyEnum},
 };
 
 // pub struct StaleOrderEngine {
@@ -124,7 +124,9 @@ impl OrderEngine {
         let client = client_opt.unwrap();
         let order_id = client.next_order_id();
         let strategy_name = order_ibkr.order.order_ref.clone();
+        #[allow(unused_variables)]
         let total_label = StrategyEnum::metric_label(&strategy_name, "order_submit_total");
+        #[allow(unused_variables)]
         let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
         hotpath::measure_block!(total_label, {
             tracing::info!(
