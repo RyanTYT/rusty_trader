@@ -37,6 +37,10 @@ RUN cargo build --locked --release && \
 # Download Playwright Browsers
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-jammy AS browser-helper
 
+# The scraper only launches Chromium; drop Firefox/WebKit to keep the final
+# image slim. Chromium headless shell is required for headless launches.
+RUN rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-*
+
 ################################################################################
 # Runtime Stage
 FROM debian:trixie-slim AS final
@@ -77,8 +81,10 @@ COPY --from=build --chown=appuser:appuser /bin/server /bin/
 # Install npm for playwright; browsers come from the browser-helper stage below.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g playwright@${PLAYWRIGHT_VERSION}
+    apt-get install -y --no-install-recommends nodejs && \
+    npm install -g playwright@${PLAYWRIGHT_VERSION} && \
+    npm cache clean --force && \
+    rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Ensure the appuser has permissions to write to the directory 
 # where Playwright downloads browsers (usually ~/.cache/ms-playwright)

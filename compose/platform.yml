@@ -90,7 +90,6 @@ services:
       - 1.1.1.1
     volumes:
       - scraped_articles:/data/scraped_articles
-      - playwright_cache:/home/appuser/.cache/ms-playwright
     depends_on:
       llm_service:
         condition: service_healthy
@@ -105,9 +104,6 @@ volumes:
     driver: local
   llm_settings:
     name: autotrader_llm_settings
-    driver: local
-  playwright_cache:
-    name: autotrader_playwright_cache
     driver: local
 
 networks:

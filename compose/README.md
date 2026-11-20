@@ -188,7 +188,6 @@ project prefixes:
 - `autotrader_knowledge_base`
 - `autotrader_scraped_articles`
 - `autotrader_llm_settings`
-- `autotrader_playwright_cache`
 - `autotrader_prometheus-data`
 - `autotrader_alertmanager-data`
 - `autotrader_grafana-data`
