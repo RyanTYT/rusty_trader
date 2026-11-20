@@ -104,16 +104,16 @@ fi
 
 BUNDLE="$ROOT/.releases/$TAG"
 
-previous_bundle=""
+previous_bundles=()
 if [[ -d "$ROOT/.releases" ]]; then
     while IFS= read -r dir; do
         [[ "$dir" == "$BUNDLE" ]] && continue
         if [[ -f "$dir/sources.txt" ]]; then
-            previous_bundle="$dir"
-            break
+            previous_bundles+=("$dir")
         fi
     done < <(find "$ROOT/.releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
 fi
+previous_bundle="${previous_bundles[0]:-}"
 
 hash_paths() {
     local path
@@ -229,10 +229,20 @@ build_service() {
         "$ROOT/scripts/build.sh" "$stack" "$target"
 }
 
-previous_source_line() {
+find_reusable_line() {
     local service="$1"
-    [[ -n "$previous_bundle" && -f "$previous_bundle/sources.txt" ]] || return 0
-    awk -F'\t' -v service="$service" '$1 == service { print; exit }' "$previous_bundle/sources.txt"
+    local hash="$2"
+    local dir line
+    for dir in "${previous_bundles[@]}"; do
+        [[ -f "$dir/sources.txt" ]] || continue
+        line="$(awk -F'\t' -v service="$service" -v hash="$hash" \
+            '$1 == service && $2 == hash { print; exit }' "$dir/sources.txt")"
+        if [[ -n "$line" ]]; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done
+    return 1
 }
 
 services=(trading-bot)
@@ -251,7 +261,7 @@ for service in "${services[@]}"; do
 
     prev_hash=""
     prev_image=""
-    prev_line="$(previous_source_line "$service")"
+    prev_line="$(find_reusable_line "$service" "$hash" || true)"
     if [[ -n "$prev_line" ]]; then
         IFS=$'\t' read -r _ prev_hash prev_image <<< "$prev_line"
     fi
