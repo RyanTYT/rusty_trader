@@ -250,6 +250,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 run_remote "mkdir -p '$REMOTE_DIR/releases/$TAG'"
+run_remote "mkdir -p '$REMOTE_DIR/shared/ib-gateway'"
 if [[ "$DRY_RUN" == "1" ]]; then
     printf 'DRY-RUN: rsync %s/ -> %s:%s/releases/%s/\n' "$BUNDLE" "$SSH_TARGET" "$REMOTE_DIR" "$TAG"
 else
@@ -280,7 +281,7 @@ if [[ "$SYNC_ENV" == "1" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "DRY-RUN: would copy transformed $ENV_FILE -> $REMOTE_DIR/shared/.env"
     else
-        rsync -a --chmod=F600 "$tmp_env" "$SSH_TARGET:$REMOTE_DIR/shared/.env"
+        rsync -a --chmod=F600 -e "$RSYNC_SSH" "$tmp_env" "$SSH_TARGET:$REMOTE_DIR/shared/.env"
     fi
 fi
 
@@ -291,7 +292,7 @@ if [[ "$SYNC_IBC" == "1" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "DRY-RUN: would copy $IBC_SOURCE -> $REMOTE_DIR/shared/ib-gateway/config.ini"
     else
-        rsync -a --chmod=F600 "$IBC_SOURCE" "$SSH_TARGET:$REMOTE_DIR/shared/ib-gateway/config.ini"
+        rsync -a --chmod=F600 -e "$RSYNC_SSH" "$IBC_SOURCE" "$SSH_TARGET:$REMOTE_DIR/shared/ib-gateway/config.ini"
     fi
 fi
 
@@ -302,7 +303,7 @@ if [[ -n "$ALERTMANAGER_SOURCE" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "DRY-RUN: would copy $ALERTMANAGER_SOURCE -> $REMOTE_DIR/shared/alertmanager.yml"
     else
-        rsync -a --chmod=F600 "$ALERTMANAGER_SOURCE" "$SSH_TARGET:$REMOTE_DIR/shared/alertmanager.yml"
+        rsync -a --chmod=F600 -e "$RSYNC_SSH" "$ALERTMANAGER_SOURCE" "$SSH_TARGET:$REMOTE_DIR/shared/alertmanager.yml"
     fi
 fi
 
