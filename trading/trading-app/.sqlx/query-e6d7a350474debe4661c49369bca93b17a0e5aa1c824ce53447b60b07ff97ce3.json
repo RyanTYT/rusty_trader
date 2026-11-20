@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT \n                        order_perm_id as \"order_perm_id!\",\n                        order_id as \"order_id!\",\n                        strategy as \"strategy!\",\n                        stock as \"stock!\",\n                        primary_exchange as \"primary_exchange!\",\n                        currency as \"currency!\",\n                        expiry as \"expiry!\",\n                        strike as \"strike!\",\n                        multiplier as \"multiplier!\",\n                        option_type AS \"option_type!:OptionType\",\n                        time as \"time!\",\n                        quantity as \"quantity!\",\n                        executions as \"executions!\",\n                        filled as \"filled!\"\n                    FROM trading.open_option_orders\n                    WHERE strategy = $1;\n                    ",
+  "query": "\n                        SELECT \n                            order_perm_id as \"order_perm_id!\",\n                            order_id as \"order_id!\",\n                            strategy as \"strategy!\",\n                            stock as \"stock!\",\n                            primary_exchange as \"primary_exchange!\",\n                            currency as \"currency!\",\n                            expiry as \"expiry!\",\n                            strike as \"strike!\",\n                            multiplier as \"multiplier!\",\n                            option_type AS \"option_type!:OptionType\",\n                            time as \"time!\",\n                            quantity as \"quantity!\",\n                            parent_order_id as \"parent_order_id!\",\n                            executions as \"executions!\",\n                            filled as \"filled!\"\n                        FROM trading.open_option_orders\n                        WHERE strategy = $1;\n                        ",
   "describe": {
     "columns": [
       {
@@ -75,11 +75,16 @@
       },
       {
         "ordinal": 12,
+        "name": "parent_order_id!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
         "name": "executions!",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "filled!",
         "type_info": "Float8"
       }
@@ -103,8 +108,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "2e111bac16c89c73f2bad37159ab1ce9d730c39c0411cc35e76a6cbc1454634a"
+  "hash": "e6d7a350474debe4661c49369bca93b17a0e5aa1c824ce53447b60b07ff97ce3"
 }

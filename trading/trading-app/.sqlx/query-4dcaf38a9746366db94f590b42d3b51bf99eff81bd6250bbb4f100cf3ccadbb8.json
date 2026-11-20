@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT \n                        order_perm_id as \"order_perm_id!\",\n                        order_id as \"order_id!\",\n                        strategy as \"strategy!\",\n                        stock as \"stock!\",\n                        primary_exchange as \"primary_exchange!\",\n                        currency as \"currency!\",\n                        time as \"time!\",\n                        quantity as \"quantity!\",\n                        executions as \"executions!\",\n                        filled as \"filled!\"\n                    FROM trading.open_stock_orders\n                    WHERE strategy = $1;\n                    ",
+  "query": "\n                        SELECT \n                            order_perm_id as \"order_perm_id!\",\n                            order_id as \"order_id!\",\n                            strategy as \"strategy!\",\n                            stock as \"stock!\",\n                            primary_exchange as \"primary_exchange!\",\n                            currency as \"currency!\",\n                            time as \"time!\",\n                            quantity as \"quantity!\",\n                            parent_order_id as \"parent_order_id!\",\n                            executions as \"executions!\",\n                            filled as \"filled!\"\n                        FROM trading.open_stock_orders\n                        WHERE strategy = $1;\n                        ",
   "describe": {
     "columns": [
       {
@@ -45,11 +45,16 @@
       },
       {
         "ordinal": 8,
+        "name": "parent_order_id!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
         "name": "executions!",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "filled!",
         "type_info": "Float8"
       }
@@ -69,8 +74,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "15c84a100ea7d6717b68225f6bf251e014d45cd2fd89cba92a494c8b038addcb"
+  "hash": "4dcaf38a9746366db94f590b42d3b51bf99eff81bd6250bbb4f100cf3ccadbb8"
 }

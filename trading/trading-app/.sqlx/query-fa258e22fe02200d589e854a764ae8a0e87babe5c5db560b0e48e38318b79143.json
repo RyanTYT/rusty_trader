@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT \n                        stock as \"stock!\", \n                        primary_exchange as \"primary_exchange!\", \n                        currency as \"currency!\", \n                        strategy as \"strategy!\", \n                        quantity as \"quantity!\", \n                        avg_price as \"avg_price!\",\n                        last_updated as \"last_updated!\"\n                    FROM trading.current_stock_positions\n                    WHERE strategy = $1;\n                    ",
+  "query": "\n                        SELECT \n                            stock as \"stock!\", \n                            primary_exchange as \"primary_exchange!\", \n                            currency as \"currency!\", \n                            strategy as \"strategy!\", \n                            quantity as \"quantity!\", \n                            avg_price as \"avg_price!\",\n                            last_updated as \"last_updated!\"\n                        FROM trading.current_stock_positions\n                        WHERE strategy = $1;\n                        ",
   "describe": {
     "columns": [
       {
@@ -54,5 +54,5 @@
       false
     ]
   },
-  "hash": "44cd66a5a2e98feee920c5ea35b55eae144f667130de6091125ff0cff37c138d"
+  "hash": "fa258e22fe02200d589e854a764ae8a0e87babe5c5db560b0e48e38318b79143"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                    SELECT \n                        stock as \"stock!\", \n                        primary_exchange as \"primary_exchange!\", \n                        currency as \"currency!\", \n                        expiry as \"expiry!\",\n                        strike as \"strike!\",\n                        multiplier as \"multiplier!\",\n                        option_type as \"option_type!:OptionType\",\n                        strategy as \"strategy!\", \n                        quantity as \"quantity!\", \n                        avg_price as \"avg_price!\",\n                        last_updated as \"last_updated!\"\n                    FROM trading.current_option_positions\n                    WHERE strategy = $1;\n                    ",
+  "query": "\n                        SELECT \n                            stock as \"stock!\", \n                            primary_exchange as \"primary_exchange!\", \n                            currency as \"currency!\", \n                            expiry as \"expiry!\",\n                            strike as \"strike!\",\n                            multiplier as \"multiplier!\",\n                            option_type as \"option_type!:OptionType\",\n                            strategy as \"strategy!\", \n                            quantity as \"quantity!\", \n                            avg_price as \"avg_price!\",\n                            last_updated as \"last_updated!\"\n                        FROM trading.current_option_positions\n                        WHERE strategy = $1;\n                        ",
   "describe": {
     "columns": [
       {
@@ -88,5 +88,5 @@
       false
     ]
   },
-  "hash": "e9221c8c866b438ebaf53443ac0d36a371d259203efaceef03b4b0078e535c93"
+  "hash": "1357f640f5740c43c0837913efe0980184ccfa52fb7c17da0c3af27afab62432"
 }
