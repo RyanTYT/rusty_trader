@@ -19,6 +19,9 @@ SKIP_BUILD=0
 DRY_RUN=0
 NO_HEALTH=0
 ALLOW_DIRTY=0
+HEALTH_OK=0
+KEEP_IMAGES="${KEEP_IMAGES:-3}"
+PRUNE_IMAGES="${PRUNE_IMAGES:-ask}"
 
 usage() {
     cat <<'EOF'
@@ -39,12 +42,15 @@ Options:
   --no-sync-env         Do not copy/replace prod shared/.env
   --no-sync-ibc         Do not copy/replace prod shared/ib-gateway/config.ini
   --no-health           Skip the HTTP health wait
+  --keep-images N       Keep the newest N release images per service (default: 3)
+  --prune-images        Delete older release images without asking
+  --no-prune-images     Keep all release images
   --allow-dirty         Pass --allow-dirty to release.sh
   --dry-run             Print remote actions without changing prod
   -h, --help            Show this help
 
 Environment overrides: SSH_TARGET, SSH_KEY, REMOTE_DIR, ENV_FILE,
-IBC_CONFIG_SOURCE, HOTPATH_CONSOLE, TAG.
+IBC_CONFIG_SOURCE, HOTPATH_CONSOLE, TAG, KEEP_IMAGES, PRUNE_IMAGES.
 EOF
 }
 
@@ -94,6 +100,19 @@ while [[ $# -gt 0 ]]; do
             NO_HEALTH=1
             shift
             ;;
+        --keep-images)
+            [[ $# -ge 2 ]] || { usage; exit 1; }
+            KEEP_IMAGES="$2"
+            shift 2
+            ;;
+        --prune-images)
+            PRUNE_IMAGES=yes
+            shift
+            ;;
+        --no-prune-images)
+            PRUNE_IMAGES=no
+            shift
+            ;;
         --allow-dirty)
             ALLOW_DIRTY=1
             shift
@@ -113,6 +132,18 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if ! [[ "$KEEP_IMAGES" =~ ^[0-9]+$ ]] || [[ "$KEEP_IMAGES" -lt 1 ]]; then
+    echo "KEEP_IMAGES must be a positive integer." >&2
+    exit 1
+fi
+case "$PRUNE_IMAGES" in
+    ask|yes|no) ;;
+    *)
+        echo "PRUNE_IMAGES must be ask, yes, or no." >&2
+        exit 1
+        ;;
+esac
 
 if [[ -z "$SSH_KEY" ]]; then
     for candidate in "$HOME/.ssh/autotrader_deploy" "$HOME/.ssh/autotrader-deploy"; do
@@ -330,6 +361,7 @@ if [[ "$NO_HEALTH" == "0" && "$DRY_RUN" == "0" ]]; then
             remote "curl -fsS --max-time 3 http://127.0.0.1:3000/check-health >/dev/null 2>&1" && backend_ok=1 || true
             if [[ "$trading_ok" == "1" && "$backend_ok" == "1" ]]; then
                 echo "Health checks passed."
+                HEALTH_OK=1
                 break
             fi
             sleep 5
@@ -340,7 +372,53 @@ if [[ "$NO_HEALTH" == "0" && "$DRY_RUN" == "0" ]]; then
         fi
     else
         echo "curl not found on prod; skipping HTTP health checks."
+        HEALTH_OK=1
     fi
+fi
+
+prune_old_images() {
+    [[ "$DRY_RUN" == "1" || "$PRUNE_IMAGES" == "no" ]] && return
+
+    local list image reply
+    list="$(remote "sudo -n docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^rusty_trader/[^:]+:[0-9]{8}-[0-9]{4}-[0-9a-f]+$' | sort -t: -k1,1 -k2,2r | awk -F: -v keep=$KEEP_IMAGES '{ count[\$1]++; if (count[\$1] > keep) print }'")"
+    [[ -n "$list" ]] || return
+
+    echo
+    echo "Old release images (keeping the newest $KEEP_IMAGES per service):"
+    while IFS= read -r image; do
+        [[ -n "$image" ]] && echo "  $image"
+    done <<< "$list"
+
+    if [[ "$PRUNE_IMAGES" == "ask" ]]; then
+        if [[ -r /dev/tty ]]; then
+            read -r -p "Remove these images? [Y/n] " reply </dev/tty || reply=""
+        else
+            echo "No TTY available; keeping old images. Use --prune-images to remove them."
+            return
+        fi
+        case "${reply:-y}" in
+            y|Y|yes|YES) ;;
+            *)
+                echo "Keeping old images."
+                return
+                ;;
+        esac
+    fi
+
+    while IFS= read -r image; do
+        [[ -n "$image" ]] || continue
+        if remote "sudo -n docker image rm '$image'" >/dev/null 2>&1; then
+            echo "Removed $image"
+        else
+            echo "Skipped $image (in use or already missing)"
+        fi
+    done <<< "$list"
+}
+
+if [[ "$NO_HEALTH" == "1" || "$HEALTH_OK" == "1" ]]; then
+    prune_old_images
+else
+    echo "Health checks did not pass; keeping old images for rollback."
 fi
 
 if [[ "$DRY_RUN" == "1" ]]; then

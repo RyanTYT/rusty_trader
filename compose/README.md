@@ -80,6 +80,20 @@ copy with `IMAGE_TAG` forced to the release tag and `IBC_CONFIG_PATH` forced to
 `scripts/deploy.sh --without-console`; for manual starts use
 `HOTPATH_CONSOLE=0 scripts/up.sh trading`.
 
+After a successful deploy, `deploy.sh` keeps the newest **3 release tags per
+service** and lists older tags before removing them. The prompt defaults to
+removal; press `n` to keep them. Control it with:
+
+```bash
+scripts/deploy.sh --keep-images 5
+scripts/deploy.sh --prune-images      # no prompt
+scripts/deploy.sh --no-prune-images   # keep everything
+```
+
+The `latest` tags and the release directories under `/opt/autotrader/releases/`
+are not removed automatically. `rollback.sh` can only roll back to a release
+whose images are still retained.
+
 ## Start order
 
 Cross-stack `depends_on` is not possible in Compose, so start in this order:
