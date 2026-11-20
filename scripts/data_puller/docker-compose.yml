@@ -2,25 +2,31 @@
 # DATA ACQUISITION STACK ONLY
 #
 # Two services — the IB Gateway (via IBC, paper) and the parquet puller.
-# Everything app-level (trading-bot, db, monitoring, scraper, ...) lives in the
-# ROOT docker-compose.yml; the pre-2026-11-07 all-services fork that used to
-# live here was drift from it and is retired.
+# This stack is deliberately independent of the application stacks under
+# compose/ (trading, platform, monitoring, tests). The pre-2026-11-07
+# all-services fork that used to live here was drift and is retired.
+#
+# Port note: this stack publishes 127.0.0.1:4002. Do not run it at the same
+# time as compose/trading.yml, which publishes the same host port.
 #
 #        docker compose -f scripts/data_puller/docker-compose.yml run --rm pull-1min          (extend 5-min, full_universe)
 #        docker compose -f scripts/data_puller/docker-compose.yml run --rm -e TF="1 min" -e MODE=full pull-1min
+#
+# Runtime file: it only uses prebuilt images. Build them on the dev VM with:
+#   docker compose -f scripts/data_puller/docker-compose.yml \
+#     -f scripts/data_puller/compose.build.yml build
 #
 # Build contexts are the APP root: `context: ../..` resolves relative to this
 # file (scripts/data_puller/), so both Dockerfiles' COPY sources line up
 # (scripts/data_puller/..., trading/trading-app/...).
 # ═══════════════════════════════════════════════════════════════════════════
+name: autotrader-data
+
 services:
   tws:
-    image: ib-gateway-ibc
+    image: rusty_trader/ib-gateway-ibc:${IMAGE_TAG:-latest}
     platform: linux/amd64
     restart: "no"
-    build:
-      context: ../..
-      dockerfile: infra/ib-gateway/Dockerfile.ibc
     # NOT network_mode: host -- on Docker Desktop for macOS the host network
     # namespace is the docker VM's, not the Mac's, so the gateway would be
     # unreachable from pull_bars.py running on the Mac (hardcoded
@@ -46,10 +52,8 @@ services:
   # OUTPUT parquet. Resumable full/extend/repair (skips covered chunks).
   # The image ENTRYPOINT is pull_bars.py.
   pull-1min:
+    image: rusty_trader/data-puller:${IMAGE_TAG:-latest}
     restart: "no"
-    build:
-      context: ../..
-      dockerfile: scripts/data_puller/Dockerfile.pull_1min
     # Shares the tws container's netstack so pull_bars' HARDCODED
     # 127.0.0.1:4002 hits the gateway at its verified trusted address
     # (container-local). Host-side connects through a docker proxy whose

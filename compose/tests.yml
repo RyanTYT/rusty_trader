@@ -1,0 +1,115 @@
+# Test stack: disposable database + test/backtest/optimizer images.
+#
+# This is dev/CI only. It builds inline because it is never deployed, and it
+# uses its own isolated network and volume so it cannot touch the trading stack.
+#
+#   docker compose --env-file .env -f compose/tests.yml build
+#   docker compose --env-file .env -f compose/tests.yml run --rm test-trading-bot
+#   docker compose --env-file .env -f compose/tests.yml run --rm backtester
+#   docker compose --env-file .env -f compose/tests.yml run --rm optimizer
+name: autotrader-tests
+
+services:
+  test-db:
+    image: timescale/timescaledb:latest-pg17
+    restart: "no"
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PW}
+      - POSTGRES_DB=${DB_DB}
+    ports:
+      - 5433:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  test-trading-bot:
+    image: rusty_trader/trading-bot-test:${IMAGE_TAG:-latest}
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: trading/trading-app/Dockerfile.test
+    platform: linux/amd64
+    volumes:
+      - test-orders-data:/data/orders
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - DATABASE_HOST=test-db
+      - DB_USERNAME=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
+      - DISPLAY=:99
+      - SERVER_URL=0.0.0.0:8000
+      - SQLX_OFFLINE=true
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+      - TRADING_TYPE=paper
+      - ORDERS_FILE_PATH=/data/orders/orders.redb
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+  # One-shot backtest: migrations + data loader + replayer + results.
+  # Writes backtest_results.json to ../data/backtest-results on the host.
+  backtester:
+    image: rusty_trader/backtester:${IMAGE_TAG:-latest}
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: trading/trading-app/Dockerfile.backtest
+    platform: linux/amd64
+    volumes:
+      - ../data/backtest-results:/data
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - TEST_TRADING_DB_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - DATABASE_HOST=test-db
+      - DB_USER=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
+      - DISPLAY=:99
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+  optimizer:
+    image: rusty_trader/optimizer:${IMAGE_TAG:-latest}
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: trading/optimizer/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ../data/optimizer-runs:/data
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@test-db:5432/${DB_DB}
+      - DATABASE_HOST=test-db
+      - DB_USER=${DB_USER}
+      - DB_PW=${DB_PW}
+      - DB_DB=${DB_DB}
+      - DISPLAY=:99
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+volumes:
+  test-orders-data:
+    name: autotrader_tests_orders
+    driver: local
+
+networks:
+  default:
+    name: autotrader-tests

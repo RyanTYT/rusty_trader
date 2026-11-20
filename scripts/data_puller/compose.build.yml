@@ -1,0 +1,15 @@
+# Dev-only build definitions for the data acquisition stack:
+#
+#   docker compose -f scripts/data_puller/docker-compose.yml \
+#     -f scripts/data_puller/compose.build.yml build
+
+services:
+  tws:
+    build:
+      context: ../..
+      dockerfile: infra/ib-gateway/Dockerfile.ibc
+
+  pull-1min:
+    build:
+      context: ../..
+      dockerfile: scripts/data_puller/Dockerfile.pull_1min

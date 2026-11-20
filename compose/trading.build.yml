@@ -1,0 +1,14 @@
+# Dev-only build overlay for compose/trading.yml.
+#
+#   docker compose --env-file .env -f compose/trading.yml -f compose/trading.build.yml build
+#
+# Production never includes this file.
+services:
+  trading-bot:
+    build:
+      context: ..
+      dockerfile: trading/trading-app/Dockerfile
+
+  hotpath-console:
+    build:
+      context: ../api/hotpath-console

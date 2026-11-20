@@ -1,17 +1,30 @@
 # data_puller — IBKR bar-data acquisition layer
 
+This is a standalone stack. The application stacks (trading, platform,
+monitoring, tests) live in `compose/`; do not merge this one into them.
+
 Production puller: **`pull_bars.py`** — ONE script, any IBKR bar size,
 three modes (full/extend/repair), universe loaded from a JSON file.
 
 ## HOW TO RUN (the verified-correct lane)
 
+Commands below run from the repo root. Add `--env-file .env` if you want the
+root env file's `IMAGE_TAG`; otherwise the images default to `latest`.
+On the dev VM, prefix raw `docker` commands with `sudo -n` when `docker info`
+fails; `scripts/build.sh data` and `scripts/up.sh data` detect this themselves.
+
 On Docker Desktop/mac the pull RUNS INSIDE THE GATEWAY'S NETSTACK. Host-side
 connects to 127.0.0.1:4002 are a verified dead end (docker-proxy peer IP fails
 the gateway trust check no matter what the config trusts). Do not debug it.
 
+    # 0. build the images once on the dev VM (prod uses the prebuilt images):
+    docker compose -f scripts/data_puller/docker-compose.yml \
+        -f scripts/data_puller/compose.build.yml build
+
     # 1. up + wait for the entrypoint logs to reach this line:
     docker compose -f scripts/data_puller/docker-compose.yml up -d tws
-    docker logs -f scripts-tws-1        # wait for: "gateway ready -- running: sleep infinity"
+    docker compose -f scripts/data_puller/docker-compose.yml logs -f tws
+    #    wait for: "gateway ready -- running: sleep infinity"
     #    (nc succeeding is NOT readiness — the proxy binds the port before the
     #     gateway is logged in; only the logs line is)
 
@@ -22,11 +35,14 @@ the gateway trust check no matter what the config trusts). Do not debug it.
     #    FIRST-EVER run: -e MODE=full   (extend refuses a missing output file)
     #    other env overrides: TF, START_DATE, END_DATE, CHUNK_DAYS, ASSETS, IB_CLIENT_ID...
 
-    # 2b. MANUAL lane (exec inside the ridge):
-    docker cp scripts/data_puller/pull_bars.py scripts-tws-1:/app/
-    docker exec -w /app scripts-tws-1 python3 /app/pull_bars.py --mode full --assets SPY \
+    # 2b. MANUAL lane (exec inside the gateway container):
+    docker compose -f scripts/data_puller/docker-compose.yml \
+        cp scripts/data_puller/pull_bars.py tws:/app/
+    docker compose -f scripts/data_puller/docker-compose.yml exec -w /app tws \
+        python3 /app/pull_bars.py --mode full --assets SPY \
         --start 2026-11-04 --end 2026-11-07 --out /tmp/verify.parquet
-    docker cp scripts-tws-1:/tmp/verify.parquet .
+    docker compose -f scripts/data_puller/docker-compose.yml \
+        cp tws:/tmp/verify.parquet .
 
 The authoritative, always-current version of this recipe + the traps it cost is
 the ██-boxed "HOW TO RUN — READ THIS FIRST" section at the top of

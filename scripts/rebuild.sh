@@ -1,39 +1,48 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <service_name> [--no-cache]"
-    exit 1
-fi
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-SERVICE_NAME=""
+usage() {
+    cat <<'EOF'
+Usage: scripts/rebuild.sh <service> [--no-cache]
+Services: trading-bot, db, hotpath-console,
+          backend, llm_service, scraper,
+          test-trading-bot, test-db, backtester, optimizer,
+          prometheus, alertmanager, grafana, autoheal,
+          tws, pull-1min
+EOF
+}
+
+SERVICE="${1:-}"
+[[ -n "$SERVICE" ]] || { usage; exit 1; }
+shift
+
 NO_CACHE=""
-
 for arg in "$@"; do
     case "$arg" in
-        --no-cache)
-            NO_CACHE="--no-cache"
-            ;;
-        *)
-            if [[ -z "$SERVICE_NAME" ]]; then
-                SERVICE_NAME="$arg"
-            else
-                echo "Unexpected argument: $arg"
-                exit 1
-            fi
-            ;;
+        --no-cache) NO_CACHE="--no-cache" ;;
+        *) echo "Unexpected argument: $arg" >&2; exit 1 ;;
     esac
 done
 
-if [[ -z "$SERVICE_NAME" ]]; then
-    echo "Error: service name is required"
-    exit 1
+case "$SERVICE" in
+    db|trading-bot|hotpath-console) STACK=trading ;;
+    test-db|test-trading-bot|backtester|optimizer) STACK=tests ;;
+    backend|llm_service|scraper) STACK=platform ;;
+    prometheus|alertmanager|grafana|autoheal) STACK=monitoring ;;
+    tws|pull-1min) STACK=data ;;
+    *)
+        echo "Unknown service: $SERVICE" >&2
+        usage
+        exit 1
+        ;;
+esac
+
+if [[ "$STACK" != monitoring && "$SERVICE" != db && "$SERVICE" != test-db ]]; then
+    build_args=("$STACK" "$SERVICE")
+    [[ -n "$NO_CACHE" ]] && build_args+=("$NO_CACHE")
+    "$ROOT/scripts/build.sh" "${build_args[@]}"
 fi
-
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-
-docker-compose stop "$SERVICE_NAME"
-docker-compose build $NO_CACHE "$SERVICE_NAME"
-docker-compose up "$SERVICE_NAME"
+"$ROOT/scripts/up.sh" "$STACK" "$SERVICE"

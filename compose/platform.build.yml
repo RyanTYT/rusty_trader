@@ -1,0 +1,20 @@
+# Dev-only build overlay for compose/platform.yml.
+#
+#   docker compose --env-file .env -f compose/platform.yml -f compose/platform.build.yml build
+#
+# Production never includes this file.
+services:
+  backend:
+    build:
+      context: ../api/backend
+      dockerfile: Dockerfile
+
+  llm_service:
+    build:
+      context: ../ai/llm_service
+      dockerfile: Dockerfile
+
+  scraper:
+    build:
+      context: ../ai/scraper
+      dockerfile: Dockerfile

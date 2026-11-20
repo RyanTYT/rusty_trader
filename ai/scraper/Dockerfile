@@ -1,5 +1,6 @@
 ARG RUST_VERSION=1.92.0
 ARG APP_NAME=news-scraper
+ARG PLAYWRIGHT_VERSION=1.59.1
 
 ################################################################################
 # Build Stage
@@ -15,6 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# playwright-rs 0.12.3's build.rs pins a driver URL that now returns 404.
+# Compile with its documented docs.rs mode; at runtime the crate falls back to
+# the globally installed npm driver below.
+ENV DOCS_RS=1
+
 # 1. Dummy build for dependency caching
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
@@ -29,11 +35,12 @@ RUN cargo build --locked --release && \
 
 ################################################################################
 # Download Playwright Browsers
-FROM mcr.microsoft.com/playwright:v1.43.0-jammy AS browser-helper
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-jammy AS browser-helper
 
 ################################################################################
 # Runtime Stage
 FROM debian:trixie-slim AS final
+ARG PLAYWRIGHT_VERSION
 
 # Install runtime dependencies
 # We add the libraries required to run Chromium in headless mode
@@ -71,7 +78,7 @@ COPY --from=build --chown=appuser:appuser /bin/server /bin/
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g playwright@1.43.0
+    npm install -g playwright@${PLAYWRIGHT_VERSION}
 
 # Ensure the appuser has permissions to write to the directory 
 # where Playwright downloads browsers (usually ~/.cache/ms-playwright)

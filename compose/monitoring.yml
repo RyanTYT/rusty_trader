@@ -1,0 +1,91 @@
+# Monitoring stack: Prometheus, Alertmanager, Grafana, and the autoheal
+# sidecar. Runtime only; there is nothing to build here.
+#
+# Start the trading stack first: Prometheus scrapes trading-bot:6772 on the
+# shared "autotrader" network.
+#
+#   docker compose --env-file .env -f compose/monitoring.yml up -d
+#
+# Alertmanager uses the example config unless you set ALERTMANAGER_CONFIG to a
+# real (gitignored) infra/alertmanager/alertmanager.yml.
+name: autotrader-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ../infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../infra/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: always
+    ports:
+      - 9093:9093
+    volumes:
+      - ${ALERTMANAGER_CONFIG:-../infra/alertmanager/alertmanager.example.yml}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: always
+    ports:
+      - 3001:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=none
+      - GF_SERVER_CSP_CONTENT_SECURITY_POLICY=frame-ancestors 'self' http://localhost:1420 tauri://localhost
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: always
+    network_mode: none
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=300
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=20
+      - TZ=Asia/Singapore
+    deploy:
+      replicas: 1
+
+volumes:
+  alertmanager-data:
+    name: autotrader_alertmanager-data
+    driver: local
+  grafana-data:
+    name: autotrader_grafana-data
+    driver: local
+  prometheus-data:
+    name: autotrader_prometheus-data
+    driver: local
+
+networks:
+  default:
+    name: autotrader
+    external: true

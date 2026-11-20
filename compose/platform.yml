@@ -1,0 +1,116 @@
+# Platform stack: backend API, LLM orchestration, and scraper.
+#
+# Runtime contract only: this file references prebuilt images and never builds.
+# It expects the trading stack to be running first so "db" resolves on the
+# shared "autotrader" network.
+#
+# Dev build:
+#   docker compose --env-file .env -f compose/platform.yml -f compose/platform.build.yml build
+#
+# Start:
+#   docker compose --env-file .env -f compose/platform.yml up -d
+name: autotrader-platform
+
+services:
+  backend:
+    image: rusty_trader/backend:${IMAGE_TAG:-latest}
+    restart: always
+    platform: linux/amd64
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PW}@db:5432/${DB_DB}
+      - BEARER_TOKEN=${BACKEND_BEARER_TOKEN}
+      - RUST_BACKTRACE=full
+      - LLM_SERVICE_URL=http://llm_service:8001
+      - TRADING_BOT_URL=${TRADING_BOT_URL}
+      - PROMETHEUS_URL=http://prometheus:9090
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+    ports:
+      - 3000:3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--tries=1",
+          "-qO-",
+          "http://localhost:3000/check-health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      llm_service:
+        condition: service_healthy
+    volumes:
+      - knowledge_base:/data/knowledge_base
+      - scraped_articles:/data/scraped_articles
+
+  llm_service:
+    image: rusty_trader/llm-service:${IMAGE_TAG:-latest}
+    ports:
+      - 8001:8001 # host access for local debugging
+    environment:
+      - KNOWLEDGE_BASE_PATH=/data/knowledge_base
+      - ARTICLES_PATH=/data/scraped_articles
+      - SETTINGS_PATH=/data/settings
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - BACKEND_URL=http://backend:3000
+      - BEARER_TOKEN=${BACKEND_BEARER_TOKEN}
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+    volumes:
+      - knowledge_base:/data/knowledge_base
+      - scraped_articles:/data/scraped_articles
+      - llm_settings:/data/settings
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  scraper:
+    image: rusty_trader/scraper:${IMAGE_TAG:-latest}
+    shm_size: "2gb"
+    environment:
+      - ARTICLES_PATH=/data/scraped_articles
+      - LLM_SERVICE_URL=http://llm_service:8001
+      - BEARER_TOKEN=${BACKEND_BEARER_TOKEN}
+      - PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - scraped_articles:/data/scraped_articles
+      - playwright_cache:/home/appuser/.cache/ms-playwright
+    depends_on:
+      llm_service:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  knowledge_base:
+    name: autotrader_knowledge_base
+    driver: local
+  scraped_articles:
+    name: autotrader_scraped_articles
+    driver: local
+  llm_settings:
+    name: autotrader_llm_settings
+    driver: local
+  playwright_cache:
+    name: autotrader_playwright_cache
+    driver: local
+
+networks:
+  default:
+    name: autotrader
+    external: true

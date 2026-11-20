@@ -1,4 +1,5 @@
-#!/bin/bash
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-docker-compose build --no-cache backend
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$ROOT/scripts/build.sh" platform backend --no-cache
