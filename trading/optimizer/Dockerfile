@@ -9,7 +9,7 @@
 # artifacts) + optimizer/.
 #
 # NB: `IBCLinux-3.21.2.zip` is gitignored (local) — must be present at
-# `trading/trading-app/IBCLinux-3.21.2.zip` at build time (same as
+# `infra/ib-gateway/IBCLinux-3.21.2.zip` at build time (same as
 # Dockerfile.backtest).
 ################################################################################
 
@@ -109,14 +109,14 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
 # Install IBC (IB Gateway controller) — needed for the data-load step.
 # with_gateway_retry (inside the optimize binary) boots IBC to seed
 # market_data.historical_data; if IBC is absent, the loader falls back to Alpaca.
-COPY trading/trading-app/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+COPY infra/ib-gateway/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
 RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/; \
     chown -R root /IBCLinux-3.21.2/; \
     chmod -u+x -R /IBCLinux-3.21.2/
 # The macOS config.ini + ibcstart.sh override the Linux IBC's (same workaround
 # as Dockerfile.backtest).
-COPY trading/trading-app/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
-COPY trading/trading-app/IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
+COPY infra/ib-gateway/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY infra/ib-gateway/IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
 RUN chmod -u+x -R /IBCLinux-3.21.2/
 
 # Copy the optimize binary + entrypoint.

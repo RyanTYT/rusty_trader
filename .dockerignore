@@ -1,36 +1,16 @@
-# Large data / build artifacts — NEVER send to the Docker daemon (~66GB total).
-# The Dockerfile.ibc only needs: infra/ib-gateway/entrypoint-ibc.sh,
-# trading/trading-app/IBCLinux-3.21.2.zip, trading/trading-app/IBCMacos-3.20.0/config.ini
-# — none of which are in the dirs below.
-
-# 43GB — GDELT raw data + research outputs
-research/
-# 20GB — Rust build artifacts
-trading/trading-app/target/
-**/target/
-# 1.4GB — backtest results, postgres data
-data/
-# 1.5GB — Python venv
-.venv/
-# git
-.git/
-# IBC logs (regenerated at runtime)
-trading/trading-app/IBCMacos-3.20.0/logs/
-
-# misc large / junk
-**/node_modules/
-**/__pycache__/
-*.pyc
-*.parquet
-.DS_Store
-~
-default.profraw
-output.log
-jts.ini
-opt_logs.txt
-bot.txt
-holdout_logs.txt
-optimizer_logs.txt
-
-# generated stratlab analysis artifacts (the orb_*.py outputs)
-stratlab/*.parquet
+# Context hygiene for repo-root builds (trading, optimizer, ib-gateway images).
+# Keep the gateway installer + IBC assets; drop the unused TWS installer.
+.git
+.gitmodules
+.gitignore
+.opencode
+**/.env
+**/secrets
+**/target
+target
+**/.venv
+**/node_modules
+**/__pycache__
+stratlab
+data
+infra/ib-gateway/tws-stable-standalone-linux-x64.sh

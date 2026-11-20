@@ -7,8 +7,8 @@
 # same 281 MB standalone installer used by infra/ib-gateway/Dockerfile (the
 # VNC/X11 variant), so the offline install path is already proven on this box.
 #
-# Build context MUST be the repository root, since it copies from both
-# infra/ib-gateway/ and trading/trading-app/:
+# Build context MUST be the repository root (it also copies scripts/ and
+# trading source); the IBC assets themselves live here under infra/ib-gateway/:
 #
 #   docker build --platform linux/amd64 \
 #     -f infra/ib-gateway/Dockerfile.ibc -t ib-gateway-ibc .
@@ -49,13 +49,13 @@ RUN chmod +x /home/tws/ibgw.sh \
 # ── IBC ──────────────────────────────────────────────────────────────────────
 # Same IBC build + config the trading-app images use, so credentials and IBC
 # settings stay in one place.
-COPY trading/trading-app/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
+COPY infra/ib-gateway/IBCLinux-3.21.2.zip /IBCLinux-3.21.2.zip
 RUN unzip /IBCLinux-3.21.2.zip -d /IBCLinux-3.21.2/ \
  && rm -f /IBCLinux-3.21.2.zip \
  && chmod -u+x -R /IBCLinux-3.21.2/
 
-COPY trading/trading-app/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
-COPY trading/trading-app/IBCMacos-3.20.0/scripts/ibcstart.sh \
+COPY infra/ib-gateway/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
+COPY infra/ib-gateway/IBCMacos-3.20.0/scripts/ibcstart.sh \
      /IBCLinux-3.21.2/scripts/ibcstart.sh
 RUN chmod -u+x -R /IBCLinux-3.21.2/
 
