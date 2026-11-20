@@ -119,6 +119,12 @@ COPY infra/ib-gateway/IBCMacos-3.20.0/config.ini /IBCLinux-3.21.2/config.ini
 COPY infra/ib-gateway/IBCMacos-3.20.0/scripts/ibcstart.sh /IBCLinux-3.21.2/scripts/ibcstart.sh
 RUN chmod -u+x -R /IBCLinux-3.21.2/
 
+COPY infra/ib-gateway/ibgateway-stable-standalone-linux-x64.sh /tmp/ibgw.sh
+RUN chmod +x /tmp/ibgw.sh \
+ && /tmp/ibgw.sh -q -dir /home/tws/ibgateway/1030/ \
+ && rm -f /tmp/ibgw.sh \
+ && test -d /home/tws/ibgateway/1030/jars
+
 # Copy the optimize binary + entrypoint.
 COPY --from=build /bin/optimize /bin/optimize
 COPY trading/optimizer/entrypoint-optimize.sh /entrypoint-optimize.sh

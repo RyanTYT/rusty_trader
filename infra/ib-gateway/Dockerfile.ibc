@@ -1,11 +1,8 @@
 # IB Gateway + IBC, for headless (Xvfb) use.
 #
-# This fills the gap in Dockerfile.backtest / Dockerfile: those images install
-# IBC but never install IB Gateway itself, and `ibcstart.sh` hard-fails with
-# E_TWS_VERSION_NOT_INSTALLED unless it finds
-# `${tws_path}/ibgateway/${tws_version}/jars`. The Gateway installer is the
-# same 281 MB standalone installer used by infra/ib-gateway/Dockerfile (the
-# VNC/X11 variant), so the offline install path is already proven on this box.
+# The data-puller image includes IB Gateway, IBC, and the Python puller, so
+# `ibcstart.sh` finds `${tws_path}/ibgateway/${tws_version}/jars`. The Gateway
+# installer is the same one used by the trading-app images.
 #
 # Build context MUST be the repository root (it also copies scripts/ and
 # trading source); the IBC assets themselves live here under infra/ib-gateway/:
@@ -15,7 +12,7 @@
 #
 # --platform linux/amd64 is MANDATORY: the Gateway installer is a linux-x64
 # install4j binary, so an arm64 image (the default on Apple Silicon) cannot
-# install it. The root docker-compose.yml already pins linux/amd64 for `tws`
+# install it. The data-puller compose pins linux/amd64 for its `tws` service
 # for the same reason.
 #
 # Runtime: entrypoint-ibc.sh boots Xvfb + IBC and waits for a real login
