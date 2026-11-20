@@ -13,8 +13,17 @@ else
     exit 1
 fi
 
+ENV_FILE="${ENV_FILE:-.env}"
 ENV_ARGS=()
-[[ -f .env ]] && ENV_ARGS=(--env-file .env)
+[[ -f "$ENV_FILE" ]] && ENV_ARGS=(--env-file "$ENV_FILE")
+
+if [[ "${DOCKER[0]}" == "sudo" ]]; then
+    if [[ -n "${IMAGE_TAG:-}" ]]; then
+        DOCKER=(sudo -n env "IMAGE_TAG=$IMAGE_TAG" docker)
+    else
+        DOCKER=(sudo -n env docker)
+    fi
+fi
 
 usage() {
     cat <<'EOF'
@@ -30,8 +39,9 @@ down_stack() {
     local stack="$1"
     local files=()
 
+    local -a profile_args=()
     case "$stack" in
-        trading) files=(-f compose/trading.yml) ;;
+        trading) files=(-f compose/trading.yml); profile_args=(--profile console) ;;
         platform) files=(-f compose/platform.yml) ;;
         monitoring) files=(-f compose/monitoring.yml) ;;
         tests) files=(-f compose/tests.yml) ;;
@@ -39,7 +49,7 @@ down_stack() {
         *) return 1 ;;
     esac
 
-    "${DOCKER[@]}" compose "${ENV_ARGS[@]}" "${files[@]}" down
+    "${DOCKER[@]}" compose "${ENV_ARGS[@]}" "${profile_args[@]}" "${files[@]}" down
 }
 
 STACK="${1:-}"

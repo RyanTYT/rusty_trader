@@ -53,7 +53,7 @@ services:
   llm_service:
     image: rusty_trader/llm-service:${IMAGE_TAG:-latest}
     ports:
-      - 8001:8001 # host access for local debugging
+      - 127.0.0.1:8001:8001 # host access for local debugging
     environment:
       - KNOWLEDGE_BASE_PATH=/data/knowledge_base
       - ARTICLES_PATH=/data/scraped_articles

@@ -57,6 +57,29 @@ Prod run (prebuilt images only):
 docker compose --env-file .env -f compose/trading.yml up -d
 ```
 
+## Deployment
+
+`scripts/release.sh` builds an immutable tag and writes a runtime bundle to
+`.releases/<tag>/`. `scripts/deploy.sh` sends that bundle to
+`/opt/autotrader/releases/<tag>/`, copies the active `.env` and IB Gateway
+`config.ini` into `/opt/autotrader/shared/`, switches `/opt/autotrader/current`,
+and starts the stacks in order.
+
+```bash
+scripts/deploy.sh
+scripts/deploy.sh --tag 20261120-1200-abc1234
+scripts/deploy.sh --without-console
+scripts/rollback.sh --previous
+```
+
+The release bundle never contains `.env`. The deploy script writes the prod
+copy with `IMAGE_TAG` forced to the release tag and `IBC_CONFIG_PATH` forced to
+`/opt/autotrader/shared/ib-gateway/config.ini`.
+
+`hotpath-console` is included by default. Turn it off for a deploy with
+`scripts/deploy.sh --without-console`; for manual starts use
+`HOTPATH_CONSOLE=0 scripts/up.sh trading`.
+
 ## Start order
 
 Cross-stack `depends_on` is not possible in Compose, so start in this order:
@@ -147,9 +170,9 @@ Do not run its `tws` while the trading stack is running: both publish
 | Service | Host port | Notes |
 |---|---|---|
 | `trading-bot` | 7462, 4002, 8000 | IB Gateway API and HTTP |
-| `db` | 5432 | TimescaleDB |
+| `db` | 127.0.0.1:5432 | TimescaleDB; localhost only |
 | `backend` | 3000 | |
-| `llm_service` | 8001 | |
+| `llm_service` | 127.0.0.1:8001 | localhost only |
 | `alertmanager` | 9093 | |
 | `grafana` | 3001 | |
 | `test-db` | 5433 | tests only |
@@ -175,7 +198,15 @@ project prefixes:
 
 `infra/alertmanager/alertmanager.yml` is gitignored. By default the stack
 mounts `alertmanager.example.yml`, so it starts with placeholder credentials.
-Create the real file and set `ALERTMANAGER_CONFIG` in `.env`:
+A real file is only needed for notifications. To use one on prod, pass it to
+the deploy script; it is copied to `/opt/autotrader/shared/alertmanager.yml`
+and referenced from the prod `.env`:
+
+```bash
+scripts/deploy.sh --alertmanager infra/alertmanager/alertmanager.yml
+```
+
+On dev, create the real file and set `ALERTMANAGER_CONFIG` in `.env`:
 
 ```bash
 cp infra/alertmanager/alertmanager.example.yml infra/alertmanager/alertmanager.yml

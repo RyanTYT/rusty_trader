@@ -13,8 +13,18 @@ else
     exit 1
 fi
 
+ENV_FILE="${ENV_FILE:-.env}"
 ENV_ARGS=()
-[[ -f .env ]] && ENV_ARGS=(--env-file .env)
+[[ -f "$ENV_FILE" ]] && ENV_ARGS=(--env-file "$ENV_FILE")
+CONSOLE="${HOTPATH_CONSOLE:-1}"
+
+if [[ "${DOCKER[0]}" == "sudo" ]]; then
+    if [[ -n "${IMAGE_TAG:-}" ]]; then
+        DOCKER=(sudo -n env "IMAGE_TAG=$IMAGE_TAG" docker)
+    else
+        DOCKER=(sudo -n env docker)
+    fi
+fi
 
 usage() {
     cat <<'EOF'
@@ -62,7 +72,12 @@ build_stack() {
         files+=(-f "$file")
     done < <(stack_files "$stack")
 
-    local -a cmd=("${DOCKER[@]}" compose "${ENV_ARGS[@]}" "${files[@]}" build)
+    local -a profile_args=()
+    if [[ "$stack" == "trading" && "$CONSOLE" != "0" ]]; then
+        profile_args=(--profile console)
+    fi
+
+    local -a cmd=("${DOCKER[@]}" compose "${ENV_ARGS[@]}" "${profile_args[@]}" "${files[@]}" build)
     [[ -n "$no_cache" ]] && cmd+=("$no_cache")
     [[ -n "$service" ]] && cmd+=("$service")
 
