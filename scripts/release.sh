@@ -170,16 +170,7 @@ service_inputs() {
                 api/backend/.cargo
             ;;
         llm_service)
-            printf '%s\n' \
-                ai/llm_service/Dockerfile \
-                ai/llm_service/pyproject.toml \
-                ai/llm_service/uv.lock \
-                ai/llm_service/.python-version \
-                ai/llm_service/main.py \
-                ai/llm_service/agents \
-                ai/llm_service/api \
-                ai/llm_service/models \
-                ai/llm_service/tools
+            printf '%s\n' ai/llm_service
             ;;
         scraper)
             printf '%s\n' \
