@@ -196,10 +196,11 @@ project prefixes:
 ## Alertmanager config
 
 `infra/alertmanager/alertmanager.yml` is gitignored. By default the stack
-mounts `alertmanager.example.yml`, so it starts with placeholder credentials.
-A real file is only needed for notifications. To use one on prod, pass it to
-the deploy script; it is copied to `/opt/autotrader/shared/alertmanager.yml`
-and referenced from the prod `.env`:
+mounts `alertmanager.example.yml`, which uses a no-op `default` receiver, so
+Alertmanager starts without credentials. A real file is only needed for
+notifications. To use one on prod, pass it to the deploy script; it is copied
+to `/opt/autotrader/shared/alertmanager.yml` and referenced from the prod
+`.env`:
 
 ```bash
 scripts/deploy.sh --alertmanager infra/alertmanager/alertmanager.yml
