@@ -1,5 +1,5 @@
 # Stage 1: Build stage
-FROM python:3.12-slim-bullseye AS build
+FROM python:3.12-slim-trixie AS build
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 ################################################################################
 # Stage 2: Runtime stage
-FROM python:3.12-slim-bullseye AS final
+FROM python:3.12-slim-trixie AS final
 
 WORKDIR /app
 

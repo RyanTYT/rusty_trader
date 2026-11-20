@@ -1,34 +1,25 @@
-ARG RUST_VERSION=1.85.1
+ARG RUST_VERSION=1.92.0
 ARG APP_NAME=news-scraper
 
 ################################################################################
 # Build Stage
-FROM debian:bullseye-slim AS build
-# FROM rust:${RUST_VERSION}-slim-bookworm AS build
+FROM rust:${RUST_VERSION}-bookworm AS build
 ARG APP_NAME
 WORKDIR /app
 
 # Install build dependencies (OpenSSL and pkg-config are usually needed for scrapers)
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     ca-certificates \
+    git \
     && rm -rf /var/lib/apt/lists/*
-
-# Install rustup and Cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable
-
-# Add Cargo to PATH
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 # 1. Dummy build for dependency caching
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release --locked && \
     rm -rf src target/release/.fingerprint/news-scraper*
 
 # 2. Build actual source
@@ -42,21 +33,21 @@ FROM mcr.microsoft.com/playwright:v1.43.0-jammy AS browser-helper
 
 ################################################################################
 # Runtime Stage
-FROM debian:bullseye-slim AS final
+FROM debian:trixie-slim AS final
 
 # Install runtime dependencies
 # We add the libraries required to run Chromium in headless mode
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     openssl \
-    libssl-dev \
+    libssl3t64 \
     # Chromium dependencies
-    libglib2.0-0 \
+    libglib2.0-0t64 \
     libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
+    libatk1.0-0t64 \
+    libatk-bridge2.0-0t64 \
+    libcups2t64 \
     libdrm2 \
     libxkbcommon0 \
     libxcomposite1 \
@@ -67,7 +58,7 @@ RUN apt-get update && apt-get install -y \
     libgbm1 \
     libpango-1.0-0 \
     libcairo2 \
-    libasound2 \
+    libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-privileged user
@@ -76,8 +67,9 @@ RUN useradd -ms /bin/bash appuser
 # Copy executable
 COPY --from=build --chown=appuser:appuser /bin/server /bin/
 
-# Install npm for playwright
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+# Install npm for playwright; browsers come from the browser-helper stage below.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g playwright@1.43.0
 

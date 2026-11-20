@@ -19,7 +19,7 @@
 # gateway's container netstack (compose: network_mode "service:tws") — a
 # host-side connect through the docker-proxy peer IP fails the gateway trust
 # check; the run recipe in pull_bars.py is the verified-correct lane.
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 # duckdb does the external sort + dedup on merge; pyarrow writes the chunks.
 RUN pip install --no-cache-dir ib_async pandas pyarrow duckdb

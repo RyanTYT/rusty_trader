@@ -13,26 +13,18 @@
 # Dockerfile.backtest).
 ################################################################################
 
-FROM debian/eol:bullseye AS build
+ARG RUST_VERSION=1.92.0
+
+FROM --platform=linux/amd64 rust:${RUST_VERSION}-bookworm AS build
 WORKDIR /app
 
-RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-
 # Build deps (clang/lld for ibapi sync client).
-RUN apt-get -o Acquire::Check-Valid-Until=false update && \
-    apt-get install -y --allow-downgrades \
-      libc6=2.31-13+deb11u11 \
-      libssl1.1=1.1.1w-0+deb11u1 \
-      perl-base=5.32.1-4+deb11u3 && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       curl build-essential pkg-config libssl-dev ca-certificates \
       protobuf-compiler clang lld musl-dev git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
 ENV SQLX_OFFLINE=true
 
 # ── Dep-caching layer ───────────────────────────────────────────────────────
@@ -68,7 +60,7 @@ COPY trading/optimizer/Cargo.lock ./optimizer/Cargo.lock
 RUN mkdir -p trading-app/src optimizer/src/bin && \
     echo "" > trading-app/src/lib.rs && \
     echo "fn main() {}" > optimizer/src/bin/optimize.rs && \
-    cd optimizer && cargo build --release --bin optimize && \
+    cd optimizer && cargo build --release --locked --bin optimize && \
     rm -rf trading-app/src optimizer/src
 
 # ── Real source ─────────────────────────────────────────────────────────────
@@ -82,28 +74,25 @@ COPY trading/optimizer/src ./optimizer/src
 # build the real binary and stage it for the runtime stage.
 RUN cd optimizer && \
     touch ../trading-app/src/lib.rs src/bin/optimize.rs && \
-    cargo build --release --bin optimize && \
+    cargo build --release --locked --bin optimize && \
     cp target/release/optimize /bin/optimize
 
 ################################################################################
 # Runtime stage — IBC + Xvfb (same as Dockerfile.backtest, since the optimizer
 # may need to populate data via IBKR when the bars aren't pre-loaded).
-FROM debian/eol:bullseye AS final
-
-RUN echo "deb http://archive.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://archive.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+FROM --platform=linux/amd64 debian:trixie-slim AS final
 
 # Install runtime deps: Xvfb + IBC libs (needed for the IBKR data-load step
 # via with_gateway_retry) + postgresql-client (pg_isready) + curl.
-RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 libxi6 libxrender1 libxrandr2 libfreetype6 libxext6 \
-    libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1-mesa-glx \
-    libasound2 libasound2-plugins libgbm1 libnss3 libxss1 \
+    libx11-6 libxfixes3 libxinerama1 libxcursor1 libgl1 \
+    libasound2t64 libasound2-plugins libgbm1 libnss3 libxss1 \
     xdotool openbox \
     unzip xvfb \
     curl bash ca-certificates \
     postgresql-client \
-    libssl-dev \
+    libssl3t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install IBC (IB Gateway controller) — needed for the data-load step.
