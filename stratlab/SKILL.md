@@ -50,12 +50,10 @@ with a *reason* in a `study/` (see `playbooks/validation.md`).
 | You're adding... | it goes in... | how |
 |---|---|---|
 | a research question / experiment / sweep / diagnostic | `studies/<slug>/run.py` (a cell) | `stratlab study append <slug> --question "..."` |
-| a reusable model function (features, training, walk-forward) | `stratlab/models/<pkg>/` | new module |
-| a new strategy | `stratlab/strategies/<name>.py` | `PrecomputedStrategy` subclass + `STUDY` markdown |
+| a one-off diagnostic / analysis | `studies/<slug>/run.py` (a cell) | `stratlab study append` |
 
-See `playbooks/study-first.md` for the full workflow. **Never** create a `.py`
-under `strategies/` for a research question — that is how `strategies/` filled
-with one-off scripts. `run.py` is the source; `run.ipynb` is rendered output.
+See `playbooks/study-first.md` for the full workflow. `run.py` is the source;
+`run.ipynb` is rendered output.
 
 ## CLI
 
