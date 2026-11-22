@@ -1,4 +1,7 @@
-use ibapi::prelude::{Contract, ContractMonth, SecurityType, Symbol};
+use ibapi::{
+    contracts::{Currency, Exchange},
+    prelude::{Contract, ContractMonth, SecurityType, Symbol},
+};
 use std::hash::Hash;
 
 use crate::database::{
@@ -208,16 +211,25 @@ pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
                 expiry,
                 strike,
                 option_type,
+                multiplier,
+                currency,
+                primary_exchange,
                 ..
-            }) => Contract::option(
-                &stock,
-                &expiry,
-                *strike,
-                match option_type {
-                    crate::database::models::OptionType::Put => "P",
-                    crate::database::models::OptionType::Call => "C",
-                },
-            ),
+            }) => {
+                let mut contract = Contract::option(
+                    &stock,
+                    &expiry,
+                    *strike,
+                    match option_type {
+                        crate::database::models::OptionType::Put => "P",
+                        crate::database::models::OptionType::Call => "C",
+                    },
+                );
+                contract.primary_exchange = Exchange::from(primary_exchange);
+                contract.currency = Currency::from(currency);
+                contract.multiplier = multiplier.clone();
+                contract
+            }
         },
         LocalContractTypes::CurrentPosFk(v) => match v {
             CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
@@ -231,16 +243,25 @@ pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
                 expiry,
                 strike,
                 option_type,
+                primary_exchange,
+                currency,
+                multiplier,
                 ..
-            }) => Contract::option(
-                &stock,
-                &expiry,
-                *strike,
-                match option_type {
-                    crate::database::models::OptionType::Put => "P",
-                    crate::database::models::OptionType::Call => "C",
-                },
-            ),
+            }) => {
+                let mut contract = Contract::option(
+                    &stock,
+                    &expiry,
+                    *strike,
+                    match option_type {
+                        crate::database::models::OptionType::Put => "P",
+                        crate::database::models::OptionType::Call => "C",
+                    },
+                );
+                contract.primary_exchange = Exchange::from(primary_exchange);
+                contract.currency = Currency::from(currency);
+                contract.multiplier = multiplier.clone();
+                contract
+            }
         },
         LocalContractTypes::OpenOrders(v) => match v {
             OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
@@ -254,16 +275,25 @@ pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
                 expiry,
                 strike,
                 option_type,
+                primary_exchange,
+                currency,
+                multiplier,
                 ..
-            }) => Contract::option(
-                &stock,
-                &expiry,
-                *strike,
-                match option_type {
-                    crate::database::models::OptionType::Put => "P",
-                    crate::database::models::OptionType::Call => "C",
-                },
-            ),
+            }) => {
+                let mut contract = Contract::option(
+                    &stock,
+                    &expiry,
+                    *strike,
+                    match option_type {
+                        crate::database::models::OptionType::Put => "P",
+                        crate::database::models::OptionType::Call => "C",
+                    },
+                );
+                contract.primary_exchange = Exchange::from(primary_exchange);
+                contract.currency = Currency::from(currency);
+                contract.multiplier = multiplier.clone();
+                contract
+            }
         },
     }
 }
