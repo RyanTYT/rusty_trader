@@ -256,6 +256,12 @@ impl OrderEngine {
                 Self::place_order(handle.clone(), pool.clone(), &weak_client, order_ibkr);
             #[cfg(feature = "backtest")]
             let order_id = Self::place_order(handle.clone(), pool.clone(), submitter, order_ibkr);
+            if order_id == -1 {
+                if idx == 0 {
+                    break;
+                }
+                tracing::error!("Bracket order for for some order failed!");
+            }
             order_ids[idx] = order_id;
         }
     }
@@ -879,7 +885,7 @@ impl OrderEngine {
         );
 
         // return 1 entry
-        let current_qty_diff = (curr_open_orders_quantity - curr_open_orders_filled)
+        let current_qty_diff = (curr_open_orders_quantity.abs() - curr_open_orders_filled)
             * (curr_open_orders_quantity.signum());
 
         // Alr correct
@@ -967,7 +973,7 @@ fn requires_reconciliation(
         let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
         let hash_contract = HashContract { contract };
         let open_orders_qty = orders_map.get(&hash_contract).unwrap_or(&0.0);
-        let diff = pos_diff.get_qty_diff() + *open_orders_qty;
+        let diff = pos_diff.get_qty_diff() - *open_orders_qty;
 
         if diff == 0.0 { false } else { true }
     })
