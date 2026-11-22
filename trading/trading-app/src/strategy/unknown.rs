@@ -13,7 +13,7 @@ use crate::{
         models::AssetType, models_crud::historical_data::historical_data::HistoricalDataFullKeys,
     },
     market_data::consolidator::Consolidator,
-    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyExecutor},
+    strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyExecutor, StrategyFund},
 };
 
 #[derive(Debug, Clone)]
@@ -57,6 +57,16 @@ impl Unknown {
 impl StrategyExecutor for Unknown {
     fn get_name(&self) -> String {
         self.name.clone()
+    }
+
+    fn fund_strategy(&mut self) -> StrategyFund {
+        StrategyFund {
+            priority: 1,
+            to_reallocate: true,
+            weight: 0.0,
+            min_capital: 0.0,
+            cash_prefs: vec![],
+        }
     }
 
     fn get_strategy_details(&self) -> StrategyDetails {

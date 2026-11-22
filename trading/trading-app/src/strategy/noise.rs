@@ -34,7 +34,7 @@ use crate::{
     market_data::{consolidator::Consolidator, traits::strategy_value::GetStrategyValue},
     strategy::{
         portfolio_functions::proportional_integer_reduce,
-        strategy::{BarUpdateOutcome, StrategyExecutor},
+        strategy::{BarUpdateOutcome, StrategyExecutor, StrategyFund},
     },
 };
 
@@ -325,6 +325,16 @@ impl Noise {
 impl StrategyExecutor for Noise {
     fn get_name(&self) -> String {
         self.name.clone()
+    }
+
+    fn fund_strategy(&mut self) -> StrategyFund {
+        StrategyFund {
+            priority: 1,
+            to_reallocate: false,
+            weight: 0.0,
+            min_capital: 0.0,
+            cash_prefs: vec![],
+        }
     }
 
     fn get_strategy_details(&self) -> StrategyDetails {

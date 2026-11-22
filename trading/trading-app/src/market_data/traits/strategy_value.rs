@@ -58,21 +58,27 @@ impl Consolidator {
         let current_stock_positions_crud =
             CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
 
-        // 1. Offload the async task to Runtime 1's worker threads
         let strategy = strategy.to_string();
         let join_handle = handle.spawn(async move {
-            #[cfg(feature = "backtest")]
             let res = current_stock_positions_crud
-                .get_pos_by_strat(&strategy, BacktestMode::Db)
-                .await;
-            #[cfg(not(feature = "backtest"))]
-            let res = current_stock_positions_crud
-                .get_pos_by_strat(&strategy)
+                .get_pos_by_strat(
+                    &strategy,
+                    #[cfg(feature = "backtest")]
+                    BacktestMode::Db,
+                )
                 .await;
             res
         });
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 
+        Self::_get_positions_value(client, get_current_price_fn, positions)
+    }
+
+    fn _get_positions_value(
+        client: &Arc<Client>,
+        get_current_price_fn: &Box<dyn AnyMemoized>,
+        positions: Vec<CurrentPositionsFullKeys>,
+    ) -> Result<f64, String> {
         let mut sgd_value = 0.0;
         let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
 
@@ -347,5 +353,30 @@ impl Consolidator {
             }
         }
         Ok(sgd_value)
+    }
+}
+
+impl Consolidator {
+    pub(crate) fn get_fund_value(
+        &self,
+        client: &Arc<Client>,
+        handle: &tokio::runtime::Handle,
+        pool: &PgPool,
+    ) -> Result<f64, String> {
+        let current_stock_positions_crud =
+            CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+
+        let positions = handle
+            .block_on(async move { current_stock_positions_crud.get_all_pos_grouped().await })
+            .map_err(|e| format!("failed to fetch all pos: {e:?}"))?;
+
+        Self::_get_positions_value(
+            &client,
+            &self
+                .memoisers
+                .get(&MemoisedConsolidatorFns::GetPrice)
+                .unwrap(),
+            positions,
+        )
     }
 }

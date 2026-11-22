@@ -177,6 +177,60 @@ impl OrderEngine {
         order_id
     }
 
+    /// `place_order` that surfaces failure instead of logging it.
+    ///
+    /// Same wire call and the same optimistic open-order row, but:
+    /// - a dead client returns `Err` rather than panicking on `unwrap()`;
+    /// - a rejected submission returns `Err` and writes **no** open-order row,
+    ///   so the books never show an order the broker refused.
+    #[cfg(not(feature = "backtest"))]
+    pub fn place_order_checked(
+        handle: tokio::runtime::Handle,
+        pool: PgPool,
+        weak_client: &Weak<Client>,
+        order_ibkr: OrderIBKR,
+    ) -> Result<i32, String> {
+        let client = weak_client
+            .upgrade()
+            .ok_or_else(|| "client is dead when trying to place order".to_string())?;
+        let order_id = client.next_order_id();
+        let strategy_name = order_ibkr.order.order_ref.clone();
+        #[allow(unused_variables)]
+        let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
+
+        tracing::info!(
+            "Order submitted to IBKR: {:?} for {:?}",
+            order_ibkr.order.action,
+            order_ibkr.contract.symbol
+        );
+        hotpath::measure_block!(wire_label, {
+            client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
+        })
+        .map_err(|e| {
+            format!(
+                "submit_order failed for {} {:?}: {e}",
+                order_ibkr.contract.symbol, order_ibkr.order.action
+            )
+        })?;
+
+        let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
+        let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
+        let uk = OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
+        handle.spawn(hotpath::future!(
+            async move {
+                let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+                if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
+                    tracing::error!(
+                        "Failed to create or update open order for place_order_checked: {e:?}"
+                    );
+                }
+            },
+            label = "order_submit_db_write"
+        ));
+
+        Ok(order_id)
+    }
+
     /// Note: it is on onus of client to pass with the correct .transmit field
     pub fn place_orders(
         handle: tokio::runtime::Handle,
