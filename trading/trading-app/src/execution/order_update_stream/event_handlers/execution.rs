@@ -4,9 +4,9 @@ use std::{
     time::Duration,
 };
 
-use ibapi::{Client, orders::ExecutionData};
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
+use ibapi::{Client, contracts::SecurityType, orders::ExecutionData};
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
@@ -30,7 +30,10 @@ use crate::{
             },
         },
     },
-    execution::{fx_backed_up_order::OrderStore, order_engine::OrderEngine},
+    execution::{
+        fx_backed_up_order::OrderStore,
+        order_engine::{OrderEngine, OrderIBKR},
+    },
     market_data::consolidator::Consolidator,
     strategy::strategy::StrategyDetails,
 };
@@ -425,34 +428,53 @@ async fn update_currency_and_place_backed_up_orders(
             .expect("Expected current positions of currency not to be None")
             .get_qty();
         if currency_value > 0.0 {
-            for mut strat_order in strat_orders.unwrap() {
-                if !(strat_order.contract.currency.to_string()
-                    == pk
-                        .get_stock()
-                        .strip_prefix("CASH:")
-                        .expect("Expected currency stock to have CASH: prefix"))
-                {
-                    continue;
-                }
-                let price: f64 = strat_order
-                    .order
-                    .order_ref
-                    .strip_prefix(format!("{}:", strategy_name).as_str())
-                    .expect("Expected strategy of execution update to be same as strat_order")
-                    .parse()
-                    .expect("Expected f64 string in order_ref");
+            let new_backed_up_orders = strat_orders
+                .unwrap()
+                .into_iter()
+                .filter_map(|mut strat_order| {
+                    if !(strat_order.contract.currency.to_string()
+                        == pk
+                            .get_stock()
+                            .strip_prefix("CASH:")
+                            .expect("Expected currency stock to have CASH: prefix"))
+                    {
+                        return Some(strat_order);
+                    }
+                    let price: f64 = strat_order
+                        .order
+                        .order_ref
+                        .strip_prefix(format!("{}:", strategy_name).as_str())
+                        .expect("Expected strategy of execution update to be same as strat_order")
+                        .parse()
+                        .expect("Expected f64 string in order_ref");
 
-                let required_currency = strat_order.order.total_quantity * price;
-                if required_currency < currency_value {
-                    currency_value -= required_currency;
-                    strat_order.order.order_ref = strategy_name.to_string();
-                    OrderEngine::place_order(
-                        handle.clone(),
-                        pool.clone(),
-                        &weak_client,
-                        strat_order,
-                    );
-                }
+                    let required_currency =
+                        if strat_order.contract.security_type == SecurityType::Option {
+                            let multiplier: f64 = strat_order.contract.multiplier.parse().expect(
+                                "Expected contract multiplier of option contract to be f64",
+                            );
+                            strat_order.order.total_quantity * price * multiplier
+                        } else {
+                            strat_order.order.total_quantity * price
+                        };
+                    if required_currency < currency_value {
+                        currency_value -= required_currency;
+                        strat_order.order.order_ref = strategy_name.to_string();
+                        OrderEngine::place_order(
+                            handle.clone(),
+                            pool.clone(),
+                            &weak_client,
+                            strat_order,
+                        );
+                    }
+
+                    None
+                })
+                .collect::<Vec<OrderIBKR>>();
+            if let Err(e) = backed_up_orders.store_orders(strategy_name, &new_backed_up_orders) {
+                tracing::error!(
+                    "Failed to update backed_up_orders in update_currency_and_place_backed_up_orders: {e:?}"
+                );
             }
         }
     }
