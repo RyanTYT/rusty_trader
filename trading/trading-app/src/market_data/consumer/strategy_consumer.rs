@@ -141,6 +141,8 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
             (
                 is_fx_b,
                 &a.contract.symbol.to_string(),
+                &a.contract.currency.to_string(),
+                &a.contract.primary_exchange.to_string(),
                 match &a.what_to_show {
                     WhatToShow::Bid => 0,
                     WhatToShow::Ask => 1,
@@ -150,6 +152,8 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
                 .cmp(&(
                     is_fx_a,
                     &b.contract.symbol.to_string(),
+                    &b.contract.currency.to_string(),
+                    &b.contract.primary_exchange.to_string(),
                     match &b.what_to_show {
                         WhatToShow::Bid => 0,
                         WhatToShow::Ask => 1,
