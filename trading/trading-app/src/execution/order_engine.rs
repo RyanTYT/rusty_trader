@@ -146,6 +146,7 @@ impl OrderEngine {
                         e
                     )
                 );
+                return -1;
             }
             let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
@@ -757,7 +758,7 @@ impl OrderEngine {
             let new_open_orders = open_orders
                 .unwrap()
                 .into_iter()
-                .filter(|order| orders_to_remove.contains(&order.order.order_id))
+                .filter(|order| !orders_to_remove.contains(&order.order.order_id))
                 .collect::<Vec<OrderIBKR>>();
             if let Err(e) = order_store.store_orders(&strategy_name, &new_open_orders) {
                 tracing::error!(
