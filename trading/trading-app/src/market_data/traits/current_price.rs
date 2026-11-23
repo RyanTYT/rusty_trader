@@ -86,6 +86,10 @@ impl PriceSupplier for Consolidator {
                 }
             }
 
+            if contract.symbol.as_str() == contract.currency.as_str() {
+                return Ok(1.0);
+            }
+
             let entry = self
                 .memoisers
                 .get(&MemoisedConsolidatorFns::GetPrice)
