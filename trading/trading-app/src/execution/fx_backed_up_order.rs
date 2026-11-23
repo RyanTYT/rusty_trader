@@ -1,7 +1,9 @@
+use ibapi::contracts::SecurityType;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::collections::HashMap;
 
 use crate::execution::order_engine::OrderIBKR;
+use crate::helpers::contract::HashContract;
 
 const ORDERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("orders_by_FX");
 
@@ -61,6 +63,155 @@ impl OrderStore {
             .map_err(|e| format!("Failed to commit transaction: {e}"))?;
 
         Ok(())
+    }
+
+    /// Adds `orders` to the parked list for `key`, replacing any existing entry that has
+    /// the same contract, in one write transaction. Entries already parked for the
+    /// strategy are kept: an asset-type update only knows about its own target rows.
+    pub fn insert_or_update_orders(&self, key: &str, orders: &[OrderIBKR]) -> Result<(), String> {
+        if orders.is_empty() {
+            return Ok(());
+        }
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| format!("Failed to begin write transaction: {e}"))?;
+        {
+            let mut table = write_txn
+                .open_table(ORDERS_TABLE)
+                .map_err(|e| format!("Failed to open table: {e}"))?;
+
+            let mut existing: Vec<OrderIBKR> = match table
+                .get(key)
+                .map_err(|e| format!("Failed to read key '{key}' from table: {e}"))?
+            {
+                Some(access) => postcard::from_bytes(access.value())
+                    .map_err(|e| format!("Failed to deserialize orders for key '{key}': {e}"))?,
+                None => Vec::new(),
+            };
+
+            existing.retain(|parked| {
+                !orders.iter().any(|new_order| {
+                    HashContract {
+                        contract: new_order.contract.clone(),
+                    } == HashContract {
+                        contract: parked.contract.clone(),
+                    }
+                })
+            });
+            existing.extend(orders.iter().cloned());
+
+            let payload = postcard::to_allocvec(&existing)
+                .map_err(|e| format!("Failed to serialize orders for key '{key}': {e}"))?;
+            table
+                .insert(key, payload.as_slice())
+                .map_err(|e| format!("Failed to insert orders for key '{key}': {e}"))?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| format!("Failed to commit transaction: {e}"))?;
+
+        Ok(())
+    }
+
+    /// Removes and returns every parked order for `key` that is denominated in
+    /// `currency` and fully covered by `available`, in one write transaction.
+    /// Orders that cannot be placed stay in the store untouched, in their original order.
+    pub fn remove_all_valid_orders(
+        &self,
+        key: &str,
+        currency: &str,
+        available: f64,
+    ) -> Result<Vec<OrderIBKR>, String> {
+        if available <= 0.0 {
+            return Ok(Vec::new());
+        }
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| format!("Failed to begin write transaction: {e}"))?;
+        let ready;
+        {
+            let mut table = write_txn
+                .open_table(ORDERS_TABLE)
+                .map_err(|e| format!("Failed to open table: {e}"))?;
+
+            let existing: Vec<OrderIBKR> = match table
+                .get(key)
+                .map_err(|e| format!("Failed to read key '{key}' from table: {e}"))?
+            {
+                Some(access) => postcard::from_bytes(access.value())
+                    .map_err(|e| format!("Failed to deserialize orders for key '{key}': {e}"))?,
+                None => return Ok(Vec::new()),
+            };
+
+            let mut kept: Vec<OrderIBKR> = Vec::with_capacity(existing.len());
+            let mut placeable: Vec<OrderIBKR> = Vec::new();
+            let mut budget = available;
+
+            for order in existing {
+                if order.contract.currency.as_str() != currency {
+                    kept.push(order);
+                    continue;
+                }
+
+                // Parked orders carry their price in the order_ref suffix: "{strategy}:{price}".
+                let price: f64 = match order
+                    .order
+                    .order_ref
+                    .rsplit_once(':')
+                    .and_then(|(_, price)| price.parse().ok())
+                {
+                    Some(price) => price,
+                    None => {
+                        tracing::error!(
+                            "Parked order for {} has no parseable price in order_ref",
+                            order.contract.symbol
+                        );
+                        kept.push(order);
+                        continue;
+                    }
+                };
+
+                let multiplier: f64 = if order.contract.security_type == SecurityType::Option {
+                    match order.contract.multiplier.parse() {
+                        Ok(multiplier) => multiplier,
+                        Err(_) => {
+                            tracing::error!(
+                                "Parked option order for {} has an invalid multiplier",
+                                order.contract.symbol
+                            );
+                            kept.push(order);
+                            continue;
+                        }
+                    }
+                } else {
+                    1.0
+                };
+
+                let required = order.order.total_quantity.abs() * price * multiplier;
+                if required <= budget {
+                    budget -= required;
+                    placeable.push(order);
+                } else {
+                    kept.push(order);
+                }
+            }
+
+            let payload = postcard::to_allocvec(&kept)
+                .map_err(|e| format!("Failed to serialize orders for key '{key}': {e}"))?;
+            table
+                .insert(key, payload.as_slice())
+                .map_err(|e| format!("Failed to insert orders for key '{key}': {e}"))?;
+            ready = placeable;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| format!("Failed to commit transaction: {e}"))?;
+
+        Ok(ready)
     }
 
     /// Load orders for a specific key
