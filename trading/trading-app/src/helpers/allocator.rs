@@ -106,7 +106,7 @@ pub fn fund_strategies(
     let mut books: Vec<Book> = strategies
         .into_iter()
         .map(|(name, fund_strat)| {
-            if names.insert(name.as_str()) {
+            if !names.insert(name.as_str()) {
                 has_dup = name.as_str();
             }
             let exists = rows.iter().any(
