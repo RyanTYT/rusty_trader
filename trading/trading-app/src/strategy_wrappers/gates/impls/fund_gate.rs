@@ -201,11 +201,14 @@ pub struct FundInput {
 /// own interior mutability (`UnsafeCell` per field; the ONE safety argument
 /// below covers all of them).
 pub struct PoolState {
-    ring: Arc<MpscRingBuffer<FundInput, FUND_RING, FUND_PRODUCERS>>,
+    /// The ring carrier. Swappable so a new run starts on a fresh ring: old
+    /// producers hold their own `Arc`, so replacing the pool's handle cannot
+    /// dangle them (they keep the old ring alive until they drop).
+    pub(crate) ring: UnsafeCell<Arc<MpscRingBuffer<FundInput, FUND_RING, FUND_PRODUCERS>>>,
     /// Participant names, appended at mint; index == producer idx == mint
     /// order == sleeve-name order (Parity-risk #1 by construction). This
     /// list IS the registry — no separate registration static.
-    names: UnsafeCell<Vec<String>>,
+    pub(crate) names: UnsafeCell<Vec<String>>,
     /// Pool-owned per-participant books (shared-state ruling): absolute
     /// signed share counts, fresh emissions overwrite, unnamed syms
     /// retain, explicit zeros KEPT — the UNTRIMMED collect panel whose
@@ -237,10 +240,11 @@ pub struct PoolState {
     /// subscription.
     fund_scales: UnsafeCell<Vec<f64>>,
     fund_subs: UnsafeCell<Vec<f64>>,
-    /// `true` once `init` ran (the binary calls it after all sleeves
-    /// construct). Bare constructions mint a pool but never ready it —
-    /// unready pools fail CLOSED at the gate (emit nothing).
-    ready: UnsafeCell<bool>,
+    /// `true` once the run is armed at the sleeves' warm-up (all gates have
+    /// minted by then). Bare constructions mint a pool but never ready it —
+    /// unready pools fail CLOSED at the gate (emit nothing). Atomic because
+    /// the four sleeves' warm-ups run as separate tasks.
+    pub(crate) ready: AtomicBool,
     /// The lane this pool runs in (backtest builds only). The cfg'd CRUD
     /// seams (the sleeve's working-state reads, the realloc's CASH write)
     /// pass it through instead of assuming the in-memory lane — the
@@ -269,7 +273,7 @@ impl PoolState {
 
     fn new() -> Self {
         Self {
-            ring: Arc::new(MpscRingBuffer::new()),
+            ring: UnsafeCell::new(Arc::new(MpscRingBuffer::new())),
             names: UnsafeCell::new(Vec::new()),
             books: core::array::from_fn(|_| UnsafeCell::new(BTreeMap::new())),
             residual: UnsafeCell::new(0.0),
@@ -279,10 +283,37 @@ impl PoolState {
             seen: UnsafeCell::new(Vec::new()),
             fund_scales: UnsafeCell::new(Vec::new()),
             fund_subs: UnsafeCell::new(Vec::new()),
-            ready: UnsafeCell::new(false),
+            ready: AtomicBool::new(false),
             #[cfg(feature = "backtest")]
             mode: UnsafeCell::new(BacktestMode::InMemory),
         }
+    }
+
+    /// Clear every piece of per-run state and give the pool a fresh ring.
+    /// Only legal between runs: called from `mint` when every producer handle
+    /// from the previous run is gone (`Arc::strong_count == 1`).
+    fn reset(&self) {
+        unsafe {
+            *self.ring.get() = Arc::new(MpscRingBuffer::new());
+            (&mut *self.names.get()).clear();
+            (&mut *self.seen.get()).clear();
+            for book in &self.books {
+                (&mut *book.get()).clear();
+            }
+            (&mut *self.fund_scales.get()).clear();
+            (&mut *self.fund_subs.get()).clear();
+            (&mut *self.last_eqs.get()).clear();
+            *self.residual.get() = 0.0;
+            *self.capital.get() = 0.0;
+            *self.realloc_month.get() = None;
+            #[cfg(feature = "backtest")]
+            {
+                *self.mode.get() = BacktestMode::InMemory;
+            }
+        }
+        self.ready.store(false, Ordering::Relaxed);
+        WARNED_NO_REGISTRY.store(false, Ordering::Relaxed);
+        tracing::info!("fund pool reset for a new run");
     }
 
     /// The lane the pool was initialised for (backtest builds only). The
@@ -309,7 +340,16 @@ impl PoolState {
     /// `FundGate::new` for one sleeve would double-mint and desync the
     /// name/idx mapping).
     fn mint(&self, own: &str, m_scale: f64, subscription: f64) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
-        let producer = self.ring.get_new_producer();
+        // A new run begins at the first mint after every producer handle
+        // from the previous run has dropped: only the pool still holds that
+        // ring. Reset BEFORE allocating — the stale ring's producer index is
+        // exhausted and `get_new_producer` would panic otherwise.
+        let stale_run = Arc::strong_count(unsafe { &*self.ring.get() }) == 1
+            && !unsafe { (&*self.names.get()).is_empty() };
+        if stale_run {
+            self.reset();
+        }
+        let producer = unsafe { &*self.ring.get() }.get_new_producer();
         let names = unsafe { &mut *self.names.get() };
         assert!(
             !names.iter().any(|n| n == own),
@@ -338,7 +378,7 @@ impl PoolState {
     /// `true` once `init` ran — the gate's participant check (unready pools
     /// fail CLOSED at the gate).
     fn ready(&self) -> bool {
-        unsafe { *self.ready.get() }
+        self.ready.load(Ordering::Relaxed)
     }
 
     /// Month reallocation trigger (called from the sleeve's flush path in
@@ -741,7 +781,7 @@ pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
         *p.fund_scales.get() = vec![2.0; names.len()];
         *p.fund_subs.get() = vec![0.0; names.len()];
         *p.residual.get() = residual;
-        *p.ready.get() = true;
+        p.ready.store(true, Ordering::Relaxed);
     }
     PoolState::install_ledger(names, ledger_capital, 0.0);
 }
