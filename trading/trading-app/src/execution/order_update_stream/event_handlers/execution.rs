@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-use ibapi::{Client, contracts::SecurityType, orders::ExecutionData};
+use ibapi::{Client, orders::ExecutionData};
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
@@ -409,73 +409,65 @@ async fn update_currency_and_place_backed_up_orders(
         return;
     };
 
-    let strat_orders = backed_up_orders.load_orders(strategy_name).unwrap();
-    if !strat_orders
-        .as_ref()
-        .is_none_or(|strat_orders_vec| strat_orders_vec.is_empty())
-    {
-        let current_positions_currency = match current_positions_crud.read(&pk).await {
-            Ok(v) => v,
+    let has_parked_orders = match backed_up_orders.load_orders(strategy_name) {
+        Ok(orders) => orders.is_some_and(|orders| !orders.is_empty()),
+        Err(e) => {
+            tracing::error!("Failed to read backed_up_orders for {strategy_name}: {e:?}");
+            return;
+        }
+    };
+    if !has_parked_orders {
+        return;
+    }
+
+    let current_positions_currency = match current_positions_crud.read(&pk).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(
+                "Failed to fetch current currency position, ignoring backed_up_orders! Err: {e:?}"
+            );
+            return;
+        }
+    };
+
+    let currency_value = current_positions_currency
+        .expect("Expected current positions of currency not to be None")
+        .get_qty();
+    if currency_value <= 0.0 {
+        return;
+    }
+
+    let currency = pk
+        .get_stock()
+        .strip_prefix("CASH:")
+        .expect("Expected currency stock to have CASH: prefix")
+        .to_string();
+
+    let ready =
+        match backed_up_orders.remove_all_valid_orders(strategy_name, &currency, currency_value) {
+            Ok(ready) => ready,
             Err(e) => {
                 tracing::error!(
-                    "Failed to fetch current currency position, ignoring backed_up_orders! Err: {e:?}"
+                    "Failed to take placeable orders from backed_up_orders for {strategy_name}: {e:?}"
                 );
                 return;
             }
         };
 
-        let mut currency_value = current_positions_currency
-            .expect("Expected current positions of currency not to be None")
-            .get_qty();
-        if currency_value > 0.0 {
-            let new_backed_up_orders = strat_orders
-                .unwrap()
-                .into_iter()
-                .filter_map(|mut strat_order| {
-                    if !(strat_order.contract.currency.to_string()
-                        == pk
-                            .get_stock()
-                            .strip_prefix("CASH:")
-                            .expect("Expected currency stock to have CASH: prefix"))
-                    {
-                        return Some(strat_order);
-                    }
-                    let price: f64 = strat_order
-                        .order
-                        .order_ref
-                        .strip_prefix(format!("{}:", strategy_name).as_str())
-                        .expect("Expected strategy of execution update to be same as strat_order")
-                        .parse()
-                        .expect("Expected f64 string in order_ref");
-
-                    let required_currency =
-                        if strat_order.contract.security_type == SecurityType::Option {
-                            let multiplier: f64 = strat_order.contract.multiplier.parse().expect(
-                                "Expected contract multiplier of option contract to be f64",
-                            );
-                            strat_order.order.total_quantity * price * multiplier
-                        } else {
-                            strat_order.order.total_quantity * price
-                        };
-                    if required_currency < currency_value {
-                        currency_value -= required_currency;
-                        strat_order.order.order_ref = strategy_name.to_string();
-                        OrderEngine::place_order(
-                            handle.clone(),
-                            pool.clone(),
-                            &weak_client,
-                            strat_order,
-                        );
-                    }
-
-                    None
-                })
-                .collect::<Vec<OrderIBKR>>();
-            if let Err(e) = backed_up_orders.store_orders(strategy_name, &new_backed_up_orders) {
-                tracing::error!(
-                    "Failed to update backed_up_orders in update_currency_and_place_backed_up_orders: {e:?}"
-                );
-            }
+    let mut failed: Vec<OrderIBKR> = Vec::new();
+    for strat_order in ready {
+        let mut to_place = strat_order.clone();
+        // The parked copy keeps its "{strategy}:{price}" suffix so a failed placement can be
+        // re-parked and re-priced; only the submitted order carries the plain strategy.
+        to_place.order.order_ref = strategy_name.to_string();
+        let order_id = OrderEngine::place_order(handle.clone(), pool.clone(), &weak_client, to_place);
+        if order_id == -1 {
+            failed.push(strat_order);
+        }
+    }
+    if !failed.is_empty() {
+        if let Err(e) = backed_up_orders.insert_or_update_orders(strategy_name, &failed) {
+            tracing::error!("Failed to re-park orders after failed placement: {e:?}");
         }
     }
 }
