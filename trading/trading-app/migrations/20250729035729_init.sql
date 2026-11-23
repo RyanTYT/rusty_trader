@@ -166,8 +166,8 @@ CREATE TABLE trading.option_transactions (
     multiplier VARCHAR(50) NOT NULL,
     option_type option_type NOT NULL
 );
-CREATE UNIQUE INDEX option_transactions_unique_order_perm_id
-    ON trading.option_transactions(order_perm_id, time);
+-- CREATE UNIQUE INDEX option_transactions_unique_order_perm_id
+--     ON trading.option_transactions(order_perm_id, time);
 CREATE UNIQUE INDEX option_transactions_unique
     ON trading.option_transactions(stock, strategy, time, expiry, strike, multiplier, option_type);
 
