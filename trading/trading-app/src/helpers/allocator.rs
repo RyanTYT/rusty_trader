@@ -7,8 +7,10 @@
 //! the `order_ref` of every funding FX order.
 //!
 //! Invariants: a strategy may only be **credited** in a currency listed in its
-//! `cash_prefs` (decreases are unrestricted), `sum(delta) == 0`, and nothing
-//! is booked for a conversion that could not be planned.
+//! `cash_prefs` — an empty list means it accepts any currency and is paid in
+//! kind from whatever the hub holds (decreases are unrestricted),
+//! `sum(delta) == 0`, and nothing is booked for a conversion that could not be
+//! planned.
 //!
 //! Needs `Consolidator::get_fund_value(handle, pool) -> Result<f64, String>`
 //! and `OrderEngine::place_order_checked(handle, pool, weak_client, order)
@@ -164,9 +166,6 @@ pub fn fund_strategies(
         if !b.fund.weight.is_finite() || b.fund.weight < 0.0 {
             return Err(format!("funding: '{}' has negative weight", b.name));
         }
-        if b.fund.to_reallocate && b.fund.cash_prefs.is_empty() {
-            return Err(format!("funding: '{}' must declare cash_prefs", b.name));
-        }
     }
 
     // ── Solve: ration absolute wants across A, then knock out floor misses ──
@@ -320,6 +319,12 @@ pub fn fund_strategies(
     let mut fx: Vec<(String, String, f64)> = Vec::new();
     let mut pending = 0usize;
     for receiver in books.iter().filter(|b| b.participating && b.delta() > EPS) {
+        // Empty `cash_prefs` = accept anything: leg 2 pays this receiver in
+        // kind from whatever the hub holds, so there is nothing to convert
+        // and no preferred buy currency to convert into.
+        if receiver.fund.cash_prefs.is_empty() {
+            continue;
+        }
         let mut need = receiver.delta();
         for ccy in &receiver.fund.cash_prefs {
             if need <= EPS {
@@ -407,7 +412,8 @@ pub fn fund_strategies(
     let mut hub_balances = hub_cash(handle, &pool)?;
     for receiver in books.iter().filter(|b| b.participating && b.delta() > EPS) {
         let mut need = receiver.delta();
-        for ccy in &receiver.fund.cash_prefs {
+        let accepted = acceptable_currencies(&receiver.fund.cash_prefs, &hub_balances, &rates);
+        for ccy in &accepted {
             if need <= EPS {
                 break;
             }
@@ -453,6 +459,28 @@ pub fn fund_strategies(
         allocations,
         unallocated,
     })
+}
+
+/// Currencies a book accepts as credit, most-preferred first.
+///
+/// An empty `cash_prefs` means "accept anything": use the hub's positive
+/// balances, largest SGD value first, so funding finishes with as few
+/// currencies as possible and at most one balance is left partially drained.
+fn acceptable_currencies(
+    cash_prefs: &[String],
+    available: &BTreeMap<String, f64>,
+    rates: &BTreeMap<String, f64>,
+) -> Vec<String> {
+    if !cash_prefs.is_empty() {
+        return cash_prefs.to_vec();
+    }
+    let mut ranked: Vec<(String, f64)> = available
+        .iter()
+        .filter(|(_, qty)| **qty > EPS)
+        .map(|(ccy, qty)| (ccy.clone(), qty * rates.get(ccy).copied().unwrap_or(1.0)))
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.into_iter().map(|(ccy, _)| ccy).collect()
 }
 
 /// One additive CASH row write.
