@@ -159,26 +159,29 @@ impl OrderEngine {
     /// Plans how every order in one target-position update is paid for.
     ///
     /// # Sections
-    /// 1. Classify: `CASH:<ccy>` rows become spending budgets; every other diff is split
-    ///    into the quantity being closed and the quantity being opened
-    ///    (`closing = current_qty != 0 && current_qty * qty_diff < 0`).
+    /// 1. Classify: `CASH:<ccy>` rows carry the strategy's balance in that currency (their
+    ///    `qty_diff` is ignored); every other diff is split into the quantity being closed
+    ///    and the quantity being opened (`closing = current_qty != 0 && current_qty * qty_diff < 0`).
     /// 2. Value: each closing is valued once in its own currency, then ranked by its
     ///    base-currency value so `smallest first` is comparable across currencies.
-    /// 3. Fund: each opening draws from its currency budget, then from a closing in the
-    ///    same currency, then from one closing in another currency through a single FX leg.
+    /// 3. Fund: each opening draws from its own currency balance, then from a closing in the
+    ///    same currency, then from the other currency balances (largest first, as standalone
+    ///    FX sells), then from one closing in another currency through a single FX leg.
     ///    Anything left unfunded is deferred and never placed.
     /// 4. Assemble: one batch per contract, `[head]` or `[head, fx legs..]`, with the head
     ///    transmitting only after the last leg.
     ///
     /// # Assumptions
-    /// - Only a negative `CASH:` diff is spendable; a cash increase is not an instruction.
+    /// - Strategies using this branch delegate FX to the order engine: no naked `ForexPair`
+    ///   rows are expected in `target_positions` (any found are ignored), and a `CASH:<ccy>`
+    ///   row's `current_qty` is the strategy's true balance in that currency.
     /// - A conversion is one hop (`sell_ccy -> buy_ccy`). Deeper chains cannot be expressed
     ///   as an IBKR bracket (a child cannot have children), so they are deferred.
-    /// - A buy funded by a closing is parked, not placed: the `CASH:<buy_ccy>` credit from
-    ///   the FX fill is what places it.
+    /// - A buy funded by a closing or by a currency conversion is parked, not placed: the
+    ///   `CASH:<buy_ccy>` credit from the FX fill is what places it.
     /// - An identical order already in `order_store` is in flight and is not funded again.
-    /// - One closing can fund several buys (its cash is decremented); one buy is funded by
-    ///   at most one closing.
+    /// - One closing can fund several buys (its cash is decremented); a buy may be funded by
+    ///   several cash conversions (one FX order each) and waits for the total.
     /// - A flip (current 100, `qty_diff` -150) is a 100 close plus a 50 open, and the caller
     ///   places both.
     /// - Prices fall back to `avg_price`; a zero price defers the opening.
@@ -224,18 +227,23 @@ impl OrderEngine {
                 }
             };
 
-            // A cash row is a spending budget only when the target decreases.
+            // A cash row is the currency's funding capacity: the balance itself,
+            // not the per-bar delta. Any qty_diff on these rows is ignored.
             if let TargetPositionsQtyDiff::Stock(v) = pos_diff {
                 if v.stock.starts_with("CASH:") {
-                    let budget = (-qty_diff).max(0.0);
-                    if budget > 0.0 {
-                        *budgets.entry(currency).or_insert(0.0) += budget;
+                    if current_qty > 0.0 {
+                        *budgets.entry(currency).or_insert(0.0) += current_qty;
                     }
                     continue;
                 }
             }
 
             let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
+
+            // FX is delegated to the order engine; never place a naked pair.
+            if contract.security_type == SecurityType::ForexPair {
+                continue;
+            }
             let label = format!("{}, {}", contract.symbol, contract.security_type);
             let multiplier = if contract.security_type == SecurityType::Option {
                 contract.multiplier.parse::<f64>().unwrap_or(1.0)
@@ -317,6 +325,18 @@ impl OrderEngine {
             }
         }
 
+        // The strategy's total cash, valued in the base currency. Only a stop
+        // condition and the ordering key - each currency's balance stays the
+        // hard limit.
+        let mut base_funds: f64 = budgets
+            .iter()
+            .filter_map(|(ccy, amt)| {
+                fx_conversion_rate(&fetch_price, ccy, BASE_CURRENCY)
+                    .ok()
+                    .map(|rate| amt * rate)
+            })
+            .sum();
+
         // 2. Value: rank closings by base-currency value, smallest first.
         ranked_closings.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut closings: Vec<ClosingPosition> = ranked_closings
@@ -345,8 +365,12 @@ impl OrderEngine {
                 if let Some(budget) = budgets.get_mut(&opening.currency) {
                     *budget = (*budget - draw).max(0.0);
                 }
+                if let Ok(rate) = fx_conversion_rate(&fetch_price, &opening.currency, BASE_CURRENCY) {
+                    base_funds -= draw * rate;
+                }
             }
-            let residual = opening.required - draw;
+            let mut residual = opening.required - draw;
+            let mut funded_any = draw > 0.0;
             if residual <= 1e-9 {
                 plan.order_batches.push(vec![opening.order_ibkr]);
                 continue;
@@ -357,6 +381,67 @@ impl OrderEngine {
             });
             if let Some(index) = same_currency {
                 closings[index].cash_remaining -= residual;
+                plan.parked_orders.push(opening.order_ibkr);
+                continue;
+            }
+
+            // 5b. Other-currency cash: sell from the largest pools first.
+            if residual > 1e-9 {
+                let mut pools: Vec<(String, f64)> = budgets
+                    .iter()
+                    .filter(|(ccy, amt)| ccy.as_str() != opening.currency && **amt > 1e-9)
+                    .filter_map(|(ccy, amt)| {
+                        fx_conversion_rate(&fetch_price, ccy, BASE_CURRENCY)
+                            .ok()
+                            .map(|rate| (ccy.clone(), amt * rate))
+                    })
+                    .collect();
+                pools.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+                for (ccy, _) in pools {
+                    if residual <= 1e-9 || base_funds <= 1e-9 {
+                        break;
+                    }
+
+                    let Ok(rate) = fx_conversion_rate(&fetch_price, &ccy, &opening.currency) else {
+                        continue;
+                    };
+                    let Ok(base_rate) = fx_conversion_rate(&fetch_price, &ccy, BASE_CURRENCY) else {
+                        continue;
+                    };
+                    if rate <= 0.0 {
+                        continue;
+                    }
+
+                    let available = budgets.get(&ccy).copied().unwrap_or(0.0).max(0.0);
+                    let consumed = (residual / rate).min(available);
+                    if consumed <= 1e-9 {
+                        continue;
+                    }
+
+                    if let Some(budget) = budgets.get_mut(&ccy) {
+                        *budget = (*budget - consumed).max(0.0);
+                    }
+                    base_funds -= consumed * base_rate;
+                    residual -= consumed * rate;
+                    funded_any = true;
+
+                    let fx_contract = Contract {
+                        symbol: Symbol::new(ccy.as_str()),
+                        security_type: SecurityType::ForexPair,
+                        exchange: "IDEALPRO".into(),
+                        currency: Currency(opening.currency.clone()),
+                        ..Default::default()
+                    };
+                    let mut fx_order = market_order(Action::Sell, consumed);
+                    fx_order.order_ref = strategy_name.to_string();
+                    fx_order.transmit = true; // root order: no parent to wait for
+
+                    plan.order_batches.push(vec![OrderIBKR::new(fx_contract, fx_order, -1)]);
+                }
+            }
+
+            if residual <= 1e-9 {
                 plan.parked_orders.push(opening.order_ibkr);
                 continue;
             }
@@ -407,10 +492,16 @@ impl OrderEngine {
                 continue;
             }
 
-            tracing::error!(
-                "Order for ({}) cannot be fulfilled for Strategy ({strategy_name})",
-                opening.label
-            );
+            if funded_any {
+                // Cash was already committed to this buy; park it and let the
+                // rest of the balance arrive.
+                plan.parked_orders.push(opening.order_ibkr);
+            } else {
+                tracing::error!(
+                    "Order for ({}) cannot be fulfilled for Strategy ({strategy_name})",
+                    opening.label
+                );
+            }
         }
 
         // 4. Assemble: head, then legs; only the last leg transmits, otherwise the
