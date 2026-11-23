@@ -267,29 +267,33 @@ impl OrderEngine {
             });
 
             if qty_closed > 0.0 {
+                // Always place the closing order; a missing/zero price only means it cannot
+                // fund anything this bar, not that the position should stay open.
                 let cash = qty_closed * price * multiplier;
-                if cash > 0.0 {
-                    let rank = fx_conversion_rate(&fetch_price, &currency, BASE_CURRENCY)
+                let rank = if cash > 0.0 {
+                    fx_conversion_rate(&fetch_price, &currency, BASE_CURRENCY)
                         .map(|rate| cash * rate)
-                        .unwrap_or(cash);
-                    let close_action = if qty_diff < 0.0 { Action::Sell } else { Action::Buy };
-                    let mut close_order = if avg_price == 0.0 {
-                        market_order(close_action, qty_closed)
-                    } else {
-                        limit_order(close_action, qty_closed, avg_price)
-                    };
-                    close_order.order_ref = strategy_name.to_string();
-                    close_order.transmit = true;
-                    ranked_closings.push((
-                        rank,
-                        ClosingPosition {
-                            currency: currency.clone(),
-                            cash_remaining: cash,
-                            order_ibkr: OrderIBKR::new(contract.clone(), close_order, -1),
-                            legs: Vec::new(),
-                        },
-                    ));
-                }
+                        .unwrap_or(cash)
+                } else {
+                    0.0
+                };
+                let close_action = if qty_diff < 0.0 { Action::Sell } else { Action::Buy };
+                let mut close_order = if avg_price == 0.0 {
+                    market_order(close_action, qty_closed)
+                } else {
+                    limit_order(close_action, qty_closed, avg_price)
+                };
+                close_order.order_ref = strategy_name.to_string();
+                close_order.transmit = true;
+                ranked_closings.push((
+                    rank,
+                    ClosingPosition {
+                        currency: currency.clone(),
+                        cash_remaining: cash,
+                        order_ibkr: OrderIBKR::new(contract.clone(), close_order, -1),
+                        legs: Vec::new(),
+                    },
+                ));
             }
 
             if qty_opened > 0.0 {
