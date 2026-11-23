@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use ibapi::{
     Client,
     accounts::{PositionUpdateMulti, types::AccountId},
-    contracts::SecurityType,
+    contracts::{Currency, SecurityType},
     orders::{ExecutionData, ExecutionFilter, Executions, Order, OrderStatus},
     prelude::Contract,
 };
@@ -385,21 +385,45 @@ impl SyncOps for SyncerEngine {
             Ok(current_option_positions) => {
                 tracing::info!("Received local option positions, inserting into stock_map now");
                 for position in current_option_positions {
-                    let (stock, expiry, strike, option_type, quantity) = match position {
+                    let (
+                        stock,
+                        expiry,
+                        strike,
+                        option_type,
+                        quantity,
+                        primary_exchange,
+                        currency,
+                        multiplier,
+                    ) = match position {
                         CurrentPositionsFullKeys::Options(CurrentOptionPositionsFullKeys {
                             stock,
                             expiry,
                             strike,
                             option_type,
                             quantity,
+                            primary_exchange,
+                            currency,
+                            multiplier,
                             ..
-                        }) => (stock, expiry, strike, option_type, quantity),
+                        }) => (
+                            stock,
+                            expiry,
+                            strike,
+                            option_type,
+                            quantity,
+                            primary_exchange,
+                            currency,
+                            multiplier,
+                        ),
                         _ => {
                             return;
                         }
                     };
-                    let built_contract =
+                    let mut built_contract =
                         Contract::option(&stock, &expiry, strike, &option_type.to_string());
+                    built_contract.primary_exchange = ibapi::contracts::Exchange(primary_exchange);
+                    built_contract.currency = Currency::from(currency);
+                    built_contract.multiplier = multiplier.clone();
                     let hashed_contract = HashContract {
                         contract: built_contract,
                     };
