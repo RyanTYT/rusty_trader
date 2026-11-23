@@ -486,6 +486,21 @@ impl OrderEngine {
                         };
                     }
 
+                    // Standalone FX conversions: submitted directly, never as a
+                    // strategy head, so they cannot trigger the book-wide
+                    // cancel/resize logic.
+                    for order in fx_plan.root_orders {
+                        Self::place_orders(
+                            self.tokio_handle.clone(),
+                            self.pool.clone(),
+                            #[cfg(not(feature = "backtest"))]
+                            &weak_client,
+                            #[cfg(feature = "backtest")]
+                            submitter,
+                            std::iter::once(order),
+                        );
+                    }
+
                     if !fx_plan.parked_orders.is_empty() {
                         if let Err(e) = order_store
                             .insert_or_update_orders(&strategy_name_orig, &fx_plan.parked_orders)

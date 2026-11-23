@@ -42,6 +42,10 @@ pub struct FxFundingPlan {
     /// One batch per contract; the first order is the head that
     /// `on_new_qty_diff_for_strat` uses as the canonical contract.
     pub order_batches: Vec<Vec<OrderIBKR>>,
+    /// Standalone FX conversions. They carry no target, so they must not go
+    /// through `on_new_qty_diff_for_strat` (which would read the FX quantity as
+    /// the strategy's target and reconcile the whole book against it).
+    pub root_orders: Vec<OrderIBKR>,
     /// Buys that have to wait for a currency credit before they can be placed.
     pub parked_orders: Vec<OrderIBKR>,
 }
@@ -429,7 +433,7 @@ impl OrderEngine {
                     fx_order.order_ref = strategy_name.to_string();
                     fx_order.transmit = true; // root order: no parent to wait for
 
-                    plan.order_batches.push(vec![OrderIBKR::new(fx_contract, fx_order, -1)]);
+                    plan.root_orders.push(OrderIBKR::new(fx_contract, fx_order, -1));
                 }
             }
 
