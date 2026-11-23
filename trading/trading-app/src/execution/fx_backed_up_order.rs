@@ -115,6 +115,50 @@ impl OrderStore {
         Ok(())
     }
 
+    /// Removes `orders` from the parked list for `key` in one write transaction.
+    /// Matching uses `OrderIBKR` equality, so the `"{strategy}:{price}"` suffix is ignored
+    /// and a plain-strategy order matches its parked counterpart.
+    pub fn remove_orders(&self, key: &str, orders: &[OrderIBKR]) -> Result<(), String> {
+        if orders.is_empty() {
+            return Ok(());
+        }
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| format!("Failed to begin write transaction: {e}"))?;
+        {
+            let mut table = write_txn
+                .open_table(ORDERS_TABLE)
+                .map_err(|e| format!("Failed to open table: {e}"))?;
+
+            let existing: Vec<OrderIBKR> = match table
+                .get(key)
+                .map_err(|e| format!("Failed to read key '{key}' from table: {e}"))?
+            {
+                Some(access) => postcard::from_bytes(access.value())
+                    .map_err(|e| format!("Failed to deserialize orders for key '{key}': {e}"))?,
+                None => return Ok(()),
+            };
+
+            let kept: Vec<OrderIBKR> = existing
+                .into_iter()
+                .filter(|parked| !orders.iter().any(|removed| removed == parked))
+                .collect();
+
+            let payload = postcard::to_allocvec(&kept)
+                .map_err(|e| format!("Failed to serialize orders for key '{key}': {e}"))?;
+            table
+                .insert(key, payload.as_slice())
+                .map_err(|e| format!("Failed to insert orders for key '{key}': {e}"))?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| format!("Failed to commit transaction: {e}"))?;
+
+        Ok(())
+    }
+
     /// Removes and returns every parked order for `key` that is denominated in
     /// `currency` and fully covered by `available`, in one write transaction.
     /// Orders that cannot be placed stay in the store untouched, in their original order.

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(not(feature = "backtest"))]
 use std::sync::Weak;
 
@@ -44,8 +44,6 @@ pub struct FxFundingPlan {
     pub order_batches: Vec<Vec<OrderIBKR>>,
     /// Buys that have to wait for a currency credit before they can be placed.
     pub parked_orders: Vec<OrderIBKR>,
-    /// Buys that could not be funded at all this bar. They must not be placed.
-    pub deferred_buys: HashSet<HashContract>,
 }
 
 impl OrderEngine {
@@ -285,9 +283,6 @@ impl OrderEngine {
                     ranked_closings.push((
                         rank,
                         ClosingPosition {
-                            hash_contract: HashContract {
-                                contract: contract.clone(),
-                            },
                             currency: currency.clone(),
                             cash_remaining: cash,
                             order_ibkr: OrderIBKR::new(contract.clone(), close_order, -1),
@@ -310,9 +305,6 @@ impl OrderEngine {
                 order.order_ref = format!("{}:{}", strategy_name, price);
                 order.transmit = true;
                 openings.push(OpeningPosition {
-                    hash_contract: HashContract {
-                        contract: contract.clone(),
-                    },
                     label,
                     currency,
                     required,
@@ -335,7 +327,6 @@ impl OrderEngine {
                     "Order for ({}) cannot be fulfilled for Strategy ({strategy_name}): no price available",
                     opening.label
                 );
-                plan.deferred_buys.insert(opening.hash_contract);
                 continue;
             }
 
@@ -416,7 +407,6 @@ impl OrderEngine {
                 "Order for ({}) cannot be fulfilled for Strategy ({strategy_name})",
                 opening.label
             );
-            plan.deferred_buys.insert(opening.hash_contract);
         }
 
         // 4. Assemble: head, then legs; only the last leg transmits, otherwise the
@@ -439,7 +429,6 @@ impl OrderEngine {
 }
 
 struct ClosingPosition {
-    hash_contract: HashContract,
     currency: String,
     cash_remaining: f64,
     order_ibkr: OrderIBKR,
@@ -447,7 +436,6 @@ struct ClosingPosition {
 }
 
 struct OpeningPosition {
-    hash_contract: HashContract,
     label: String,
     currency: String,
     required: f64,

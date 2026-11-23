@@ -19,7 +19,6 @@
 use crate::backtester::setup::config::BacktestMode;
 use ibapi::{
     Client,
-    contracts::SecurityType,
     orders::{
         Action, Order,
         order_builder::{limit_order, market_order},
@@ -28,7 +27,7 @@ use ibapi::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 #[cfg(not(feature = "backtest"))]
 use std::sync::Weak;
 
@@ -41,11 +40,8 @@ use crate::{
                 OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersOps, OpenOrdersPrimaryKeys,
                 OpenOrdersUpdateKeys,
             },
-            target_positions::{
-                target_positions::{
-                    TargetPositionsCRUD, TargetPositionsOps, TargetPositionsQtyDiff,
-                },
-                target_stock_positions::TargetStockPositionsQtyDiff,
+            target_positions::target_positions::{
+                TargetPositionsCRUD, TargetPositionsOps, TargetPositionsQtyDiff,
             },
         },
     },
@@ -586,22 +582,6 @@ impl OrderEngine {
         });
 
         for (strategy_name, local_open_orders) in to_delete_from_order_store.iter() {
-            let open_orders = match order_store.load_orders(&strategy_name) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        "Error trying to access order store while managing open orders: {e:?}"
-                    );
-                    return;
-                }
-            };
-            if open_orders.is_none() {
-                tracing::error!(
-                    "Order Store doesn't contain open order, but was trying to cancel open order!"
-                );
-                return;
-            }
-
             let orders_to_remove: Vec<OrderIBKR> = local_open_orders
                 .into_iter()
                 .map(|open_order| OrderIBKR {
@@ -621,20 +601,11 @@ impl OrderEngine {
                     references_parent_order: -1,
                 })
                 .collect();
-            let new_open_orders = open_orders
-                .unwrap()
-                .into_iter()
-                .filter(|order| {
-                    !orders_to_remove
-                        .iter()
-                        .any(|removed_order| removed_order == order)
-                })
-                .collect::<Vec<OrderIBKR>>();
-            if let Err(e) = order_store.store_orders(&strategy_name, &new_open_orders) {
+            if let Err(e) = order_store.remove_orders(&strategy_name, &orders_to_remove) {
                 tracing::error!(
-                    "Failed to store updated open orders to redb backed_up_orders after cancelling open orders: {e:?}"
+                    "Failed to remove cancelled orders from redb backed_up_orders for Strategy ({strategy_name}): {e:?}"
                 );
-            };
+            }
         }
     }
 
