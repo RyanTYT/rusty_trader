@@ -164,10 +164,11 @@ impl OrderEngine {
     ///    and the quantity being opened (`closing = current_qty != 0 && current_qty * qty_diff < 0`).
     /// 2. Value: each closing is valued once in its own currency, then ranked by its
     ///    base-currency value so `smallest first` is comparable across currencies.
-    /// 3. Fund: each opening draws from its own currency balance, then from a closing in the
-    ///    same currency, then from the other currency balances (largest first, as standalone
-    ///    FX sells), then from one closing in another currency through a single FX leg.
-    ///    Anything left unfunded is deferred and never placed.
+    /// 3. Fund: each opening draws from its own currency balance, then from the other
+    ///    currency balances (largest first, as standalone FX sells), then from a closing in
+    ///    the same currency, then from one closing in another currency through a single FX
+    ///    leg. A buy that committed any cash but is still short is parked, never placed
+    ///    directly.
     /// 4. Assemble: one batch per contract, `[head]` or `[head, fx legs..]`, with the head
     ///    transmitting only after the last leg.
     ///
@@ -376,15 +377,6 @@ impl OrderEngine {
                 continue;
             }
 
-            let same_currency = closings.iter().position(|closing| {
-                closing.currency == opening.currency && closing.cash_remaining + 1e-9 >= residual
-            });
-            if let Some(index) = same_currency {
-                closings[index].cash_remaining -= residual;
-                plan.parked_orders.push(opening.order_ibkr);
-                continue;
-            }
-
             // 5b. Other-currency cash: sell from the largest pools first.
             if residual > 1e-9 {
                 let mut pools: Vec<(String, f64)> = budgets
@@ -442,6 +434,16 @@ impl OrderEngine {
             }
 
             if residual <= 1e-9 {
+                plan.parked_orders.push(opening.order_ibkr);
+                continue;
+            }
+
+            // 5c. Same-currency closing: no conversion needed.
+            let same_currency = closings.iter().position(|closing| {
+                closing.currency == opening.currency && closing.cash_remaining + 1e-9 >= residual
+            });
+            if let Some(index) = same_currency {
+                closings[index].cash_remaining -= residual;
                 plan.parked_orders.push(opening.order_ibkr);
                 continue;
             }
