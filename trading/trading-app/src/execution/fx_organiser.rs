@@ -107,9 +107,14 @@ impl OrderEngine {
                 let is_same_currency =
                     ib_fx_contract.symbol.as_str() == ib_fx_contract.currency.as_str();
 
+                #[cfg(not(feature = "backtest"))]
                 let conversion_price = consolidator
                     .upgrade()
                     .expect("Expected consolidator to still be alive when in fx_organiser")
+                    .get_current_price(ib_fx_contract, false, &[])
+                    .expect("Expected to be able to get FX conversion rate from consolidator in fx_organiser");
+                #[cfg(feature = "backtest")]
+                let conversion_price = price_supplier
                     .get_current_price(ib_fx_contract, false, &[])
                     .expect("Expected to be able to get FX conversion rate from consolidator in fx_organiser");
                 let consumed = proceeds.min(remaining_shortfall / conversion_price);
@@ -206,14 +211,15 @@ impl OrderEngine {
                 .get_current_price(contract, false, &[])
         };
         #[cfg(feature = "backtest")]
-        let fetch_price =
-            |contract: Contract| -> Result<f64, String> {
-                price_supplier.get_current_price(contract, false, &[])
-            };
+        let fetch_price = |contract: Contract| -> Result<f64, String> {
+            price_supplier.get_current_price(contract, false, &[])
+        };
 
         let stored_orders = order_store
             .load_orders(strategy_name)
-            .map_err(|e| format!("Could not load parked orders for Strategy ({strategy_name}): {e}"))?
+            .map_err(|e| {
+                format!("Could not load parked orders for Strategy ({strategy_name}): {e}")
+            })?
             .unwrap_or_default();
 
         let mut plan = FxFundingPlan::default();
@@ -243,7 +249,8 @@ impl OrderEngine {
                 }
             }
 
-            let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
+            let contract =
+                get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
 
             // FX is delegated to the order engine; never place a naked pair.
             if contract.security_type == SecurityType::ForexPair {
@@ -270,7 +277,8 @@ impl OrderEngine {
                 let mut head = market_order(Action::Buy, 0.0);
                 head.order_ref = strategy_name.to_string();
                 head.transmit = false;
-                plan.order_batches.push(vec![OrderIBKR::new(contract, head, -1)]);
+                plan.order_batches
+                    .push(vec![OrderIBKR::new(contract, head, -1)]);
                 continue;
             }
 
@@ -290,7 +298,11 @@ impl OrderEngine {
                 } else {
                     0.0
                 };
-                let close_action = if qty_diff < 0.0 { Action::Sell } else { Action::Buy };
+                let close_action = if qty_diff < 0.0 {
+                    Action::Sell
+                } else {
+                    Action::Buy
+                };
                 let mut close_order = if avg_price == 0.0 {
                     market_order(close_action, qty_closed)
                 } else {
@@ -360,17 +372,25 @@ impl OrderEngine {
             }
 
             // Never fund an order that is already in flight.
-            if stored_orders.iter().any(|parked| parked == &opening.order_ibkr) {
+            if stored_orders
+                .iter()
+                .any(|parked| parked == &opening.order_ibkr)
+            {
                 continue;
             }
 
-            let available = budgets.get(&opening.currency).copied().unwrap_or(0.0).max(0.0);
+            let available = budgets
+                .get(&opening.currency)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0);
             let draw = available.min(opening.required);
             if draw > 0.0 {
                 if let Some(budget) = budgets.get_mut(&opening.currency) {
                     *budget = (*budget - draw).max(0.0);
                 }
-                if let Ok(rate) = fx_conversion_rate(&fetch_price, &opening.currency, BASE_CURRENCY) {
+                if let Ok(rate) = fx_conversion_rate(&fetch_price, &opening.currency, BASE_CURRENCY)
+                {
                     base_funds -= draw * rate;
                 }
             }
@@ -402,7 +422,8 @@ impl OrderEngine {
                     let Ok(rate) = fx_conversion_rate(&fetch_price, &ccy, &opening.currency) else {
                         continue;
                     };
-                    let Ok(base_rate) = fx_conversion_rate(&fetch_price, &ccy, BASE_CURRENCY) else {
+                    let Ok(base_rate) = fx_conversion_rate(&fetch_price, &ccy, BASE_CURRENCY)
+                    else {
                         continue;
                     };
                     if rate <= 0.0 {
@@ -433,7 +454,8 @@ impl OrderEngine {
                     fx_order.order_ref = strategy_name.to_string();
                     fx_order.transmit = true; // root order: no parent to wait for
 
-                    plan.root_orders.push(OrderIBKR::new(fx_contract, fx_order, -1));
+                    plan.root_orders
+                        .push(OrderIBKR::new(fx_contract, fx_order, -1));
                 }
             }
 
@@ -457,18 +479,19 @@ impl OrderEngine {
                 if closing.currency == opening.currency || closing.cash_remaining <= 1e-9 {
                     continue;
                 }
-                let rate = match fx_conversion_rate(&fetch_price, &closing.currency, &opening.currency) {
-                    Ok(rate) if rate > 0.0 => rate,
-                    Ok(_) => continue,
-                    Err(e) => {
-                        tracing::warn!(
-                            "No FX rate {} -> {} for Strategy ({strategy_name}): {e}",
-                            closing.currency,
-                            opening.currency
-                        );
-                        continue;
-                    }
-                };
+                let rate =
+                    match fx_conversion_rate(&fetch_price, &closing.currency, &opening.currency) {
+                        Ok(rate) if rate > 0.0 => rate,
+                        Ok(_) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "No FX rate {} -> {} for Strategy ({strategy_name}): {e}",
+                                closing.currency,
+                                opening.currency
+                            );
+                            continue;
+                        }
+                    };
                 let consumed = residual / rate;
                 if consumed <= closing.cash_remaining + 1e-9 {
                     one_hop = Some((index, consumed));
