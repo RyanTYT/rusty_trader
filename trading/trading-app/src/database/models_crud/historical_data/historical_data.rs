@@ -1,30 +1,24 @@
 use async_trait::async_trait;
 #[cfg(feature = "backtest")]
 use chrono::TimeZone;
-use chrono::{DateTime, Timelike, Utc};
-use chrono_tz::{America::New_York, Tz};
+use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
-use ordered_float::OrderedFloat;
-use rust_decimal::{
-    Decimal, dec,
-    prelude::{FromPrimitive, ToPrimitive},
-};
+use rust_decimal::{Decimal, dec, prelude::FromPrimitive};
 use sqlx::{PgPool, prelude::FromRow};
 
 use crate::{
     database::{
         models::{
-            AssetType, DailyHistoricalStockDataFullKeys, DailyHistoricalStockDataPrimaryKeys,
-            DailyHistoricalStockDataPrimaryKeysWoTime, DailyHistoricalStockDataUpdateKeys,
-            HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys,
-            HistoricalForexDataPrimaryKeysWoTime, HistoricalForexDataUpdateKeys,
-            HistoricalOptionsDataFullKeys, HistoricalOptionsDataPrimaryKeys,
-            HistoricalOptionsDataPrimaryKeysWoTime, HistoricalOptionsDataUpdateKeys,
-            HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
-            HistoricalStockDataPrimaryKeysWoTime, HistoricalStockDataUpdateKeys, OptionType,
+            AssetType, DailyHistoricalStockDataPrimaryKeys, HistoricalForexDataFullKeys,
+            HistoricalForexDataPrimaryKeys, HistoricalForexDataPrimaryKeysWoTime,
+            HistoricalForexDataUpdateKeys, HistoricalOptionsDataFullKeys,
+            HistoricalOptionsDataPrimaryKeys, HistoricalOptionsDataPrimaryKeysWoTime,
+            HistoricalOptionsDataUpdateKeys, HistoricalStockDataFullKeys,
+            HistoricalStockDataPrimaryKeys, HistoricalStockDataPrimaryKeysWoTime,
+            HistoricalStockDataUpdateKeys, OptionType,
         },
         models_crud::historical_data::{
-            daily_historical_data::DailyHistoricalStockDataCRUD,
             historical_forex_data::HistoricalForexDataCRUD,
             historical_options_data::HistoricalOptionsDataCRUD,
             historical_stock_data::HistoricalStockDataCRUD,
@@ -37,7 +31,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum HistoricalDataCRUD {
     Stock(HistoricalStockDataCRUD),
-    DailyStock(DailyHistoricalStockDataCRUD),
     Options(HistoricalOptionsDataCRUD),
     Forex(HistoricalForexDataCRUD),
 }
@@ -45,7 +38,6 @@ pub enum HistoricalDataCRUD {
 #[derive(Debug, Clone)]
 pub enum HistoricalDataFullKeys {
     Stock(HistoricalStockDataFullKeys),
-    DailyStock(DailyHistoricalStockDataFullKeys),
     Options(HistoricalOptionsDataFullKeys),
     Forex(HistoricalForexDataFullKeys),
 }
@@ -68,7 +60,6 @@ macro_rules! delegate_price {
                     Self::Stock(v) => v.$field,
                     Self::Options(v) => v.$field,
                     Self::Forex(v) => v.$ask_field.unwrap_or(v.$bid_field.unwrap_or(-1.0)),
-                    Self::DailyStock(v) => v.$field.to_f64().expect("Expected conversion to f64"),
                 }
             }
         )+
@@ -89,7 +80,6 @@ impl HistoricalDataFullKeys {
             Self::Stock(v) => v.time,
             Self::Forex(v) => v.time,
             Self::Options(v) => v.time,
-            Self::DailyStock(v) => v.day,
         }
     }
 
@@ -111,7 +101,6 @@ impl HistoricalDataFullKeys {
             Self::Stock(v) => v.volume,
             Self::Forex(_) => panic!("Tried to get volume from forex bar"),
             Self::Options(v) => v.volume,
-            Self::DailyStock(v) => v.volume,
         }
     }
 
@@ -298,7 +287,6 @@ impl HistoricalDataPrimaryKeys {
 #[derive(Debug, Clone)]
 pub enum HistoricalDataPrimaryKeysWoTime {
     Stock(HistoricalStockDataPrimaryKeysWoTime),
-    DailyStock(DailyHistoricalStockDataPrimaryKeysWoTime),
     Options(HistoricalOptionsDataPrimaryKeysWoTime),
     Forex(HistoricalForexDataPrimaryKeysWoTime),
 }
@@ -337,7 +325,6 @@ impl HistoricalDataPrimaryKeysWoTime {
 #[derive(Debug, Clone)]
 pub enum HistoricalDataUpdateKeys {
     Stock(HistoricalStockDataUpdateKeys),
-    DailyStock(DailyHistoricalStockDataUpdateKeys),
     Options(HistoricalOptionsDataUpdateKeys),
     Forex(HistoricalForexDataUpdateKeys),
 }
@@ -351,13 +338,6 @@ impl HistoricalDataUpdateKeys {
         // Step 1: Extract OHLCV fields by destructuring `bar`
         let (open, high, low, close, volume) = match bar {
             HistoricalDataFullKeys::Stock(s) => (s.open, s.high, s.low, s.close, Some(s.volume)),
-            HistoricalDataFullKeys::DailyStock(s) => (
-                s.open.to_f64().unwrap(),
-                s.high.to_f64().unwrap(),
-                s.low.to_f64().unwrap(),
-                s.close.to_f64().unwrap(),
-                Some(s.volume),
-            ),
             HistoricalDataFullKeys::Options(o) => (o.open, o.high, o.low, o.close, Some(o.volume)),
             HistoricalDataFullKeys::Forex(f) => {
                 // If Forex holds bid/ask fields internally, handle fallback values appropriately:
@@ -446,16 +426,11 @@ impl HistoricalDataCRUD {
             Self::Stock(stk) => &stk.crud.pool,
             Self::Forex(fx) => &fx.crud.pool,
             Self::Options(opt) => &opt.crud.pool,
-            Self::DailyStock(daily_stk) => &daily_stk.crud.pool,
         }
     }
 
     pub fn stock(pool: PgPool) -> Self {
         Self::Stock(HistoricalStockDataCRUD::new(pool))
-    }
-
-    pub fn daily_stock(pool: PgPool) -> Self {
-        Self::DailyStock(DailyHistoricalStockDataCRUD::new(pool))
     }
 
     pub fn option(pool: PgPool) -> Self {
@@ -483,7 +458,7 @@ implement_crud_trait_for_interface!(
     HistoricalDataFullKeys,
     HistoricalDataPrimaryKeys,
     HistoricalDataUpdateKeys,
-    [Stock, DailyStock, Options, Forex]
+    [Stock, Options, Forex]
 );
 
 pub enum VwapBarValue {
@@ -553,31 +528,6 @@ pub trait NoiseOps {
         now: DateTime<Utc>,
         avg_move_lookback: i64,
     ) -> Result<f64, String>;
-
-    async fn get_most_recent_daily_open(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        #[cfg(feature = "backtest")] now: DateTime<Utc>,
-    ) -> Result<f64, String>;
-
-    #[cfg(not(feature = "backtest"))]
-    async fn get_daily_vol(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        vol_lookback: i64,
-    ) -> Result<f64, String>;
-    #[cfg(feature = "backtest")]
-    async fn get_daily_vol(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        now: DateTime<Utc>,
-        vol_lookback: i64,
-    ) -> Result<f64, String>;
-}
-
-#[async_trait::async_trait]
-pub trait TimescaleDbOps {
-    async fn refresh_daily_data(&self) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone)]
@@ -827,92 +777,6 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     }
                 }
             }
-
-            HistoricalDataPrimaryKeysWoTime::DailyStock(
-                DailyHistoricalStockDataPrimaryKeysWoTime {
-                    stock,
-                    primary_exchange,
-                    currency,
-                },
-            ) => {
-                #[cfg(feature = "backtest")]
-                let max_complete_day: chrono::DateTime<chrono::Utc> = {
-                    let now_eastern = now.with_timezone(&New_York);
-                    let today_eastern = now_eastern.date_naive();
-
-                    let market_close_today = today_eastern
-                        .and_hms_opt(16, 0, 0)
-                        .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
-                        .unwrap();
-
-                    if now_eastern < market_close_today {
-                        // Cut off at the end of yesterday (23:59:59.999 Eastern converted to UTC)
-                        let yesterday = today_eastern.pred_opt().unwrap_or(today_eastern);
-                        yesterday
-                            .and_hms_micro_opt(23, 59, 59, 999_999)
-                            .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
-                            .unwrap()
-                            .with_timezone(&chrono::Utc)
-                    } else {
-                        // Cut off at the end of today (23:59:59.999 Eastern converted to UTC)
-                        today_eastern
-                            .and_hms_micro_opt(23, 59, 59, 999_999)
-                            .and_then(|naive| New_York.from_local_datetime(&naive).earliest())
-                            .unwrap()
-                            .with_timezone(&chrono::Utc)
-                    }
-                };
-                #[cfg(not(feature = "backtest"))]
-                let max_complete_day = now;
-
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT
-                        day as "day!",
-                        stock as "stock!",
-                        primary_exchange as "primary_exchange!",
-                        currency as "currency!",
-                        open as "open!",
-                        high as "high!",
-                        low as "low!",
-                        close as "close!",
-                        volume as "volume!"
-                    FROM market_data.daily_ohlcv
-                    WHERE stock = $1
-                      AND primary_exchange = $2
-                      AND currency = $3
-                      AND day <= $5
-                    ORDER BY day DESC
-                    LIMIT $4
-                    "#,
-                    stock,
-                    primary_exchange,
-                    currency,
-                    limit as i32,
-                    max_complete_day
-                )
-                .fetch_all(self.get_pg_pool())
-                .await
-                .map_err(|e| {
-                    format!("Error reading daily historical bars in read_last_n: {}", e)
-                })?;
-
-                for row in rows.iter() {
-                    let bar =
-                        HistoricalDataFullKeys::DailyStock(DailyHistoricalStockDataFullKeys {
-                            day: row.day,
-                            stock: row.stock.clone(),
-                            primary_exchange: row.primary_exchange.clone(),
-                            currency: row.currency.clone(),
-                            open: row.open,
-                            high: row.high,
-                            low: row.low,
-                            close: row.close,
-                            volume: row.volume,
-                        });
-                    full.push(bar);
-                }
-            }
         };
 
         full.reverse(); // chronological
@@ -1094,10 +958,6 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                         )
                     })?
             }
-
-            HistoricalDataPrimaryKeysWoTime::DailyStock(_) => {
-                return Err("Tried to get vwap price using daily stock data: currently only works for daily".to_string());
-            }
         };
 
         Ok(vwap_opt.map(|v| v.vwap))
@@ -1196,32 +1056,6 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 .fetch_one(self.get_pg_pool())
                 .await
             }
-            HistoricalDataPrimaryKeysWoTime::DailyStock(
-                DailyHistoricalStockDataPrimaryKeysWoTime {
-                    stock,
-                    primary_exchange,
-                    currency,
-                },
-            ) => {
-                sqlx::query_scalar!(
-                    r#"
-                    SELECT COUNT(*)
-                    FROM market_data.daily_ohlcv
-                    WHERE stock = $2
-                        AND primary_exchange = $3
-                        AND currency = $4
-                        AND day > $5
-                    LIMIT $1;
-                    "#,
-                    n as i32,
-                    stock,
-                    primary_exchange,
-                    currency,
-                    datetime
-                )
-                .fetch_one(self.get_pg_pool())
-                .await
-            }
         };
         match enough_rows {
             Ok(n_rows) => {
@@ -1251,48 +1085,33 @@ impl NoiseOps for HistoricalDataCRUD {
         match sqlx::query_scalar!(
             r#"
             WITH latest AS (
-                SELECT
-                    time::time AS latest_close_time,
-                    time::date AS latest_date
+                SELECT time AT TIME ZONE 'America/New_York' AS ny
                 FROM market_data.historical_data
-                WHERE stock = $1
-                  AND primary_exchange = $2
-                  AND currency = $3
+                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
                 ORDER BY time DESC
                 LIMIT 1
-            ),
-            historical_matches AS (
-                SELECT
-                    h.stock,
-                    h.primary_exchange,
-                    h.currency,
-                    h.time::date AS trading_day,
-                    h.time,
-                    h.close
-                FROM market_data.historical_data h
-                CROSS JOIN latest
-                WHERE h.stock = $1
-                  AND h.primary_exchange = $2
-                  AND h.currency= $3
-                  AND h.time::time = latest.latest_close_time
-                  AND h.time::date <> latest.latest_date  -- exclude today
+            )
+            SELECT m.close / o.open AS movement_since_open
+            FROM (
+                SELECT h.time, h.close,
+                       (h.time AT TIME ZONE 'America/New_York')::date AS day
+                FROM market_data.historical_data h, latest l
+                WHERE h.stock = $1 AND h.primary_exchange = $2 AND h.currency = $3
+                  AND (h.time AT TIME ZONE 'America/New_York')::time = l.ny::time
+                  AND (h.time AT TIME ZONE 'America/New_York')::date < l.ny::date
                 ORDER BY h.time DESC
                 LIMIT $4
-            ),
-            opens AS (
-                SELECT stock, primary_exchange, day AS trading_day, open AS open_at_0930
-                FROM market_data.daily_ohlcv
-                WHERE stock = $1
-                    AND primary_exchange = $2
-            )
-            SELECT
-                hm.close / o.open_at_0930 AS movement_since_open
-            FROM historical_matches hm
-            JOIN
-                opens o ON hm.stock = o.stock
-                AND hm.primary_exchange = o.primary_exchange
-                AND hm.trading_day = o.trading_day
-            ORDER BY hm.time DESC;
+            ) m
+            CROSS JOIN LATERAL (
+                SELECT open
+                FROM market_data.historical_data
+                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                  AND time >= m.day::timestamp AT TIME ZONE 'America/New_York'
+                  AND time <  (m.day + 1)::timestamp AT TIME ZONE 'America/New_York'
+                ORDER BY time
+                LIMIT 1
+            ) o
+            ORDER BY m.time DESC
             "#,
             pk.stock,
             pk.primary_exchange,
@@ -1332,49 +1151,33 @@ impl NoiseOps for HistoricalDataCRUD {
         match sqlx::query_scalar!(
             r#"
             WITH latest AS (
-                SELECT
-                    time::time AS latest_close_time,
-                    time::date AS latest_date
+                SELECT time AT TIME ZONE 'America/New_York' AS ny
                 FROM market_data.historical_data
-                WHERE stock = $1
-                  AND primary_exchange = $2
-                  AND currency = $3
-                  AND time <= $4
+                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3 AND time <= $4
                 ORDER BY time DESC
                 LIMIT 1
-            ),
-            historical_matches AS (
-                SELECT
-                    h.stock,
-                    h.primary_exchange,
-                    h.currency,
-                    h.time::date AS trading_day,
-                    h.time,
-                    h.close
-                FROM market_data.historical_data h
-                CROSS JOIN latest
-                WHERE h.stock = $1
-                  AND h.primary_exchange = $2
-                  AND h.currency= $3
-                  AND h.time::time = latest.latest_close_time
-                  AND h.time::date <> latest.latest_date
+            )
+            SELECT m.close / o.open AS movement_since_open
+            FROM (
+                SELECT h.time, h.close,
+                       (h.time AT TIME ZONE 'America/New_York')::date AS day
+                FROM market_data.historical_data h, latest l
+                WHERE h.stock = $1 AND h.primary_exchange = $2 AND h.currency = $3
+                  AND (h.time AT TIME ZONE 'America/New_York')::time = l.ny::time
+                  AND (h.time AT TIME ZONE 'America/New_York')::date < l.ny::date
                 ORDER BY h.time DESC
                 LIMIT $5
-            ),
-            opens AS (
-                SELECT stock, primary_exchange, day AS trading_day, open AS open_at_0930
-                FROM market_data.daily_ohlcv
-                WHERE stock = $1
-                    AND primary_exchange = $2
-            )
-            SELECT
-                hm.close / o.open_at_0930 AS movement_since_open
-            FROM historical_matches hm
-            JOIN
-                opens o ON hm.stock = o.stock
-                AND hm.primary_exchange = o.primary_exchange
-                AND hm.trading_day = o.trading_day
-            ORDER BY hm.time DESC;
+            ) m
+            CROSS JOIN LATERAL (
+                SELECT open
+                FROM market_data.historical_data
+                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3
+                  AND time >= m.day::timestamp AT TIME ZONE 'America/New_York'
+                  AND time <  (m.day + 1)::timestamp AT TIME ZONE 'America/New_York'
+                ORDER BY time
+                LIMIT 1
+            ) o
+            ORDER BY m.time DESC
             "#,
             pk.stock,
             pk.primary_exchange,
@@ -1400,190 +1203,5 @@ impl NoiseOps for HistoricalDataCRUD {
                 e
             )),
         }
-    }
-
-    async fn get_most_recent_daily_open(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        #[cfg(feature = "backtest")] now: DateTime<Utc>,
-    ) -> Result<f64, String> {
-        // Under prod, `now` = Utc::now() (real wall clock); under backtest,
-        // `now` = bar time (the fn param) — prevents look-ahead bias.
-        #[cfg(not(feature = "backtest"))]
-        let now = Utc::now();
-
-        #[derive(FromRow)]
-        struct DailyOpenClose {
-            day: DateTime<Utc>,
-            open: f64,
-            close: f64,
-        }
-        let most_recent_daily_close = sqlx::query_as!(
-            DailyOpenClose,
-            r#"
-            SELECT day as "day!", open as "open!", close as "close!"
-            FROM market_data.daily_ohlcv
-            WHERE stock = $1
-                AND primary_exchange = $2
-                AND currency = $3
-                AND day < $4
-            ORDER BY day DESC
-            LIMIT 1;
-            "#,
-            pk.stock,
-            pk.primary_exchange,
-            pk.currency,
-            now
-        )
-        .fetch_one(self.get_pg_pool())
-        .await
-        .map(|most_recent_daily_open_option| DailyOpenClose {
-            day: most_recent_daily_open_option.day,
-            open: most_recent_daily_open_option.open,
-            close: most_recent_daily_open_option.close,
-        })
-        .map_err(|e| format!("Error when getting most recent daily close of stock: {}", e))?;
-
-        let most_recent_daily_open_option = sqlx::query_scalar!(
-            r#"
-            SELECT open
-            FROM market_data.historical_data
-            WHERE stock = $1 AND time > $2 AND time < $3;
-            "#,
-            pk.stock,
-            now.with_timezone(&New_York)
-                .with_hour(9)
-                .unwrap()
-                .with_minute(29)
-                .unwrap()
-                .with_second(0)
-                .unwrap()
-                .with_nanosecond(0)
-                .unwrap(),
-            now.with_timezone(&New_York)
-                .with_hour(9)
-                .unwrap()
-                .with_minute(31)
-                .unwrap()
-                .with_second(0)
-                .unwrap()
-                .with_nanosecond(0)
-                .unwrap(),
-        )
-        .fetch_one(self.get_pg_pool())
-        .await
-        .map_err(|e| format!("Error when getting most recent daily open of stock: {}", e))?;
-
-        Ok(std::cmp::max::<OrderedFloat<f64>>(
-            OrderedFloat::from(most_recent_daily_close.close),
-            OrderedFloat::from(most_recent_daily_open_option),
-        )
-        .to_f64()
-        .expect(
-            "Expected close and open of the daily opens/close \
-                to be valid in get_most_recent_daily_open",
-        ))
-    }
-
-    #[cfg(not(feature = "backtest"))]
-    async fn get_daily_vol(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        vol_lookback: i64,
-    ) -> Result<f64, String> {
-        let daily_vol = sqlx::query_scalar!(
-            r#"
-            SELECT stddev_samp(close / open) AS rolling_volatility
-            FROM (
-                SELECT day, open, close
-                FROM market_data.daily_ohlcv
-                WHERE stock = $1
-                    AND primary_exchange = $2
-                    AND currency = $3
-                ORDER BY day DESC
-                LIMIT $4
-            ) sub;
-            "#,
-            pk.stock,
-            pk.primary_exchange,
-            pk.currency,
-            vol_lookback
-        )
-        .fetch_one(self.get_pg_pool())
-        .await
-        .map_err(|e| {
-            format!(
-                "Error getting most recent daily volatility of {}: {}",
-                pk.stock, e
-            )
-        })?;
-        Ok(daily_vol.expect(&format!(
-            "Expected to have enough data to get volatility of stock: {}",
-            pk.stock
-        )))
-    }
-
-    /// Backtest variant: filter "latest" to `day <= now` (the bar time) to
-    /// prevent look-ahead bias. Under prod, `get_daily_vol` (above) uses the
-    /// real wall-clock latest.
-    #[cfg(feature = "backtest")]
-    async fn get_daily_vol(
-        &self,
-        pk: HistoricalStockDataPrimaryKeysWoTime,
-        now: DateTime<Utc>,
-        vol_lookback: i64,
-    ) -> Result<f64, String> {
-        let daily_vol = sqlx::query_scalar!(
-            r#"
-            SELECT stddev_samp(close / open) AS rolling_volatility
-            FROM (
-                SELECT day, open, close
-                FROM market_data.daily_ohlcv
-                WHERE stock = $1
-                    AND primary_exchange = $2
-                    AND currency = $3
-                    AND day <= $4
-                ORDER BY day DESC
-                LIMIT $5
-            ) sub;
-            "#,
-            pk.stock,
-            pk.primary_exchange,
-            pk.currency,
-            now,
-            vol_lookback
-        )
-        .fetch_one(self.get_pg_pool())
-        .await
-        .map_err(|e| {
-            format!(
-                "Error getting most recent daily volatility of {}: {}",
-                pk.stock, e
-            )
-        })?;
-        Ok(daily_vol.expect(&format!(
-            "Expected to have enough data to get volatility of stock: {}",
-            pk.stock
-        )))
-    }
-}
-
-#[async_trait::async_trait]
-#[hotpath::measure_all]
-impl TimescaleDbOps for HistoricalDataCRUD {
-    async fn refresh_daily_data(&self) -> Result<(), String> {
-        sqlx::query!(
-            r#"
-            CALL refresh_continuous_aggregate(
-                'market_data.daily_ohlcv',
-                NOW() - INTERVAL '30 days',
-                NOW()
-            );
-            "#,
-        )
-        .execute(self.get_pg_pool())
-        .await
-        .map_err(|e| format!("Failed to refresh_continuous_aggregate for daily_ohlcv: {e:?}"))?;
-        Ok(())
     }
 }
