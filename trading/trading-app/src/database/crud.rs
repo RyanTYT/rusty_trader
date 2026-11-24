@@ -54,6 +54,12 @@ where
     async fn read(&mut self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
+    /// Reads the row and locks it until the enclosing transaction commits
+    /// (`SELECT ... FOR UPDATE`). Outside a transaction the lock is released
+    /// as soon as the statement completes.
+    async fn read_for_update(&mut self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
+    where
+        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
     async fn read_all(&mut self) -> Result<Vec<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
@@ -214,6 +220,38 @@ impl<
         Ok(result)
     }
 
+    /// Like `read`, but locks the selected row until the enclosing transaction
+    /// commits.
+    async fn read_for_update(&mut self, pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
+    where
+        FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>,
+    {
+        let conditions = pk
+            .pri_column_names()
+            .iter()
+            .enumerate()
+            .map(|(index, column)| format!("{} = ${}", column, index + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+
+        let sql = format!(
+            "SELECT * FROM {} WHERE {} FOR UPDATE;",
+            &self.table, conditions
+        );
+        let mut query = sqlx::query_as::<_, FullKeys>(&sql);
+        query = pk.bind_pri_to_query_as(query);
+
+        let result = self
+            .exec
+            .fetch_optional(query)
+            .await
+            .map_err(|source| DbError::Query {
+                operation: "read_for_update",
+                source,
+            })?;
+        Ok(result)
+    }
+
     /// Typical read_all function that returns all rows in DB
     /// - thus, could be a potentially taxing query
     async fn read_all(&mut self) -> Result<Vec<FullKeys>, DbError>
@@ -340,6 +378,15 @@ macro_rules! implement_all_crud_methods {
             {
                 self.$delegator.read(raw_pk).await
             }
+            async fn read_for_update(
+                &mut self,
+                raw_pk: &$PrimaryKeys,
+            ) -> Result<Option<$FullKeys>, crate::database::db::DbError>
+            where
+                $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                self.$delegator.read_for_update(raw_pk).await
+            }
             async fn create_or_update(
                 &mut self,
                 pk: &$PrimaryKeys,
@@ -391,6 +438,24 @@ macro_rules! implement_crud_trait_for_interface {
                     ),*
                     _ => Err(crate::database::db::DbError::KeyVariantMismatch {
                         operation: "read",
+                    }),
+                }
+            }
+            async fn read_for_update(
+                &mut self,
+                raw_pk: &$pk,
+            ) -> Result<Option<$fk>, crate::database::db::DbError>
+            where
+                $fk: Unpin + for<'r> sqlx::prelude::FromRow<'r, sqlx::postgres::PgRow>,
+            {
+                match (self, raw_pk) {
+                    $(
+                        (Self::$variant(s), $pk::$variant(actual_pk)) => {
+                            s.read_for_update(actual_pk).await.map(|ok_res| ok_res.map($fk::$variant))
+                        }
+                    ),*
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "read_for_update",
                     }),
                 }
             }
