@@ -27,12 +27,10 @@ use crate::{
         },
         models_crud::{
             current_positions::current_positions::{
-                CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
-                CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
+                CurrentPositionsFullKeys, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
+                CurrentPositionsUpdateKeys,
             },
-            open_orders::open_orders::{
-                OpenOrdersCRUD, OpenOrdersPrimaryKeys, OpenOrdersUpdateKeys,
-            },
+            open_orders::open_orders::{OpenOrdersPrimaryKeys, OpenOrdersUpdateKeys},
         },
     },
     execution::{fx_backed_up_order::OrderStore, order_update_stream},
@@ -322,7 +320,11 @@ impl SyncOps for SyncerEngine {
         // =====================================
         // Consolidate locally tracked positions
         // =====================================
-        match &db.current_positions(&AssetType::Stock).get_all_pos_grouped().await {
+        match &db
+            .current_positions(&AssetType::Stock)
+            .get_all_pos_grouped()
+            .await
+        {
             Ok(current_stock_positions) => {
                 tracing::info!("Received local stock positions, inserting into stock_map now");
                 for position in current_stock_positions {
@@ -357,7 +359,11 @@ impl SyncOps for SyncerEngine {
                 ));
             }
         };
-        match db.current_positions(&AssetType::Option).get_all_pos_grouped().await {
+        match db
+            .current_positions(&AssetType::Option)
+            .get_all_pos_grouped()
+            .await
+        {
             Ok(current_option_positions) => {
                 tracing::info!("Received local option positions, inserting into stock_map now");
                 for position in current_option_positions {
@@ -491,6 +497,7 @@ async fn sync_fx_positions(
                     );
                 }
             }
+            #[allow(unused_variables)]
             ibapi::prelude::AccountUpdate::PortfolioValue(portfolio_value) => {
                 continue;
                 // let currency = portfolio_value.contract.currency.as_str();
@@ -648,7 +655,7 @@ async fn sync_stock_and_option_positions(
         local_position: (f64, f64),
         broker_position: (f64, f64),
         strategy: &str,
-        consolidator: &Consolidator,
+        _consolidator: &Consolidator,
     ) {
         let discrepancy = broker_position.0 - local_position.0;
         if discrepancy == 0.0 {

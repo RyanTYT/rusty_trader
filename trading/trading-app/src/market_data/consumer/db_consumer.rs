@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use crate::database::crud::CRUDTrait;
 use crate::database::models::AssetType;
 use crate::database::models_crud::historical_data::historical_data::{
-    HistoricalDataCRUD, HistoricalDataPrimaryKeys, HistoricalDataUpdateKeys,
+    HistoricalDataPrimaryKeys, HistoricalDataUpdateKeys,
 };
 use crate::market_data::consumer::helper::{aggregate_bars, align_and_prime_schedule};
 use crate::market_data::consumer::strategy_consumer::{IbkrBarConsumer, IbkrBarType};
@@ -126,8 +126,10 @@ pub fn begin_db_consumer_thread_singular<
                                     cache.insert(contract_id, (bar.get_time(), bar.get_price()));
                                     rt_handle.spawn(hotpath::future!(
                                         async move {
-                                            let mut db = crate::database::db::DbDirect::connect(&task_pool);
-                                            let mut historical_data_crud = db.historical_data(&asset_type);
+                                            let mut db =
+                                                crate::database::db::DbDirect::connect(&task_pool);
+                                            let mut historical_data_crud =
+                                                db.historical_data(&asset_type);
                                             if let Err(e) = historical_data_crud
                                                 .create_or_update(
                                                     &historical_data_pk,

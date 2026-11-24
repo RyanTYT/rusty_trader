@@ -17,7 +17,7 @@ use crate::{
     database::{
         models::AssetType,
         models_crud::historical_data::historical_data::{
-            HistoricalDataCRUD, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
+            HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
         },
     },
     helpers::{contract::HashContract, sync_timeout::timeout_panic},

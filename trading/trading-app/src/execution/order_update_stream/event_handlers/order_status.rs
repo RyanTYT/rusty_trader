@@ -5,9 +5,7 @@ use sqlx::PgPool;
 use crate::database::{
     crud::CRUDTrait,
     models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
-    models_crud::open_orders::open_orders::{
-        OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
-    },
+    models_crud::open_orders::open_orders::{OpenOrdersFullKeys, OpenOrdersPrimaryKeys},
 };
 
 /// Should be triggered by Submitted and PreSubmitted Order Events to update the local OpenOrders

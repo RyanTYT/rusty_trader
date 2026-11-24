@@ -11,9 +11,7 @@ use crate::{
     database::{
         crud::CRUDTrait,
         models::AssetType,
-        models_crud::open_orders::open_orders::{
-            OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersPrimaryKeys,
-        },
+        models_crud::open_orders::open_orders::{OpenOrdersFullKeys, OpenOrdersPrimaryKeys},
     },
     market_data::consolidator::Consolidator,
 };

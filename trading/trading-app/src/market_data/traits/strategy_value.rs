@@ -10,7 +10,7 @@ use crate::{
     database::{
         models::AssetType,
         models_crud::current_positions::current_positions::{
-            CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
+            CurrentPositionsFullKeys, CurrentPositionsOps,
         },
     },
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},

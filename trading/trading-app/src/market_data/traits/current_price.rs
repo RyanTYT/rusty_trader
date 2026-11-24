@@ -21,8 +21,7 @@ use crate::{
         models_crud::historical_data::{
             batch_operations::{BatchDbCreatorEnum, init_channel},
             historical_data::{
-                HistoricalDataCRUD, HistoricalDataFullKeys, HistoricalDataPrimaryKeys,
-                HistoricalDataUpdateKeys,
+                HistoricalDataFullKeys, HistoricalDataPrimaryKeys, HistoricalDataUpdateKeys,
             },
         },
     },

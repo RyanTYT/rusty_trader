@@ -15,15 +15,12 @@
 // always be 0 && when we delete the open order it is only because the open order is in the
 // opposite direction we want to go in - i.e. under "unknown", position to go to 0 is also fine -
 // just maybe different order types but that is fine - should be minimal impact)
-use crate::database::tables::DbTables;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
+use crate::database::tables::DbTables;
 use ibapi::{
     Client,
-    orders::{
-        Action, Order,
-        order_builder::{limit_order, market_order},
-    },
+    orders::{Action, Order, order_builder::market_order},
     prelude::Contract,
 };
 use serde::{Deserialize, Serialize};
@@ -38,17 +35,14 @@ use crate::{
         models::{AssetType, OpenOptionOrdersFullKeys, OpenStockOrdersFullKeys},
         models_crud::{
             open_orders::open_orders::{
-                OpenOrdersCRUD, OpenOrdersFullKeys, OpenOrdersOps, OpenOrdersPrimaryKeys,
-                OpenOrdersUpdateKeys,
+                OpenOrdersFullKeys, OpenOrdersOps, OpenOrdersPrimaryKeys, OpenOrdersUpdateKeys,
             },
-            target_positions::target_positions::{
-                TargetPositionsCRUD, TargetPositionsOps, TargetPositionsQtyDiff,
-            },
+            target_positions::target_positions::{TargetPositionsOps, TargetPositionsQtyDiff},
         },
     },
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxFundingPlan},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
-    market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
+    market_data::consolidator::Consolidator,
     strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyEnum},
 };
 
@@ -353,8 +347,7 @@ impl OrderEngine {
             }
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
-                    let mut db =
-                        crate::database::db::DbDirect::connect(&self.pool);
+                    let mut db = crate::database::db::DbDirect::connect(&self.pool);
                     let mut target_positions_crud = db.target_positions(&asset_type);
                     let strategy_name = strategy_name_orig.clone();
                     let target_pos_diffs = match hotpath::measure_block!(

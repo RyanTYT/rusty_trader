@@ -112,7 +112,6 @@ pub mod test_internals {
     // Re-exports the CRUD types + pub wrapper constructors.
     pub use crate::database::models_crud::current_positions::current_option_positions::CurrentOptionPositionsCRUD;
     pub use crate::database::models_crud::current_positions::current_stock_positions::CurrentStockPositionsCRUD;
-    pub use crate::database::models_crud::historical_data::daily_historical_data::DailyHistoricalStockDataCRUD;
     pub use crate::database::models_crud::historical_data::historical_forex_data::HistoricalForexDataCRUD;
     pub use crate::database::models_crud::historical_data::historical_options_data::HistoricalOptionsDataCRUD;
     pub use crate::database::models_crud::historical_data::historical_stock_data::HistoricalStockDataCRUD;
@@ -157,9 +156,6 @@ pub mod test_internals {
     }
     pub fn historical_forex_data_crud(pool: &sqlx::PgPool) -> HistoricalForexDataCRUD<'_> {
         HistoricalForexDataCRUD::new(crate::database::db::Exec::Pool(pool))
-    }
-    pub fn daily_historical_stock_data_crud(pool: &sqlx::PgPool) -> DailyHistoricalStockDataCRUD<'_> {
-        DailyHistoricalStockDataCRUD::new(crate::database::db::Exec::Pool(pool))
     }
     pub fn logs_crud(pool: &sqlx::PgPool) -> LogsCRUD<'_> {
         LogsCRUD::new(crate::database::db::Exec::Pool(pool))

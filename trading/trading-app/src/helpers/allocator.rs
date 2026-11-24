@@ -28,8 +28,8 @@ use crate::{
     database::{
         models::{AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys},
         models_crud::current_positions::current_positions::{
-            CurrentPositionsCRUD, CurrentPositionsFullKeys, CurrentPositionsOps,
-            CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
+            CurrentPositionsFullKeys, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
+            CurrentPositionsUpdateKeys,
         },
     },
     execution::order_engine::{OrderEngine, OrderIBKR},
@@ -67,7 +67,7 @@ struct Book {
     fund: StrategyFund,
     equity: f64,
     cash: BTreeMap<String, f64>,
-    #[allow(unused_variables)]
+    #[allow(dead_code)]
     exists: bool,
     participating: bool,
     target: f64,
@@ -314,7 +314,14 @@ pub fn fund_strategies(
     }
     // Book leg 1 first so the poll baseline is exact.
     for m in &leg1 {
-        write_cash(handle, consolidator, &pool, &m.strategy, &m.currency, m.quantity)?;
+        write_cash(
+            handle,
+            consolidator,
+            &pool,
+            &m.strategy,
+            &m.currency,
+            m.quantity,
+        )?;
     }
 
     // ── Conversions the projected hub balance cannot cover in kind ──────

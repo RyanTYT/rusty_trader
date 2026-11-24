@@ -6,7 +6,6 @@ use sqlx::PgPool;
 use crate::database::{
     crud::CRUDTrait,
     models::{StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys},
-    models_crud::staged_commissions::StagedCommissionsCRUD,
 };
 
 /// Should be triggered by CommissionUpdate(CommissionReport) events
@@ -28,8 +27,7 @@ pub fn on_commission_update(
     };
     tokio::spawn(async move {
         let mut db = crate::database::db::DbDirect::connect(&pool);
-        let mut staged_commissions_crud =
-            db.staged_commissions();
+        let mut staged_commissions_crud = db.staged_commissions();
         if let Err(e) = staged_commissions_crud
             .create_or_update(&staged_commissions_pk, &staged_commissions_uk)
             .await
