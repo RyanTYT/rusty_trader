@@ -62,8 +62,8 @@ CREATE SCHEMA IF NOT EXISTS logs;
 
 -- Enums live in the trading schema: an unqualified CREATE TYPE would otherwise
 -- land in whatever schema is first on the migrator's search_path (public today).
-CREATE TYPE trading.status AS ENUM ('active', 'stopping', 'inactive');
-CREATE TYPE trading.option_type AS ENUM ('C', 'P');
+CREATE TYPE status AS ENUM ('active', 'stopping', 'inactive');
+CREATE TYPE option_type AS ENUM ('C', 'P');
 
 -- Notifications table
 -- id is a surrogate key so the same title can be raised more than once.
@@ -77,7 +77,7 @@ CREATE TABLE trading.notifications (
 -- Strategy table
 CREATE TABLE trading.strategy (
     strategy VARCHAR(50) PRIMARY KEY,
-    status trading.status NOT NULL
+    status status NOT NULL
 );
 
 -- Current stock positions
@@ -109,7 +109,7 @@ CREATE TABLE trading.current_option_positions (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type trading.option_type NOT NULL,
+    option_type option_type NOT NULL,
 
     last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -144,7 +144,7 @@ CREATE TABLE trading.target_option_positions (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type trading.option_type NOT NULL,
+    option_type option_type NOT NULL,
 
     PRIMARY KEY (strategy, stock, primary_exchange, currency, expiry, strike, multiplier, option_type)
 );
@@ -189,7 +189,7 @@ CREATE TABLE trading.open_option_orders (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type trading.option_type NOT NULL,
+    option_type option_type NOT NULL,
 
     PRIMARY KEY (order_perm_id, order_id)
 );
@@ -233,7 +233,7 @@ CREATE TABLE trading.option_transactions (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type trading.option_type NOT NULL
+    option_type option_type NOT NULL
 );
 -- Removed: (order_perm_id, time) is not unique in practice — a single order can
 -- produce several partial fills sharing the order timestamp.
@@ -293,7 +293,7 @@ CREATE TABLE market_data.historical_options_data (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type trading.option_type NOT NULL,
+    option_type option_type NOT NULL,
 
     open DOUBLE PRECISION NOT NULL,
     high DOUBLE PRECISION NOT NULL,

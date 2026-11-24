@@ -14,7 +14,7 @@
         "Varchar",
         {
           "Custom": {
-            "name": "trading.option_type",
+            "name": "option_type",
             "kind": {
               "Enum": [
                 "C",
