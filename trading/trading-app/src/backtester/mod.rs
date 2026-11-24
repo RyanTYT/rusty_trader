@@ -47,6 +47,8 @@ use std::sync::Arc;
 use sqlx::PgPool;
 
 use crate::database::crud::CRUDTrait;
+use crate::database::db::DbDirect;
+use crate::database::tables::DbTables;
 
 use crate::backtester::methods::load_bars;
 use crate::backtester::oracle::data_loader::refresh_continuous_aggregate;
@@ -238,8 +240,9 @@ pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(),
             tracing::info!("Strategy '{name}' inactive (active=false) — skipping");
             continue;
         }
-        let strategy = crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
-            .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
+        let strategy =
+            crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
+                .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
         strategies.push(strategy);
     }
     if strategies.is_empty() {
@@ -319,8 +322,7 @@ pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(),
     });
     std::fs::write(
         "backtest_results_blended5_multi.json",
-        serde_json::to_string_pretty(&rollup_json)
-            .map_err(|e| format!("serialize rollup: {e}"))?,
+        serde_json::to_string_pretty(&rollup_json).map_err(|e| format!("serialize rollup: {e}"))?,
     )
     .map_err(|e| format!("write rollup: {e}"))?;
     tracing::info!("multi pass: rollup → backtest_results_blended5_multi.json");
@@ -368,8 +370,9 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
             tracing::info!("Strategy '{name}' inactive (active=false) — skipping");
             continue;
         }
-        let strategy = crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
-            .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
+        let strategy =
+            crate::strategy::construct_strategy(name, spec, pool.clone(), handle.clone())
+                .ok_or_else(|| format!("Unknown strategy '{name}'"))?;
         strategies.push(strategy);
     }
     if strategies.is_empty() {
@@ -379,7 +382,8 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
     // 3. Strategy rows (FK targets for transactions/positions).
     for s in &strategies {
         let name = s.get_name();
-        let crud = crate::database::models_crud::strategy::StrategyCRUD::new(pool.clone());
+        let mut db = DbDirect::connect(&pool);
+        let mut crud = db.strategy();
         if let Err(e) = crud
             .create_or_ignore(&crate::database::models::StrategyFullKeys {
                 strategy: name,
@@ -409,9 +413,7 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
         // Positioning by the warmup-bars hint instead let the inclusive
         // read_last_n swallow replay bars into the warm feed and shifted
         // every sleeve's indicator state (the pins/Db divergence root).
-        BacktestPeriod::TimeRange { start, .. } => {
-            strategies.iter().map(|_| Ok(*start)).collect()
-        }
+        BacktestPeriod::TimeRange { start, .. } => strategies.iter().map(|_| Ok(*start)).collect(),
         BacktestPeriod::NumBars(_) => {
             Err("run_multi_route (Db): NumBars period is not supported with warmup_bars".into())
         }
@@ -443,7 +445,11 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
 
     // 5. Trim to post-warm-up (no shared bar cache in Db mode — trim at the
     //    deepest warmup_end, the analogue of cache.max_end_time).
-    let trim_t = warm_ends.iter().copied().max().expect("strategies non-empty");
+    let trim_t = warm_ends
+        .iter()
+        .copied()
+        .max()
+        .expect("strategies non-empty");
     let split = bars_arc
         .iter()
         .position(|row| {
@@ -465,18 +471,19 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
     let pool_clone = pool.clone();
     let handle_clone = handle.clone();
     let out = tokio::task::spawn_blocking(move || {
-        if let Some(p) =
-            crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
-        {
-            #[cfg(feature = "backtest")]
-            p.init(
-                config_clone.starting_capital_sgd,
-                config_clone.starting_capital_sgd, // equal-split seeds: Σ = capital
-                BacktestMode::Db,
-            );
-            #[cfg(not(feature = "backtest"))]
-            p.init(config_clone.starting_capital_sgd, config_clone.starting_capital_sgd);
-        }
+        // if let Some(p) =
+        //     crate::strategy_wrappers::gates::impls::fund_gate::PoolState::current()
+        // {
+        //     #[cfg(feature = "backtest")]
+        //     p.init(
+        //         config_clone.starting_capital_sgd,
+        //         config_clone.starting_capital_sgd, // equal-split seeds: Σ = capital
+        //         BacktestMode::Db,
+        //     );
+        //     #[cfg(not(feature = "backtest"))]
+        //     p.init(config_clone.starting_capital_sgd, config_clone.starting_capital_sgd);
+        // }
+
         // F2 session-calendar: same pre-scan as bin/local_backtest — TIMESTAMPS
         // ONLY (pure calendar metadata) so sleeves classify rows in the
         // session's close window. Without this install the Db lane's
@@ -502,13 +509,9 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
 
     // 8. Per-strategy results (each account's own starting capital) + rollup.
     for (i, name) in out.names.iter().enumerate() {
-        let results = BacktestResults::compute(
-            &pool,
-            &out.curves[i],
-            seed,
-            config.stock_bar_interval,
-        )
-        .await?;
+        let results =
+            BacktestResults::compute(&pool, &out.curves[i], seed, config.stock_bar_interval)
+                .await?;
         let output_path = format!("backtest_results_{name}.json");
         results.write_json(&output_path)?;
         tracing::info!("multi pass (Db): {name} results → {output_path}");
@@ -540,8 +543,7 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
     });
     std::fs::write(
         "backtest_results_blended5_multi_db.json",
-        serde_json::to_string_pretty(&rollup_json)
-            .map_err(|e| format!("serialize rollup: {e}"))?,
+        serde_json::to_string_pretty(&rollup_json).map_err(|e| format!("serialize rollup: {e}"))?,
     )
     .map_err(|e| format!("write rollup: {e}"))?;
     tracing::info!("multi pass (Db): rollup → backtest_results_blended5_multi_db.json");

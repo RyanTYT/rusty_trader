@@ -59,7 +59,7 @@ pub async fn load_market_data(
         let mut crud = db.historical_data(&asset_type);
         let pk_wo_time = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
 
-        let missing_ranges = determine_missing_ranges(&crud, &pk_wo_time, start, end).await?;
+        let missing_ranges = determine_missing_ranges(&mut crud, &pk_wo_time, start, end).await?;
         if missing_ranges.is_empty() {
             tracing::info!(
                 "All market data for {} is already present in DB. Skipping fetch.",
@@ -132,7 +132,7 @@ pub async fn load_market_data(
 
 /// Queries the database to identify gap ranges in `[start, end]`.
 async fn determine_missing_ranges(
-    crud: &HistoricalDataCRUD,
+    crud: &mut HistoricalDataCRUD<'_>,
     pk_wo_time: &HistoricalDataPrimaryKeysWoTime,
     start: DateTime<Utc>,
     end: DateTime<Utc>,

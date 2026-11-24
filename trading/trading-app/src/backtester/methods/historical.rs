@@ -5,9 +5,11 @@
 //! calls are legal.
 
 use crate::database::crud::CRUDTrait;
+use crate::database::db::DbDirect;
 use crate::database::models::{Status, StrategyFullKeys};
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 use crate::database::models_crud::strategy::StrategyCRUD;
+use crate::database::tables::DbTables;
 use crate::helpers::sentinel::Sentinel;
 use crate::strategy::strategy::StrategyExecutor;
 
@@ -45,8 +47,10 @@ impl BacktestMethod for HistoricalReplay {
         let strat_name = ctx.strategy.get_name();
         let strat_name_clone = strat_name.clone();
         let mut strategy = ctx.strategy;
+
         ctx.handle.block_on(async move {
-            let crud = StrategyCRUD::new(pool);
+            let mut db = DbDirect::connect(&pool);
+            let mut crud = db.strategy();
             if let Err(e) = crud
                 .create_or_ignore(&StrategyFullKeys {
                     strategy: strat_name_clone,
