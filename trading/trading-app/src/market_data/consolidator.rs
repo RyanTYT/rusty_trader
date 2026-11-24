@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
@@ -275,7 +276,8 @@ impl Consolidator {
             }
         };
 
-        let historical_data_crud = HistoricalDataCRUD::from(&asset_type, self.pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+        let mut historical_data_crud = db.historical_data(&asset_type);
 
         match historical_data_crud
             .read_last_n(
@@ -393,7 +395,8 @@ impl Consolidator {
         // =====================================================
 
         let asset_type = AssetType::from_str(&contract.security_type);
-        let historical_data_crud = HistoricalDataCRUD::from(&asset_type, self.pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+        let mut historical_data_crud = db.historical_data(&asset_type);
         let historical_data_pk = HistoricalDataPrimaryKeysWoTime::from_contract(&contract);
         match historical_data_crud
             .get_rows_since(

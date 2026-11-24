@@ -5,6 +5,7 @@
 //! to "see" its available capital. This also clears leftover positions/
 //! transactions from a previous run (idempotent re-runs).
 
+use crate::database::tables::DbTables;
 use sqlx::PgPool;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
@@ -38,7 +39,8 @@ pub async fn seed_initial_capital(
         .map_err(|e| format!("clear stock_transactions: {e}"))?;
 
     // Seed CASH:SGD = capital.
-    let cp_crud = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+    let mut db = crate::database::db::DbDirect::connect(&pool);
+    let mut cp_crud = db.current_positions(&AssetType::Stock);
     let cash_pk = CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
         strategy: strat_name.to_string(),
         stock: "CASH:SGD".to_string(),

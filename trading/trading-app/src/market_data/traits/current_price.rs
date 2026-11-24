@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Datelike, Utc};
@@ -215,7 +216,9 @@ impl PriceSupplier for Consolidator {
                         };
                     }
                     None => {
-                        if let Err(e) = HistoricalDataCRUD::from(&cloned_asset_type, cloned_pool)
+                        let mut db = crate::database::db::DbDirect::connect(&cloned_pool);
+                        if let Err(e) = db
+                            .historical_data(&cloned_asset_type)
                             .create_or_update(&historical_data_pk, &historical_data_uk)
                             .await
                         {

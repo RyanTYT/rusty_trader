@@ -125,55 +125,55 @@ pub mod test_internals {
     pub use crate::database::models_crud::transactions::option_transactions::OptionTransactionsCRUD;
     pub use crate::database::models_crud::transactions::stock_transactions::StockTransactionsCRUD;
 
-    pub fn current_stock_positions_crud(pool: sqlx::PgPool) -> CurrentStockPositionsCRUD {
-        CurrentStockPositionsCRUD::new(pool)
+    pub fn current_stock_positions_crud(pool: &sqlx::PgPool) -> CurrentStockPositionsCRUD<'_> {
+        CurrentStockPositionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn current_option_positions_crud(pool: sqlx::PgPool) -> CurrentOptionPositionsCRUD {
-        CurrentOptionPositionsCRUD::new(pool)
+    pub fn current_option_positions_crud(pool: &sqlx::PgPool) -> CurrentOptionPositionsCRUD<'_> {
+        CurrentOptionPositionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn open_stock_orders_crud(pool: sqlx::PgPool) -> OpenStockOrdersCRUD {
-        OpenStockOrdersCRUD::new(pool)
+    pub fn open_stock_orders_crud(pool: &sqlx::PgPool) -> OpenStockOrdersCRUD<'_> {
+        OpenStockOrdersCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn open_option_orders_crud(pool: sqlx::PgPool) -> OpenOptionOrdersCRUD {
-        OpenOptionOrdersCRUD::new(pool)
+    pub fn open_option_orders_crud(pool: &sqlx::PgPool) -> OpenOptionOrdersCRUD<'_> {
+        OpenOptionOrdersCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn target_stock_positions_crud(pool: sqlx::PgPool) -> TargetStockPositionsCRUD {
-        TargetStockPositionsCRUD::new(pool)
+    pub fn target_stock_positions_crud(pool: &sqlx::PgPool) -> TargetStockPositionsCRUD<'_> {
+        TargetStockPositionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn target_option_positions_crud(pool: sqlx::PgPool) -> TargetOptionPositionsCRUD {
-        TargetOptionPositionsCRUD::new(pool)
+    pub fn target_option_positions_crud(pool: &sqlx::PgPool) -> TargetOptionPositionsCRUD<'_> {
+        TargetOptionPositionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn stock_transactions_crud(pool: sqlx::PgPool) -> StockTransactionsCRUD {
-        StockTransactionsCRUD::new(pool)
+    pub fn stock_transactions_crud(pool: &sqlx::PgPool) -> StockTransactionsCRUD<'_> {
+        StockTransactionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn option_transactions_crud(pool: sqlx::PgPool) -> OptionTransactionsCRUD {
-        OptionTransactionsCRUD::new(pool)
+    pub fn option_transactions_crud(pool: &sqlx::PgPool) -> OptionTransactionsCRUD<'_> {
+        OptionTransactionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn historical_stock_data_crud(pool: sqlx::PgPool) -> HistoricalStockDataCRUD {
-        HistoricalStockDataCRUD::new(pool)
+    pub fn historical_stock_data_crud(pool: &sqlx::PgPool) -> HistoricalStockDataCRUD<'_> {
+        HistoricalStockDataCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn historical_options_data_crud(pool: sqlx::PgPool) -> HistoricalOptionsDataCRUD {
-        HistoricalOptionsDataCRUD::new(pool)
+    pub fn historical_options_data_crud(pool: &sqlx::PgPool) -> HistoricalOptionsDataCRUD<'_> {
+        HistoricalOptionsDataCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn historical_forex_data_crud(pool: sqlx::PgPool) -> HistoricalForexDataCRUD {
-        HistoricalForexDataCRUD::new(pool)
+    pub fn historical_forex_data_crud(pool: &sqlx::PgPool) -> HistoricalForexDataCRUD<'_> {
+        HistoricalForexDataCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn daily_historical_stock_data_crud(pool: sqlx::PgPool) -> DailyHistoricalStockDataCRUD {
-        DailyHistoricalStockDataCRUD::new(pool)
+    pub fn daily_historical_stock_data_crud(pool: &sqlx::PgPool) -> DailyHistoricalStockDataCRUD<'_> {
+        DailyHistoricalStockDataCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn logs_crud(pool: sqlx::PgPool) -> LogsCRUD {
-        LogsCRUD::new(pool)
+    pub fn logs_crud(pool: &sqlx::PgPool) -> LogsCRUD<'_> {
+        LogsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
-    pub fn notification_crud(pool: sqlx::PgPool) -> NotificationCRUD {
-        NotificationCRUD::new(pool)
+    pub fn notification_crud(pool: &sqlx::PgPool) -> NotificationCRUD<'_> {
+        NotificationCRUD::new(crate::database::db::Exec::Pool(pool))
     }
     pub use crate::database::models_crud::cancelled_orders::CancelledOrdersCRUD;
-    pub fn cancelled_orders_crud(pool: sqlx::PgPool) -> CancelledOrdersCRUD {
-        CancelledOrdersCRUD::new(pool)
+    pub fn cancelled_orders_crud(pool: &sqlx::PgPool) -> CancelledOrdersCRUD<'_> {
+        CancelledOrdersCRUD::new(crate::database::db::Exec::Pool(pool))
     }
     pub use crate::database::models_crud::staged_commissions::StagedCommissionsCRUD;
-    pub fn staged_commissions_crud(pool: sqlx::PgPool) -> StagedCommissionsCRUD {
-        StagedCommissionsCRUD::new(pool)
+    pub fn staged_commissions_crud(pool: &sqlx::PgPool) -> StagedCommissionsCRUD<'_> {
+        StagedCommissionsCRUD::new(crate::database::db::Exec::Pool(pool))
     }
 
     // ─── StrategyParameters constructor (fields are pub(crate) — wrapped here) ──

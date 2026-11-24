@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::{sync::Arc, time::Duration};
@@ -445,7 +446,8 @@ impl StrategyExecutor for Noise {
 
         let num_days = avg_move_lookback.max(vol_lookback) as usize;
         let avg_moves = HashMap::new();
-        let historical_data_crud = HistoricalDataCRUD::from(&AssetType::Stock, self.pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+        let mut historical_data_crud = db.historical_data(&AssetType::Stock);
         let last_n_bars = historical_data_crud
             .read_last_n(
                 HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
@@ -701,8 +703,8 @@ impl Noise {
             && bar_time.minute() % act_interval == 0)
             || bar_time >= last_time
         {
-            let target_stock_positions_crud =
-                TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut target_stock_positions_crud = db.target_positions(&AssetType::Stock);
             let name = self.get_name();
             #[cfg(feature = "backtest")]
             {
@@ -750,8 +752,8 @@ impl Noise {
         }
 
         if bar_close > upper_noise && bar_time.minute() % act_interval == 0 {
-            let target_stock_positions_crud =
-                TargetPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut target_stock_positions_crud = db.target_positions(&AssetType::Stock);
             let name = self.get_name();
             #[cfg(feature = "backtest")]
             {

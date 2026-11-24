@@ -16,6 +16,7 @@
 //! and `OrderEngine::place_order_checked(handle, pool, weak_client, order)
 //! -> Result<i32, String>`.
 
+use crate::database::tables::DbTables;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use ibapi::Client;
@@ -97,7 +98,8 @@ pub fn fund_strategies(
     let rows = on_rt!(handle, {
         let pool = pool.clone();
         async move {
-            CurrentPositionsCRUD::from(&AssetType::Stock, pool)
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            db.current_positions(&AssetType::Stock)
                 .get_all_pos_grouped_by_strat()
                 .await
         }
@@ -512,7 +514,8 @@ fn write_cash(
     let (strategy, stock) = (strategy.to_string(), format!("CASH:{currency}"));
     let pool = pool.clone();
     on_rt!(handle, async move {
-        CurrentPositionsCRUD::from(&AssetType::Stock, pool)
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        db.current_positions(&AssetType::Stock)
             .update_positions_additive(
                 CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
                     strategy,
@@ -537,7 +540,8 @@ fn write_cash(
 fn hub_cash(handle: &Handle, pool: &PgPool) -> Result<BTreeMap<String, f64>, String> {
     let pool = pool.clone();
     let rows = on_rt!(handle, async move {
-        CurrentPositionsCRUD::from(&AssetType::Stock, pool)
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        db.current_positions(&AssetType::Stock)
             .get_pos_by_strat(
                 UNALLOCATED,
                 #[cfg(feature = "backtest")]

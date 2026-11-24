@@ -9,6 +9,7 @@
 //! mode). [`BacktestResults::compute_in_memory`] reads them from the
 //! [`InMemoryState`] (the fast in-memory mode — no DB I/O, used by the sweep).
 
+use crate::database::tables::DbTables;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -60,7 +61,8 @@ impl BacktestResults {
         starting_capital: f64,
         bar_interval: Duration,
     ) -> Result<Self, String> {
-        let tx_crud = TransactionsCRUD::from(&AssetType::Stock, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut tx_crud = db.transactions(&AssetType::Stock);
         let transactions = tx_crud
             .read_all()
             .await

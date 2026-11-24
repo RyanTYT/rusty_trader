@@ -72,6 +72,7 @@
 //!
 //! `on_realised` is the default no-op: the fund gate never consumes fills.
 
+use crate::database::tables::DbTables;
 use chrono::Datelike;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -473,7 +474,8 @@ impl PoolState {
                 #[cfg(feature = "backtest")]
                 let write = if matches!(self.mode(), BacktestMode::InMemory) {
                     futures::executor::block_on(async {
-                        let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+                        let mut db = crate::database::db::DbDirect::connect(&pool);
+                        let mut cp = db.current_positions(&AssetType::Stock);
                         let pk =
                             CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
                                 strategy: name.clone(),
@@ -495,7 +497,8 @@ impl PoolState {
                         let pool = pool.clone();
                         let name = name.clone();
                         async move {
-                            let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+                            let mut db = crate::database::db::DbDirect::connect(&pool);
+                            let mut cp = db.current_positions(&AssetType::Stock);
                             let pk = CurrentPositionsPrimaryKeys::Stock(
                                 CurrentStockPositionsPrimaryKeys {
                                     strategy: name.clone(),
@@ -523,7 +526,8 @@ impl PoolState {
                         let pool = pool.clone();
                         let name = name.clone();
                         async move {
-                            let cp = CurrentPositionsCRUD::from(&AssetType::Stock, pool);
+                            let mut db = crate::database::db::DbDirect::connect(&pool);
+                            let mut cp = db.current_positions(&AssetType::Stock);
                             let pk = CurrentPositionsPrimaryKeys::Stock(
                                 CurrentStockPositionsPrimaryKeys {
                                     strategy: name.clone(),

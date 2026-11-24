@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use ibapi::orders::CommissionReport;
 use rust_decimal::prelude::FromPrimitive;
 use sqlx::PgPool;
@@ -16,7 +17,6 @@ pub fn on_commission_update(
     pool: PgPool,
     commission_report: &CommissionReport,
 ) -> Result<(), String> {
-    let staged_commissions_crud = StagedCommissionsCRUD::new(pool);
     let staged_commissions_pk = StagedCommissionsPrimaryKeys {
         execution_id: commission_report.execution_id.to_string(),
     };
@@ -27,6 +27,9 @@ pub fn on_commission_update(
         ),
     };
     tokio::spawn(async move {
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut staged_commissions_crud =
+            db.staged_commissions();
         if let Err(e) = staged_commissions_crud
             .create_or_update(&staged_commissions_pk, &staged_commissions_uk)
             .await

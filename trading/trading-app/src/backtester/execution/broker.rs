@@ -9,6 +9,7 @@
 //! No `-1` optimistic `open_orders` sentinel is written — the backtest has no
 //! IBKR-confirmation race to bridge, so there's nothing to reconcile against.
 
+use crate::database::tables::DbTables;
 use std::cmp::max;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -197,7 +198,8 @@ impl BacktestBroker {
             );
             // The pending open-order row is consumed by the fill.
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, pf.order_id);
-            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut oo_crud = db.open_orders(&asset_type);
             self.handle.block_on(async move {
                 if let Err(e) = oo_crud.delete(&pk).await {
                     tracing::error!("BacktestBroker: delete pending open-order row failed: {e:?}");
@@ -242,7 +244,8 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
             let parked_num_bars = max(self.config.fill_lag_bars, 0);
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
             let uk = OpenOrdersUpdateKeys::new(&asset_type, contract, order);
-            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut oo_crud = db.open_orders(&asset_type);
             self.handle.block_on(async move {
                 if let Err(e) = oo_crud.create_or_update(&pk, &uk).await {
                     tracing::error!("BacktestBroker: create pending open-order row failed: {e:?}");
@@ -266,7 +269,8 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
 
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
             let uk = OpenOrdersUpdateKeys::new(&asset_type, contract, order);
-            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut oo_crud = db.open_orders(&asset_type);
             self.handle.block_on(async move {
                 if let Err(e) = oo_crud.create_or_update(&pk, &uk).await {
                     tracing::error!("BacktestBroker: create pending open-order row failed: {e:?}");
@@ -312,7 +316,8 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
         // delete from db
         for asset_type in [AssetType::Stock, AssetType::Option] {
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
-            let oo_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&self.pool);
+            let mut oo_crud = db.open_orders(&asset_type);
             self.handle.block_on(async move {
                 if let Err(e) = oo_crud.delete(&pk).await {
                     tracing::error!(
@@ -395,7 +400,8 @@ impl BacktestBroker {
         let contract_owned = contract.clone();
         handle.block_on(async move {
             // 1. Write the transaction row (mirror prod on_execution_update).
-            let tx_crud = TransactionsCRUD::from(&asset_type, pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut tx_crud = db.transactions(&asset_type);
             let tx_fk = match asset_type {
                 AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::ForexPair => {
                     TransactionsFullKeys::Stock(StockTransactionsFullKeys {
@@ -443,7 +449,8 @@ impl BacktestBroker {
                 ));
 
             // 2. Update current_pos for asset
-            let cp_crud = CurrentPositionsCRUD::from(&asset_type, pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut cp_crud = db.current_positions(&asset_type);
             let cp_pk =
                 CurrentPositionsPrimaryKeys::from_strat_and_contract(&strat, &contract_owned);
             let cp_uk =
@@ -460,7 +467,8 @@ impl BacktestBroker {
             }
 
             // 3. Update current_pos for CASH used
-            let cash_cp_crud = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut cash_cp_crud = db.current_positions(&AssetType::Stock);
             let cash_pk = CurrentPositionsPrimaryKeys::Stock(CurrentStockPositionsPrimaryKeys {
                 strategy: strat.clone(),
                 stock: "CASH:SGD".to_string(),

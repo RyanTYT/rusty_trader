@@ -15,6 +15,7 @@
 // always be 0 && when we delete the open order it is only because the open order is in the
 // opposite direction we want to go in - i.e. under "unknown", position to go to 0 is also fine -
 // just maybe different order types but that is fine - should be minimal impact)
+use crate::database::tables::DbTables;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
 use ibapi::{
@@ -163,7 +164,8 @@ impl OrderEngine {
                 OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
             handle.spawn(hotpath::future!(
                     async move {
-                        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+                        let mut db = crate::database::db::DbDirect::connect(&pool);
+                        let mut open_orders_crud = db.open_orders(&asset_type);
                         if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
                             tracing::error!("Failed to create or update open order for place_order (Optimistic Open Order): {e:?}");
                         };
@@ -228,7 +230,8 @@ impl OrderEngine {
         let uk = OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
         handle.spawn(hotpath::future!(
             async move {
-                let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+                let mut db = crate::database::db::DbDirect::connect(&pool);
+                let mut open_orders_crud = db.open_orders(&asset_type);
                 if let Err(e) = open_orders_crud.create_or_update(&pk, &uk).await {
                     tracing::error!(
                         "Failed to create or update open order for place_order_checked: {e:?}"
@@ -350,9 +353,9 @@ impl OrderEngine {
             }
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
-                    let target_positions_crud =
-                        TargetPositionsCRUD::from(&asset_type, self.pool.clone());
-                    let target_positions_crud_clone = target_positions_crud.clone();
+                    let mut db =
+                        crate::database::db::DbDirect::connect(&self.pool);
+                    let mut target_positions_crud = db.target_positions(&asset_type);
                     let strategy_name = strategy_name_orig.clone();
                     let target_pos_diffs = match hotpath::measure_block!(
                         StrategyEnum::metric_label(
@@ -361,7 +364,7 @@ impl OrderEngine {
                         ),
                         {
                             self.tokio_handle.block_on(async move {
-                                target_positions_crud_clone
+                                target_positions_crud
                                     .get_target_pos_diff_by_strat(&strategy_name)
                                     .await
                             })
@@ -374,7 +377,7 @@ impl OrderEngine {
                         }
                     };
                     // Check if all orders alr open
-                    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
+                    let mut open_orders_crud = db.open_orders(&asset_type);
                     let strategy_name = strategy_name_orig.clone();
                     let mut open_orders = match self.tokio_handle.block_on(async move {
                         #[cfg(feature = "backtest")]
@@ -530,7 +533,6 @@ impl OrderEngine {
             return;
         }
 
-        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, self.pool.clone());
         let mut to_delete_from_order_store = HashMap::new();
         local_open_orders.into_iter().for_each(|open_order| {
             let (order_perm_id, order_id, strategy) = match &open_order.order {
@@ -577,12 +579,15 @@ impl OrderEngine {
 
             if open_order.is_from_db {
                 // Cancel on Local Side (i.e. DB)
-                let open_orders_crud_cloned = open_orders_crud.clone();
                 let open_order_pk =
                     OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
+                let spawn_pool = self.pool.clone();
+                let spawn_asset_type = asset_type.clone();
                 self.tokio_handle.spawn(hotpath::future!(
                     async move {
-                        if let Err(e) = open_orders_crud_cloned.delete(&open_order_pk).await {
+                        let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                        let mut open_orders_crud = db.open_orders(&spawn_asset_type);
+                        if let Err(e) = open_orders_crud.delete(&open_order_pk).await {
                             tracing::error!("Error trying to delete OpenOptionOrder entry: {e:?}")
                         };
                     },
@@ -653,7 +658,8 @@ impl OrderEngine {
         let asset_type = AssetType::from_str(&contract.security_type);
         let mut order = order_ibkr.order;
 
-        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&asset_type);
         let open_orders = {
             let mut open_orders_db = match hotpath::measure_block!("get_orders_for_strat", {
                 self.tokio_handle.block_on(async {

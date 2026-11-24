@@ -1,6 +1,7 @@
 //! Per-bar equity snapshot, held in-memory by the replayer (no DB schema
 //! change — avoids a new migration that would also touch the prod DB).
 
+use crate::database::tables::DbTables;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
 use chrono::{DateTime, Utc};
@@ -77,7 +78,8 @@ pub async fn compute_snapshot(
         }
     }
     // DB-backed path.
-    let cp_crud = CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+    let mut db = crate::database::db::DbDirect::connect(&pool);
+    let mut cp_crud = db.current_positions(&AssetType::Stock);
     #[cfg(feature = "backtest")]
     let positions = match cp_crud
         .get_pos_by_strat(strategy_name, BacktestMode::Db)

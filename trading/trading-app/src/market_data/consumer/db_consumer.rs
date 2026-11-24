@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use std::{collections::VecDeque, sync::Arc};
@@ -121,11 +122,12 @@ pub fn begin_db_consumer_thread_singular<
                                         &consumer.what_to_show,
                                         &bar,
                                     );
-                                    let historical_data_crud =
-                                        HistoricalDataCRUD::from(&asset_type, pool.clone());
+                                    let task_pool = pool.clone();
                                     cache.insert(contract_id, (bar.get_time(), bar.get_price()));
                                     rt_handle.spawn(hotpath::future!(
                                         async move {
+                                            let mut db = crate::database::db::DbDirect::connect(&task_pool);
+                                            let mut historical_data_crud = db.historical_data(&asset_type);
                                             if let Err(e) = historical_data_crud
                                                 .create_or_update(
                                                     &historical_data_pk,
@@ -297,8 +299,7 @@ pub fn begin_db_consumer_thread_grouped<
                                                     &consumer.what_to_show,
                                                     &bar,
                                                 );
-                                            let historical_data_crud =
-                                                HistoricalDataCRUD::from(&asset_type, pool.clone());
+                                            let task_pool = pool.clone();
                                             let contract_id = contract_ids[idx];
                                             cache.insert(
                                                 contract_id,
@@ -306,6 +307,8 @@ pub fn begin_db_consumer_thread_grouped<
                                             );
                                             rt_handle.spawn(hotpath::future!(
                                             async move {
+                                                let mut db = crate::database::db::DbDirect::connect(&task_pool);
+                                                let mut historical_data_crud = db.historical_data(&asset_type);
                                                 if let Err(e) = historical_data_crud
                                                     .create_or_update(
                                                         &historical_data_pk,

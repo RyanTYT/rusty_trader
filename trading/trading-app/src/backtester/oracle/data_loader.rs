@@ -9,6 +9,7 @@
 //!    b. Fall back to Alpaca REST for any contract ranges IBKR yields no data for.
 //! 3. Refresh `daily_ohlcv` continuous aggregate.
 
+use crate::database::tables::DbTables;
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::America::New_York;
 use ibapi::Client;
@@ -54,7 +55,8 @@ pub async fn load_market_data(
     let mut contract_missing_ranges: HashMap<usize, Vec<MissingRange>> = HashMap::new();
     for (idx, contract) in contracts.iter().enumerate() {
         let asset_type = AssetType::from_str(&contract.security_type);
-        let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut crud = db.historical_data(&asset_type);
         let pk_wo_time = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
 
         let missing_ranges = determine_missing_ranges(&crud, &pk_wo_time, start, end).await?;
@@ -108,7 +110,8 @@ pub async fn load_market_data(
     // 5. Final verification
     for contract in contracts {
         let asset_type = AssetType::from_str(&contract.security_type);
-        let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut crud = db.historical_data(&asset_type);
         let pk = HistoricalDataPrimaryKeysWoTime::from_contract(contract);
         let start_tz = start.with_timezone(&New_York);
         let has_data = crud
@@ -296,7 +299,8 @@ async fn paginate_single_direction(
     bar_interval_secs: i64,
 ) -> Result<usize, String> {
     let asset_type = AssetType::from_str(&contract.security_type);
-    let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+    let mut db = crate::database::db::DbDirect::connect(&pool);
+    let mut crud = db.historical_data(&asset_type);
     let mut total = 0;
     let mut end_cursor = end;
 
@@ -450,7 +454,8 @@ async fn try_alpaca_range(
         }
 
         let asset_type = AssetType::from_str(&contract.security_type);
-        let crud = HistoricalDataCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut crud = db.historical_data(&asset_type);
 
         for bar in bars {
             let t = bar["t"].as_str().ok_or("Alpaca: missing 't'")?;

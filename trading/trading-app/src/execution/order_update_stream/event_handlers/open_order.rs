@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{sync::Weak, time::Duration};
 
 use ibapi::{
@@ -33,10 +34,11 @@ pub fn submitted(
             .ok_or("No valid contract for contract for order update")?
     };
     let asset_type = AssetType::from_str(&contract.security_type);
-    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
     let open_order_fk = OpenOrdersFullKeys::from_contract_and_order(&contract, order, 0.0);
     let open_orders_pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order.order_id);
     Ok(tokio::spawn(async move {
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&asset_type);
         if let Err(e) = open_orders_crud.delete(&open_orders_pk).await {
             tracing::error!("Failed to delete received open order from DB: {e:?}");
         }
@@ -50,11 +52,12 @@ pub fn submitted(
 /// - deletes the associated order in the OpenOrders table
 pub fn cancelled(pool: PgPool, order_id: i32, order_perm_id: i32, security_type: &SecurityType) {
     let asset_type = AssetType::from_str(security_type);
-    let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
     let open_orders_pk = OpenOrdersPrimaryKeys::new(&asset_type, order_perm_id, order_id);
     let open_orders_pk_fake = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
 
     tokio::spawn(async move {
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&asset_type);
         if let Err(e) = open_orders_crud.delete(&open_orders_pk).await {
             tracing::error!("Failed to cancel Open Order: {e:?}");
         }

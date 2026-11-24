@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{collections::HashMap, sync::Arc};
 
 #[cfg(feature = "backtest")]
@@ -55,11 +56,12 @@ impl Consolidator {
         pool: &PgPool,
         strategy: &str,
     ) -> Result<f64, String> {
-        let current_stock_positions_crud =
-            CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+        let pool = pool.clone();
 
         let strategy = strategy.to_string();
         let join_handle = handle.spawn(async move {
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
             let res = current_stock_positions_crud
                 .get_pos_by_strat(
                     &strategy,
@@ -184,11 +186,12 @@ impl Consolidator {
                 state.current_positions_snapshot(),
             );
         }
-        let current_stock_positions_crud =
-            CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+        let pool = pool.clone();
 
         let strategy = strategy.to_string();
         let join_handle = tokio::spawn(async move {
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
             #[cfg(feature = "backtest")]
             let res = current_stock_positions_crud
                 .get_pos_by_strat(&strategy, BacktestMode::Db)
@@ -363,11 +366,15 @@ impl Consolidator {
         handle: &tokio::runtime::Handle,
         pool: &PgPool,
     ) -> Result<f64, String> {
-        let current_stock_positions_crud =
-            CurrentPositionsCRUD::from(&AssetType::Stock, pool.clone());
+        let pool = pool.clone();
 
         let positions = handle
-            .block_on(async move { current_stock_positions_crud.get_all_pos_grouped().await })
+            .block_on(async move {
+                let mut db = crate::database::db::DbDirect::connect(&pool);
+                db.current_positions(&AssetType::Stock)
+                    .get_all_pos_grouped()
+                    .await
+            })
             .map_err(|e| format!("failed to fetch all pos: {e:?}"))?;
 
         Self::_get_positions_value(

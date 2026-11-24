@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
@@ -107,7 +108,8 @@ pub fn on_execution_update(
     handle.spawn(async move {
         // Check if transaction is valid
         // - not a duplicate
-        let transactions_crud = TransactionsCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut transactions_crud = db.transactions(&asset_type);
         let transaction_pk = TransactionsPrimaryKeys::from(&execution_data);
         match &transactions_crud.read(&transaction_pk).await {
             Ok(transaction) => {
@@ -141,7 +143,8 @@ pub fn on_execution_update(
             message=%format!("Execution: Looking for order with order_id {}",
             &execution_data.execution.order_id)
         );
-        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&asset_type);
         let open_order_pk = OpenOrdersPrimaryKeys::from_execution(&execution_data);
         let open_order_opt = match open_orders_crud.read(&open_order_pk).await {
             Ok(val) => val,
@@ -150,7 +153,8 @@ pub fn on_execution_update(
                 return;
             }
         };
-        let current_positions_crud = CurrentPositionsCRUD::from(&asset_type, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut current_positions_crud = db.current_positions(&asset_type);
 
         // If No previous Open Order
         if let None = open_order_opt {
@@ -167,7 +171,11 @@ pub fn on_execution_update(
             let transaction_fk =
                 TransactionsFullKeys::from_strat_and_exec(&strategy_name, &execution_data);
             // Update Transaction with default strategy
+            let spawn_pool = pool.clone();
+            let spawn_asset_type = asset_type.clone();
             tokio::spawn(async move {
+                let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                let mut transactions_crud = db.transactions(&spawn_asset_type);
                 if let Err(e) = transactions_crud.create(&transaction_fk).await {
                     tracing::error!(
                         "Error inserting into Transactions Table for unknown strategy: {e:?}"
@@ -176,7 +184,6 @@ pub fn on_execution_update(
             });
 
             // Update Current Positions - Currency & Stock
-            let current_positions_crud_cloned = current_positions_crud.clone();
             let currency_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract_currency(
                 &strategy_name,
                 &execution_data.contract,
@@ -184,8 +191,10 @@ pub fn on_execution_update(
             let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
 
             let strategy_name_cloned = strategy_name.clone();
+            let currency_pool = pool.clone();
+            let currency_asset_type = asset_type.clone();
             tokio::spawn(async move {
-                update_currency_and_place_backed_up_orders(cloned_handle, pool.clone(), &weak_client, current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name_cloned).await;
+                update_currency_and_place_backed_up_orders(cloned_handle, currency_pool, &weak_client, currency_asset_type, currency_pk, currency_uk, backed_up_orders, &strategy_name_cloned).await;
             });
 
             let current_positions_pk = CurrentPositionsPrimaryKeys::from_strat_and_contract(
@@ -193,7 +202,11 @@ pub fn on_execution_update(
                 &execution_data.contract,
             );
             let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
+            let spawn_pool = pool.clone();
+            let spawn_asset_type = asset_type.clone();
             tokio::spawn(async move {
+                let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                let mut current_positions_crud = db.current_positions(&spawn_asset_type);
                 #[cfg(feature = "backtest")]
                 let res = current_positions_crud
                     .update_positions_additive(
@@ -256,7 +269,11 @@ pub fn on_execution_update(
         let open_order_pk = OpenOrdersPrimaryKeys::from_open_order(&open_order);
         if execution_data.execution.cumulative_quantity == quantity.abs() {
             // delete open order if execution is filled - i.e. cum_qty == required qty
+            let spawn_pool = pool.clone();
+            let spawn_asset_type = asset_type.clone();
             tokio::spawn(async move {
+                let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                let mut open_orders_crud = db.open_orders(&spawn_asset_type);
                 if let Err(e) = open_orders_crud.delete(&open_order_pk).await {
                     tracing::error!(
                         "Error occurend while deleting open order in OpenStockOrders: {e:?}"
@@ -323,7 +340,11 @@ pub fn on_execution_update(
                 }),
             };
 
+            let spawn_pool = pool.clone();
+            let spawn_asset_type = asset_type.clone();
             tokio::spawn(async move {
+                let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                let mut open_orders_crud = db.open_orders(&spawn_asset_type);
                 if let Err(e) = open_orders_crud
                     .update(&open_order_pk, &open_order_uk)
                     .await
@@ -336,7 +357,11 @@ pub fn on_execution_update(
         // ===== Update Transactions =====
         let transaction_fk =
             TransactionsFullKeys::from_strat_and_exec(&strategy_name, &execution_data);
+        let spawn_pool = pool.clone();
+        let spawn_asset_type = asset_type.clone();
         tokio::spawn(async move {
+            let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+            let mut transactions_crud = db.transactions(&spawn_asset_type);
             if let Err(e) = transactions_crud.create(&transaction_fk).await {
                 tracing::error!("Error occured while inserting into Transactions: {e:?}")
             };
@@ -354,9 +379,11 @@ pub fn on_execution_update(
         };
         current_positions_pk.with_stock(&stock);
         let current_positions_uk = CurrentPositionsUpdateKeys::from_execution(&execution_data);
-        let current_positions_crud_cloned = current_positions_crud.clone();
-
+        let spawn_pool = pool.clone();
+        let spawn_asset_type = asset_type.clone();
         tokio::spawn(async move {
+            let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+            let mut current_positions_crud = db.current_positions(&spawn_asset_type);
             #[cfg(feature = "backtest")]
             let res = current_positions_crud
                 .update_positions_additive(
@@ -378,8 +405,10 @@ pub fn on_execution_update(
             &execution_data.contract,
         );
         let currency_uk = CurrentPositionsUpdateKeys::from_execution_currency(&execution_data);
+        let currency_pool = pool.clone();
+        let currency_asset_type = asset_type.clone();
         tokio::spawn(async move {
-            update_currency_and_place_backed_up_orders(cloned_handle, pool.clone(), &weak_client,current_positions_crud_cloned, currency_pk, currency_uk, backed_up_orders, &strategy_name).await;
+            update_currency_and_place_backed_up_orders(cloned_handle, currency_pool, &weak_client, currency_asset_type, currency_pk, currency_uk, backed_up_orders, &strategy_name).await;
         });
     });
 
@@ -390,12 +419,14 @@ async fn update_currency_and_place_backed_up_orders(
     handle: tokio::runtime::Handle,
     pool: PgPool,
     weak_client: &Weak<Client>,
-    current_positions_crud: CurrentPositionsCRUD,
+    asset_type: AssetType,
     pk: CurrentPositionsPrimaryKeys,
     uk: CurrentPositionsUpdateKeys,
     backed_up_orders: Arc<OrderStore>,
     strategy_name: &str,
 ) {
+    let mut db = crate::database::db::DbDirect::connect(&pool);
+    let mut current_positions_crud = db.current_positions(&asset_type);
     #[cfg(feature = "backtest")]
     let res = current_positions_crud
         .update_positions_additive(pk.clone(), uk, BacktestMode::Db)
@@ -420,7 +451,9 @@ async fn update_currency_and_place_backed_up_orders(
         return;
     }
 
-    let current_positions_currency = match current_positions_crud.read(&pk).await {
+    let current_positions_currency: Option<
+        crate::database::models_crud::current_positions::current_positions::CurrentPositionsFullKeys,
+    > = match current_positions_crud.read(&pk).await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(

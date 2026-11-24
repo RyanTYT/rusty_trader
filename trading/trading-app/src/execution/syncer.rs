@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
@@ -312,10 +313,10 @@ impl SyncOps for SyncerEngine {
         consolidator: &Arc<Consolidator>,
         default_strategy: Option<String>,
     ) {
-        let current_stock_positions_crud =
-            CurrentPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
-        let current_option_positions_crud =
-            CurrentPositionsCRUD::from(&AssetType::Option, self.pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+        let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
+        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+        let mut current_option_positions_crud = db.current_positions(&AssetType::Option);
         let mut stock_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut option_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut fx_map: HashMap<String, f64> = HashMap::new();
@@ -427,7 +428,6 @@ impl SyncOps for SyncerEngine {
         sync_fx_positions(
             consolidator,
             client,
-            &current_stock_positions_crud,
             self.account.to_string(),
             &fx_map,
             &mut errors,
@@ -460,12 +460,13 @@ impl SyncOps for SyncerEngine {
 async fn sync_fx_positions(
     consolidator: &Consolidator,
     client: &Client,
-    current_stock_positions_crud: &CurrentPositionsCRUD,
     account: String,
     fx_map: &HashMap<String, f64>,
     errors: &mut Vec<String>,
     default_strategy: &str,
 ) {
+    let mut db = crate::database::db::DbDirect::connect(&consolidator.pool);
+    let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
     // =====================================
     // Compare FX broker positions
     // =====================================
@@ -671,13 +672,14 @@ async fn sync_stock_and_option_positions(
         // };
         let asset_type = AssetType::from_str(&contract.security_type);
         let stock = contract.symbol.to_string();
-        let current_positions_crud = CurrentPositionsCRUD::from(&asset_type, pool);
         let current_positions_pk =
             CurrentPositionsPrimaryKeys::from_strat_and_contract(strategy, contract);
         let current_positions_uk =
             CurrentPositionsUpdateKeys::from(&asset_type, Some(discrepancy), Some(current_price));
         let default_strategy = strategy.to_string();
         tokio::spawn(async move {
+            let mut db = crate::database::db::DbDirect::connect(&pool);
+            let mut current_positions_crud = db.current_positions(&asset_type);
             #[cfg(feature = "backtest")]
             let res = current_positions_crud
                 .update_positions_additive(
@@ -803,7 +805,8 @@ fn on_full_open_order_received(
     let order_status_filled = order_status.filled;
     tokio::spawn(async move {
         let asset_type = AssetType::from_str(&contract.security_type);
-        let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&asset_type);
         let open_order_pk = OpenOrdersPrimaryKeys::new(&asset_type, order.perm_id, order.order_id);
         let open_order_uk = OpenOrdersUpdateKeys::new_with_fill(
             &asset_type,

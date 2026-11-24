@@ -1,3 +1,4 @@
+use crate::database::tables::DbTables;
 use ibapi::orders::OrderStatus;
 use sqlx::PgPool;
 
@@ -20,7 +21,8 @@ pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
     );
 
     tokio::spawn(async move {
-        let open_orders_crud = OpenOrdersCRUD::from(&AssetType::Stock, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&AssetType::Stock);
         let open_order_pk = OpenOrdersPrimaryKeys::new(&AssetType::Stock, order_perm_id, order_id);
 
         match open_orders_crud.read(&open_order_pk).await {
@@ -44,7 +46,8 @@ pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
             Err(e) => tracing::error!("Error occured while inserting into OpenStockOrders: {e:?}"),
         };
 
-        let open_orders_crud = OpenOrdersCRUD::from(&AssetType::Option, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&AssetType::Option);
         let open_order_pk = OpenOrdersPrimaryKeys::new(&AssetType::Option, order_perm_id, order_id);
 
         match open_orders_crud.read(&open_order_pk).await {
@@ -76,13 +79,15 @@ pub fn cancelled(pool: PgPool, order_status: &OrderStatus) {
     let (order_perm_id, order_id) = (order_status.perm_id, order_status.order_id);
 
     tokio::spawn(async move {
-        let open_orders_crud = OpenOrdersCRUD::from(&AssetType::Stock, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&AssetType::Stock);
         let open_orders_pk = OpenOrdersPrimaryKeys::new(&AssetType::Stock, order_perm_id, order_id);
         if let Err(e) = open_orders_crud.delete(&open_orders_pk).await {
             tracing::error!("Failed to cancel Open Order: {e:?}");
         }
 
-        let open_orders_crud = OpenOrdersCRUD::from(&AssetType::Option, pool.clone());
+        let mut db = crate::database::db::DbDirect::connect(&pool);
+        let mut open_orders_crud = db.open_orders(&AssetType::Option);
         let open_orders_pk =
             OpenOrdersPrimaryKeys::new(&AssetType::Option, order_perm_id, order_id);
         if let Err(e) = open_orders_crud.delete(&open_orders_pk).await {
