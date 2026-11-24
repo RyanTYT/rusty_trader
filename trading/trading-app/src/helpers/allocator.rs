@@ -98,7 +98,7 @@ pub fn fund_strategies(
         let pool = pool.clone();
         async move {
             CurrentPositionsCRUD::from(&AssetType::Stock, pool)
-                .get_all_pos_grouped()
+                .get_all_pos_grouped_by_strat()
                 .await
         }
     });
@@ -312,7 +312,7 @@ pub fn fund_strategies(
     }
     // Book leg 1 first so the poll baseline is exact.
     for m in &leg1 {
-        write_cash(handle, &pool, &m.strategy, &m.currency, m.quantity)?;
+        write_cash(handle, consolidator, &pool, &m.strategy, &m.currency, m.quantity)?;
     }
 
     // ── Conversions the projected hub balance cannot cover in kind ──────
@@ -423,8 +423,8 @@ pub fn fund_strategies(
                 continue;
             }
             let units = take / rates.get(ccy).copied().unwrap_or(1.0);
-            write_cash(handle, &pool, &receiver.name, ccy, units)?;
-            write_cash(handle, &pool, UNALLOCATED, ccy, -units)?;
+            write_cash(handle, consolidator, &pool, &receiver.name, ccy, units)?;
+            write_cash(handle, consolidator, &pool, UNALLOCATED, ccy, -units)?;
             *hub_balances.entry(ccy.clone()).or_default() -= units;
             need -= take;
         }
@@ -483,9 +483,11 @@ fn acceptable_currencies(
     ranked.into_iter().map(|(ccy, _)| ccy).collect()
 }
 
-/// One additive CASH row write.
+/// One additive CASH row write. `avg_price` is the currency's SGD rate, matching
+/// what the syncer stores for cash rows.
 fn write_cash(
     handle: &Handle,
+    consolidator: &Arc<Consolidator>,
     pool: &PgPool,
     strategy: &str,
     currency: &str,
@@ -494,6 +496,19 @@ fn write_cash(
     if quantity.abs() <= EPS {
         return Ok(());
     }
+    let avg_price = if currency == "SGD" {
+        1.0
+    } else {
+        consolidator.get_current_price(
+            build_contract_from_stock(
+                &format!("CASH:{currency}"),
+                &String::new(),
+                &"SGD".to_string(),
+            ),
+            false,
+            &[],
+        )?
+    };
     let (strategy, stock) = (strategy.to_string(), format!("CASH:{currency}"));
     let pool = pool.clone();
     on_rt!(handle, async move {
@@ -507,7 +522,7 @@ fn write_cash(
                 }),
                 CurrentPositionsUpdateKeys::Stock(CurrentStockPositionsUpdateKeys {
                     quantity: Some(quantity),
-                    avg_price: Some(1.0),
+                    avg_price: Some(avg_price),
                     last_updated: None,
                 }),
                 #[cfg(feature = "backtest")]
