@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH latest AS (\n                SELECT time AT TIME ZONE 'America/New_York' AS ny\n                FROM market_data.historical_data\n                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3\n                ORDER BY time DESC\n                LIMIT 1\n            )\n            SELECT m.close / o.open AS movement_since_open\n            FROM (\n                SELECT h.time, h.close,\n                       (h.time AT TIME ZONE 'America/New_York')::date AS day\n                FROM market_data.historical_data h, latest l\n                WHERE h.stock = $1 AND h.primary_exchange = $2 AND h.currency = $3\n                  AND (h.time AT TIME ZONE 'America/New_York')::time = l.ny::time\n                  AND (h.time AT TIME ZONE 'America/New_York')::date < l.ny::date\n                ORDER BY h.time DESC\n                LIMIT $4\n            ) m\n            CROSS JOIN LATERAL (\n                SELECT open\n                FROM market_data.historical_data\n                WHERE stock = $1 AND primary_exchange = $2 AND currency = $3\n                  AND time >= m.day::timestamp AT TIME ZONE 'America/New_York'\n                  AND time <  (m.day + 1)::timestamp AT TIME ZONE 'America/New_York'\n                ORDER BY time\n                LIMIT 1\n            ) o\n            ORDER BY m.time DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "movement_since_open",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cd14bce45cc8265efc1ae2d9a8079118f1216388089f412f41f0feac1335c603"
+}
