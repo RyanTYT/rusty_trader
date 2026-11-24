@@ -57,6 +57,20 @@ impl CurrentPositionsFullKeys {
             Self::Options(fk) => fk.currency.clone(),
         }
     }
+
+    fn get_avg_price(&self) -> f64 {
+        match self {
+            Self::Stock(stk) => stk.avg_price,
+            Self::Options(opt) => opt.avg_price,
+        }
+    }
+
+    fn set_avg_price(&mut self, avg_price: f64) {
+        match self {
+            Self::Stock(stk) => stk.avg_price = avg_price,
+            Self::Options(opt) => opt.avg_price = avg_price,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -336,6 +350,7 @@ pub trait CurrentPositionsOps {
     ) -> Result<Option<CurrentPositionsFullKeys>, String>;
     /// Returns all positions across the database grouped by Primary Keys
     async fn get_all_pos_grouped(&self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
+    async fn get_all_pos_grouped_by_strat(&self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
     /// Should insert into DB, and on conflict, add the position to the row
     /// - i.e. quantity is added + avg_price is updated accordingly
     ///     - if quantity is in opp direction of current position
@@ -366,8 +381,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
             // to the requested name; no state at all → fail CLOSED (a
             // missing state is a wiring bug, never an empty book).
             use crate::backtester::methods::in_memory::state as in_memory;
-            let Some(st) =
-                in_memory::routed_state(strategy).or_else(|| in_memory::current())
+            let Some(st) = in_memory::routed_state(strategy).or_else(|| in_memory::current())
             else {
                 return Err(format!(
                     "get_pos_by_strat(InMemory): no InMemoryState installed for '{strategy}'"
@@ -550,6 +564,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
         })
     }
 
+    /// Currently wrong - need to update avg_price to return correct number
     async fn get_all_pos_grouped(&self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
         let result = match self {
             Self::Stock(_) => sqlx::query_as!(
@@ -560,11 +575,82 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                         primary_exchange AS "primary_exchange!", 
                         currency AS "currency!", 
                         COALESCE(SUM(quantity), 0) AS "quantity!", 
-                        COALESCE(AVG(avg_price), 0) as "avg_price!",
+                        COALESCE(SUM(quantity * avg_price), 0) as "avg_price!",
                         COALESCE((ARRAY_AGG(strategy))[1], '') AS "strategy!",
                         (ARRAY_AGG(last_updated))[1]  AS "last_updated!"
                     FROM trading.current_stock_positions
                     GROUP BY stock, primary_exchange, currency;
+                    "#,
+            )
+            .fetch_all(self.get_pg_pool())
+            .await
+            .map(|positions| {
+                positions
+                    .into_iter()
+                    .map(CurrentPositionsFullKeys::Stock)
+                    .map(|mut v| { 
+                        if v.get_qty() != 0.0 {
+                            v.set_avg_price(v.get_avg_price() / v.get_qty());
+                        } 
+                        v
+                    })
+                    .collect()
+            }),
+            Self::Options(_) => sqlx::query_as!(
+                CurrentOptionPositionsFullKeys,
+                r#"
+                    SELECT 
+                        stock AS "stock!", 
+                        primary_exchange AS "primary_exchange!", 
+                        currency AS "currency!", 
+                        expiry as "expiry!",
+                        strike as "strike!",
+                        multiplier as "multiplier!",
+                        option_type as "option_type!:OptionType",
+                        COALESCE(SUM(quantity), 0) AS "quantity!", 
+                        COALESCE(SUM(quantity * avg_price), 0) as "avg_price!",
+                        COALESCE((ARRAY_AGG(strategy))[1], '') AS "strategy!",
+                        (ARRAY_AGG(last_updated))[1] AS "last_updated!"
+                    FROM trading.current_option_positions
+                    GROUP BY stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
+                    "#,
+            )
+            .fetch_all(self.get_pg_pool())
+            .await
+            .map(|positions| {
+                positions
+                    .into_iter()
+                    .map(CurrentPositionsFullKeys::Options)
+                    .map(|mut v| { 
+                        if v.get_qty() != 0.0 {
+                            v.set_avg_price(v.get_avg_price() / v.get_qty());
+                        } 
+                        v
+                    })
+                    .collect()
+            }),
+        };
+
+        result.map_err(|e| format!("Error occurred fetching all local positions grouped: {}", e))
+    }
+
+    /// This implementation of avg_price should be fine since one strategy should only have
+    /// a single position (i.e. row) for a single contract
+    async fn get_all_pos_grouped_by_strat(&self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
+        let result = match self {
+            Self::Stock(_) => sqlx::query_as!(
+                CurrentStockPositionsFullKeys,
+                r#"
+                    SELECT 
+                        stock AS "stock!", 
+                        primary_exchange AS "primary_exchange!", 
+                        currency AS "currency!", 
+                        COALESCE(SUM(quantity), 0) AS "quantity!", 
+                        COALESCE(AVG(avg_price), 0) as "avg_price!",
+                        strategy AS "strategy!",
+                        (ARRAY_AGG(last_updated))[1]  AS "last_updated!"
+                    FROM trading.current_stock_positions
+                    GROUP BY strategy, stock, primary_exchange, currency;
                     "#,
             )
             .fetch_all(self.get_pg_pool())
@@ -588,10 +674,10 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                         option_type as "option_type!:OptionType",
                         COALESCE(SUM(quantity), 0) AS "quantity!", 
                         COALESCE(AVG(avg_price), 0) as "avg_price!",
-                        COALESCE((ARRAY_AGG(strategy))[1], '') AS "strategy!",
+                        strategy AS "strategy!",
                         (ARRAY_AGG(last_updated))[1] AS "last_updated!"
                     FROM trading.current_option_positions
-                    GROUP BY stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
+                    GROUP BY strategy, stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
                     "#,
             )
             .fetch_all(self.get_pg_pool())
@@ -635,8 +721,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 }),
             ) = (&pk, &uk)
             {
-                let Some(st) =
-                    in_memory::routed_state(strategy).or_else(|| in_memory::current())
+                let Some(st) = in_memory::routed_state(strategy).or_else(|| in_memory::current())
                 else {
                     return Err(format!(
                         "update_positions_additive(InMemory): no InMemoryState installed \
