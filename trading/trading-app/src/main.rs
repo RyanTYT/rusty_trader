@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 #[cfg(not(feature = "backtest"))]
 use crate::{
-    init_app::{ApplicationState, init_app},
+    init_app::{ApplicationState, init_app, pg_connect_options},
     logger::{ChannelLayer, ConnectionState, IbConnectionLayer, init_db_logger},
     schedule::program_scheduler::run_program,
     server::server::init_server,
@@ -77,7 +77,7 @@ async fn tokio_main() {
                 Ok(())
             })
         })
-        .connect(&database_url)
+        .connect_with(pg_connect_options(&database_url))
         // .connect("postgres://ryantan:admin@localhost:5432/rust_trading_system")
         .await
         .map_err(|e| format!("error {}", e))
