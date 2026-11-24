@@ -316,8 +316,8 @@ impl SyncOps for SyncerEngine {
             CurrentPositionsCRUD::from(&AssetType::Stock, self.pool.clone());
         let current_option_positions_crud =
             CurrentPositionsCRUD::from(&AssetType::Option, self.pool.clone());
-        let mut stock_map: HashMap<HashContract, f64> = HashMap::new();
-        let mut option_map: HashMap<HashContract, f64> = HashMap::new();
+        let mut stock_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
+        let mut option_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut fx_map: HashMap<String, f64> = HashMap::new();
         let mut errors = Vec::new();
 
@@ -328,15 +328,12 @@ impl SyncOps for SyncerEngine {
             Ok(current_stock_positions) => {
                 tracing::info!("Received local stock positions, inserting into stock_map now");
                 for position in current_stock_positions {
-                    let (currency, quantity, avg_price) = match position {
+                    let (quantity, avg_price) = match position {
                         CurrentPositionsFullKeys::Stock(CurrentStockPositionsFullKeys {
-                            // stock,
-                            // primary_exchange,
-                            currency,
                             quantity,
                             avg_price,
                             ..
-                        }) => (currency.clone(), quantity, avg_price),
+                        }) => (quantity, avg_price),
                         _ => {
                             return;
                         }
@@ -344,34 +341,15 @@ impl SyncOps for SyncerEngine {
                     let built_contract =
                         get_contract_from(&LocalContractTypes::CurrentPosFk(position.clone()));
                     if built_contract.security_type == SecurityType::ForexPair {
-                        let currency = currency.to_string();
-                        let currency_val = quantity * avg_price;
-                        let quote = built_contract.symbol.to_string();
-                        let quote_val = quantity;
-                        if !fx_map.contains_key(&currency) {
-                            fx_map.insert(currency.clone(), 0.0);
-                        }
-                        if !fx_map.contains_key(&quote) {
-                            fx_map.insert(quote.clone(), 0.0);
-                        }
-                        if quote == "SGD" {
-                            fx_map
-                                .insert(quote.clone(), fx_map.get(&quote).unwrap() + currency_val);
-                            continue;
-                        }
-                        fx_map.insert(
-                            currency.clone(),
-                            fx_map.get(&currency).unwrap() - currency_val,
+                        fx_map.insert(built_contract.symbol.to_string(), *quantity);
+                    } else {
+                        stock_map.insert(
+                            HashContract {
+                                contract: built_contract,
+                            },
+                            (*quantity, *avg_price),
                         );
-                        fx_map.insert(quote.clone(), fx_map.get(&quote).unwrap() + quote_val);
-                        continue;
                     }
-                    stock_map.insert(
-                        HashContract {
-                            contract: built_contract,
-                        },
-                        quantity.clone(),
-                    );
                 }
             }
             Err(e) => {
@@ -394,6 +372,7 @@ impl SyncOps for SyncerEngine {
                         primary_exchange,
                         currency,
                         multiplier,
+                        avg_price,
                     ) = match position {
                         CurrentPositionsFullKeys::Options(CurrentOptionPositionsFullKeys {
                             stock,
@@ -404,6 +383,7 @@ impl SyncOps for SyncerEngine {
                             primary_exchange,
                             currency,
                             multiplier,
+                            avg_price,
                             ..
                         }) => (
                             stock,
@@ -414,6 +394,7 @@ impl SyncOps for SyncerEngine {
                             primary_exchange,
                             currency,
                             multiplier,
+                            avg_price,
                         ),
                         _ => {
                             return;
@@ -427,7 +408,7 @@ impl SyncOps for SyncerEngine {
                     let hashed_contract = HashContract {
                         contract: built_contract,
                     };
-                    option_map.insert(hashed_contract, quantity);
+                    option_map.insert(hashed_contract, (quantity, avg_price));
                 }
             }
             Err(e) => {
@@ -513,15 +494,16 @@ async fn sync_fx_positions(
                 }
             }
             ibapi::prelude::AccountUpdate::PortfolioValue(portfolio_value) => {
-                let currency = portfolio_value.contract.currency.as_str();
-                let currency_balance = portfolio_value.average_cost * portfolio_value.position;
-                if !broker_currency.contains_key(currency) {
-                    broker_currency.insert(currency.to_string(), 0.0);
-                }
-                broker_currency.insert(
-                    currency.to_string(),
-                    broker_currency.get(currency).unwrap() + currency_balance,
-                );
+                continue;
+                // let currency = portfolio_value.contract.currency.as_str();
+                // let currency_balance = portfolio_value.average_cost * portfolio_value.position;
+                // if !broker_currency.contains_key(currency) {
+                //     broker_currency.insert(currency.to_string(), 0.0);
+                // }
+                // broker_currency.insert(
+                //     currency.to_string(),
+                //     broker_currency.get(currency).unwrap() + currency_balance,
+                // );
             }
             ibapi::prelude::AccountUpdate::UpdateTime(_) => {
                 continue;
@@ -533,12 +515,18 @@ async fn sync_fx_positions(
     }
 
     // Reconcile FX broker positions
+    for currency in fx_map.keys() {
+        if !broker_currency.contains_key(currency) {
+            broker_currency.insert(currency.clone(), 0.0);
+        }
+    }
+
     for (currency, value) in broker_currency {
         let local_value = fx_map.get(&currency).unwrap_or(&0.0);
         if (local_value - value).abs() < 1000.0 {
             continue;
         }
-        tracing::error!("Local ({local_value}) | Broker ({value})");
+        tracing::error!("{currency:?}: Local ({local_value}) | Broker ({value})");
 
         let adjustment = value - local_value;
         tracing::warn!(
@@ -588,19 +576,21 @@ async fn sync_fx_positions(
     }
 }
 
+/// stock_map: Contract -> (current quantity, average price)
+/// option_map: Contract -> (current quantity, average price)
 async fn sync_stock_and_option_positions(
     account: String,
     client: &Client,
     consolidator: &Consolidator,
-    stock_map: &HashMap<HashContract, f64>,
-    option_map: &HashMap<HashContract, f64>,
+    stock_map: &HashMap<HashContract, (f64, f64)>,
+    option_map: &HashMap<HashContract, (f64, f64)>,
     contract_to_strategy: &HashMap<HashContract, String>,
     default_strategy: &str,
     pool: PgPool,
     errors: &mut Vec<String>,
 ) {
-    let mut broker_stock_positions_received = HashMap::<HashContract, f64>::new();
-    let mut broker_option_positions_received = HashMap::<HashContract, f64>::new();
+    let mut broker_stock_positions_received = HashMap::<HashContract, (f64, f64)>::new();
+    let mut broker_option_positions_received = HashMap::<HashContract, (f64, f64)>::new();
     let subscription = client
         .positions_multi(Some(&ibapi::accounts::types::AccountId(account)), None)
         .expect("Error requesting positions for sync_positions");
@@ -627,10 +617,12 @@ async fn sync_stock_and_option_positions(
                     | AssetType::CFD
                     | AssetType::ForexPair
                     | AssetType::Future => {
-                        broker_stock_positions_received.insert(hashed_contract, position.position);
+                        broker_stock_positions_received
+                            .insert(hashed_contract, (position.position, position.average_cost));
                     }
                     AssetType::Option => {
-                        broker_option_positions_received.insert(hashed_contract, position.position);
+                        broker_option_positions_received
+                            .insert(hashed_contract, (position.position, position.average_cost));
                     }
                     _ => {
                         tracing::error!(
@@ -655,27 +647,28 @@ async fn sync_stock_and_option_positions(
     fn reconcile_position(
         pool: PgPool,
         contract: &Contract,
-        local_position: f64,
-        broker_position: f64,
+        local_position: (f64, f64),
+        broker_position: (f64, f64),
         strategy: &str,
         consolidator: &Consolidator,
     ) {
-        let discrepancy = broker_position - local_position;
+        let discrepancy = broker_position.0 - local_position.0;
         if discrepancy == 0.0 {
             tracing::info!("No discrepancy for {:?}", contract.symbol);
             return;
         }
-        let current_price = {
-            let val = consolidator.get_current_price(contract.clone(), false, &[]);
-            if let Err(e) = val {
-                tracing::error!(
-                    "Could not get current price for synced position: {e:?}! Falling back to 0.0!"
-                );
-                0.0
-            } else {
-                val.unwrap()
-            }
-        };
+        let current_price = broker_position.1;
+        // let current_price = {
+        //     let val = consolidator.get_current_price(contract.clone(), false, &[]);
+        //     if let Err(e) = val {
+        //         tracing::error!(
+        //             "Could not get current price for synced position: {e:?}! Falling back to 0.0!"
+        //         );
+        //         0.0
+        //     } else {
+        //         val.unwrap()
+        //     }
+        // };
         let asset_type = AssetType::from_str(&contract.security_type);
         let stock = contract.symbol.to_string();
         let current_positions_crud = CurrentPositionsCRUD::from(&asset_type, pool);
@@ -731,11 +724,11 @@ async fn sync_stock_and_option_positions(
     // ====================
     for local_contract in stock_map.keys() {
         if !broker_stock_positions_received.contains_key(&local_contract) {
-            broker_stock_positions_received.insert(local_contract.clone(), 0.0);
+            broker_stock_positions_received.insert(local_contract.clone(), (0.0, 0.0));
         }
     }
     for (hash_contract, broker_position) in broker_stock_positions_received.into_iter() {
-        let local_position = stock_map.get(&hash_contract).unwrap_or(&0.0);
+        let local_position = stock_map.get(&hash_contract).unwrap_or(&(0.0, 0.0));
         let strategy = contract_to_strategy
             .get(&hash_contract)
             .map_or(default_strategy.to_string(), |v| v.to_string());
@@ -753,11 +746,11 @@ async fn sync_stock_and_option_positions(
     // ====================
     for local_contract in option_map.keys() {
         if !broker_option_positions_received.contains_key(&local_contract) {
-            broker_option_positions_received.insert(local_contract.clone(), 0.0);
+            broker_option_positions_received.insert(local_contract.clone(), (0.0, 0.0));
         }
     }
     for (hash_contract, broker_position) in broker_option_positions_received.into_iter() {
-        let local_position = option_map.get(&hash_contract).unwrap_or(&0.0);
+        let local_position = option_map.get(&hash_contract).unwrap_or(&(0.0, 0.0));
         let strategy = contract_to_strategy
             .get(&hash_contract)
             .map_or(default_strategy.to_string(), |v| v.to_string());
