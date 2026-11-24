@@ -9,8 +9,8 @@ use crate::database::db::{DbError, Exec};
 pub(crate) fn map_to_placeholder(key: usize, column_name: &str) -> String {
     match column_name {
         "asset_type" => format!("${}::asset_type", key),
-        "status" => format!("${}::trading.status", key),
-        "option_type" => format!("${}::trading.option_type", key),
+        "status" => format!("${}::status", key),
+        "option_type" => format!("${}::option_type", key),
         _ => format!("${}", key),
     }
 }
@@ -46,11 +46,7 @@ where
     // fn new(pool: PgPool, table: String) -> Self;
     async fn create(&mut self, raw_item: &FullKeys) -> Result<(), DbError>;
     async fn create_or_ignore(&mut self, raw_item: &FullKeys) -> Result<(), DbError>;
-    async fn create_or_update(
-        &mut self,
-        pk: &PrimaryKeys,
-        uk: &UpdateKeys,
-    ) -> Result<(), DbError>;
+    async fn create_or_update(&mut self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), DbError>;
     async fn read(&mut self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
@@ -151,11 +147,7 @@ impl<
 
     /// A create_or_update function - upsert basically
     /// - function is split into 2 parameters for ease of processing for function
-    async fn create_or_update(
-        &mut self,
-        pk: &PrimaryKeys,
-        uk: &UpdateKeys,
-    ) -> Result<(), DbError> {
+    async fn create_or_update(&mut self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), DbError> {
         let mut all_cols = pk.pri_column_names();
         all_cols.extend(uk.opt_column_names());
         let all_placeholders = all_cols
@@ -274,11 +266,7 @@ impl<
     /// Typical update function that updates the matching row in table
     /// - Primary keys should be passed without Option
     /// - Update keys should be passed as Option<>: If a key should not be updated, pass None
-    async fn update(
-        &mut self,
-        pk: &PrimaryKeys,
-        update: &UpdateKeys,
-    ) -> Result<u64, DbError> {
+    async fn update(&mut self, pk: &PrimaryKeys, update: &UpdateKeys) -> Result<u64, DbError> {
         // Make Set clauses
         let set_placeholders: Vec<String> = update
             .opt_column_names()

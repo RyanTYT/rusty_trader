@@ -721,7 +721,7 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                       AND expiry = $4
                       AND multiplier = $5
                       AND strike = $6
-                      AND option_type = $7::trading.option_type
+                      AND option_type = $7::option_type
                       AND time <= $10
                     GROUP BY
                         bucket,
@@ -892,15 +892,12 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                 let query = sqlx::query_as(&sql_query_str).bind(pair);
                 #[cfg(feature = "backtest")]
                 let query = query.bind(now);
-                query
-                    .fetch_optional(self.exec())
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Error when fetching most recent bar from HistoricalData \
+                query.fetch_optional(self.exec()).await.map_err(|e| {
+                    format!(
+                        "Error when fetching most recent bar from HistoricalData \
                             for in read_vwap: {e:?}",
-                        )
-                    })?
+                    )
+                })?
             }
 
             HistoricalDataPrimaryKeysWoTime::Options(HistoricalOptionsDataPrimaryKeysWoTime {
@@ -948,15 +945,12 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                 #[cfg(feature = "backtest")]
                 let query = query.bind(now);
 
-                query
-                    .fetch_optional(self.exec())
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Error when fetching most recent bar from HistoricalData\
+                query.fetch_optional(self.exec()).await.map_err(|e| {
+                    format!(
+                        "Error when fetching most recent bar from HistoricalData\
                             for in read_vwap: {e:?}",
-                        )
-                    })?
+                    )
+                })?
             }
         };
 
