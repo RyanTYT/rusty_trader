@@ -771,7 +771,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                       AND expiry = $4
                       AND multiplier = $5
                       AND strike = $6
-                      AND option_type = $7::option_type
+                      AND option_type = $7::trading.option_type
                       AND time <= $10
                     GROUP BY
                         bucket,

@@ -7,8 +7,8 @@ use sqlx::{FromRow, PgPool};
 pub(crate) fn map_to_placeholder(key: usize, column_name: &str) -> String {
     match column_name {
         "asset_type" => format!("${}::asset_type", key),
-        "status" => format!("${}::status", key),
-        "option_type" => format!("${}::option_type", key),
+        "status" => format!("${}::trading.status", key),
+        "option_type" => format!("${}::trading.option_type", key),
         _ => format!("${}", key),
     }
 }

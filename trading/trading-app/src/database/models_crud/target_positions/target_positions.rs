@@ -226,7 +226,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     AND COALESCE(t.expiry, c.expiry) = $5
                     AND COALESCE(t.strike, c.strike) = $6
                     AND COALESCE(t.multiplier, c.multiplier) = $7
-                    AND COALESCE(t.option_type, c.option_type) = $8::option_type;
+                    AND COALESCE(t.option_type, c.option_type) = $8::trading.option_type;
                 "#,
                 strategy,
                 stock,
