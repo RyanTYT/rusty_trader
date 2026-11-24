@@ -1,6 +1,56 @@
+-- Consolidated baseline. Structure: (1) tables + indexes, (2) triggers, (3) hypertables.
+--
+-- Removed as deprecated (were never used by the live app):
+--   market_data.daily_ohlcv                      (continuous aggregate)
+--   market_data.daily_volatility                 (view over daily_ohlcv)
+--   trading.threshold_rebalancing
+--   trading.calendar_rebalancing
+--   trading.fractional_momentum_weekly_positions
+--
+-- Also removed: the ALTER DATABASE ... enable_cagg_window_functions setting, which only
+-- existed to support the daily_ohlcv continuous aggregate.
+------------------------------------- ENVIRONMENT -------------------------------------
+-- Which resource profile the OPTIONS section at the bottom applies.
+--
+-- Resolution order:
+--   1. session GUC `trading_app.env` (forwarded by the client, see below)
+--   2. the literal DEFAULT_ENV in this block
+--
+-- Valid values for DEFAULT_ENV / trading_app.env (full parameter values are in
+-- the OPTIONS section at the bottom of this file):
+--
+--   local   default. Tuned for the 16 GB development machine.
+--             1 GB shared_buffers, 8 GB effective_cache_size, 512 MB maintenance,
+--             50 connections, 6 Timescale background workers.
+--   small   a 4 GB RAM server.
+--             1 GB shared_buffers, 3 GB effective_cache_size, 256 MB maintenance,
+--             30 connections, 4 Timescale background workers.
+--   medium  an 8 GB RAM server.
+--             2 GB shared_buffers, 6 GB effective_cache_size, 512 MB maintenance,
+--             40 connections, 6 Timescale background workers.
+--   large   a 16 GB RAM server.
+--             3 GB shared_buffers, 10 GB effective_cache_size, 1 GB maintenance,
+--             50 connections, 8 Timescale background workers.
+--
+-- Any other value (typo, empty string) falls through to the `local` profile in
+-- OPTIONS rather than failing the migration.
+--
+-- SQL cannot read OS environment variables, so the client must forward one:
+--   psql:  PGOPTIONS='-c trading_app.env=small' psql -d trading_system -f ...
+--   Rust:  PgConnectOptions::new().options(
+--              [("trading_app.env", std::env::var("APP_ENV").unwrap_or("local".into()))])
+DO $env$
+DECLARE
+    default_env CONSTANT text := 'small';
+    env text;
+BEGIN
+    env := coalesce(nullif(current_setting('trading_app.env', true), ''), default_env);
+    PERFORM set_config('trading_app.env', env, false);
+END
+$env$;
+------------------------------------- ENVIRONMENT -------------------------------------
 ------------------------------------- TIMESCALE DB INIT -------------------------------------
 CREATE EXTENSION IF NOT EXISTS timescaledb;
-ALTER DATABASE trading_system SET timescaledb.enable_cagg_window_functions = TRUE;
 ------------------------------------- TIMESCALE DB INIT -------------------------------------
 
 -- Create schema
@@ -10,13 +60,16 @@ CREATE SCHEMA IF NOT EXISTS logs;
 
 ------------------------------------- TRADING -------------------------------------
 
--- Enums
-CREATE TYPE status AS ENUM ('active', 'stopping', 'inactive');
-CREATE TYPE option_type AS ENUM ('C', 'P');
+-- Enums live in the trading schema: an unqualified CREATE TYPE would otherwise
+-- land in whatever schema is first on the migrator's search_path (public today).
+CREATE TYPE trading.status AS ENUM ('active', 'stopping', 'inactive');
+CREATE TYPE trading.option_type AS ENUM ('C', 'P');
 
 -- Notifications table
+-- id is a surrogate key so the same title can be raised more than once.
 CREATE TABLE trading.notifications (
-    title TEXT NOT NULL PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    title TEXT NOT NULL,
     body TEXT NOT NULL,
     alert_type TEXT NOT NULL
 );
@@ -24,9 +77,7 @@ CREATE TABLE trading.notifications (
 -- Strategy table
 CREATE TABLE trading.strategy (
     strategy VARCHAR(50) PRIMARY KEY,
-    capital DOUBLE PRECISION NOT NULL,
-    initial_capital DOUBLE PRECISION NOT NULL,
-    status status NOT NULL
+    status trading.status NOT NULL
 );
 
 -- Current stock positions
@@ -35,10 +86,13 @@ CREATE TABLE trading.current_stock_positions (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     avg_price DOUBLE PRECISION NOT NULL,
     quantity DOUBLE PRECISION NOT NULL,
 
-    PRIMARY KEY (strategy, stock, primary_exchange)
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (stock, primary_exchange, currency, strategy)
 );
 CREATE INDEX current_positions_strategy ON trading.current_stock_positions(strategy);
 
@@ -48,15 +102,18 @@ CREATE TABLE trading.current_option_positions (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     avg_price DOUBLE PRECISION NOT NULL,
     quantity DOUBLE PRECISION NOT NULL,
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type option_type NOT NULL,
+    option_type trading.option_type NOT NULL,
 
-    PRIMARY KEY (strategy, stock, primary_exchange, expiry, strike, multiplier, option_type)
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (stock, primary_exchange, currency, strategy, expiry, strike, multiplier, option_type)
 );
 CREATE INDEX current_option_positions_expiry ON trading.current_option_positions(expiry);
 
@@ -66,10 +123,11 @@ CREATE TABLE trading.target_stock_positions (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     avg_price DOUBLE PRECISION NOT NULL,
     quantity DOUBLE PRECISION NOT NULL,
 
-    PRIMARY KEY (stock, primary_exchange, strategy)
+    PRIMARY KEY (strategy, primary_exchange, currency, stock)
 );
 CREATE INDEX target_positions_strategy ON trading.target_stock_positions(strategy);
 
@@ -79,15 +137,16 @@ CREATE TABLE trading.target_option_positions (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     avg_price DOUBLE PRECISION NOT NULL,
     quantity DOUBLE PRECISION NOT NULL,
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type option_type NOT NULL,
+    option_type trading.option_type NOT NULL,
 
-    PRIMARY KEY (stock, primary_exchange, strategy, expiry, strike, multiplier, option_type)
+    PRIMARY KEY (strategy, stock, primary_exchange, currency, expiry, strike, multiplier, option_type)
 );
 CREATE INDEX target_option_positions_expiry ON trading.target_option_positions(expiry);
 
@@ -100,10 +159,12 @@ CREATE TABLE trading.open_stock_orders (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
 
     quantity DOUBLE PRECISION NOT NULL,
     filled DOUBLE PRECISION NOT NULL,
     executions TEXT[] NOT NULL DEFAULT '{}',
+    parent_order_id INTEGER NOT NULL DEFAULT 0, -- pre-existing drift, unused in src
 
     PRIMARY KEY (order_perm_id, order_id)
 );
@@ -118,29 +179,34 @@ CREATE TABLE trading.open_option_orders (
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
 
     quantity DOUBLE PRECISION NOT NULL,
     filled DOUBLE PRECISION NOT NULL,
     executions TEXT[] NOT NULL DEFAULT '{}',
+    parent_order_id INTEGER NOT NULL DEFAULT 0, -- pre-existing drift, unused in src
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type option_type NOT NULL,
+    option_type trading.option_type NOT NULL,
 
     PRIMARY KEY (order_perm_id, order_id)
 );
 CREATE INDEX open_option_orders_expiry ON trading.open_option_orders(expiry);
 
 -- Stock Transactions
+-- ON DELETE RESTRICT: executed trades are an audit trail, deleting a strategy
+-- must not silently erase them.
 CREATE TABLE trading.stock_transactions (
-    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE CASCADE,
+    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE RESTRICT,
     execution_id TEXT NOT NULL PRIMARY KEY,
     order_perm_id INTEGER NOT NULL,
     time TIMESTAMPTZ NOT NULL,
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     price DOUBLE PRECISION NOT NULL,
     fees NUMERIC(12, 6) NOT NULL,
     quantity DOUBLE PRECISION NOT NULL
@@ -149,14 +215,17 @@ CREATE INDEX transactions_stock ON trading.stock_transactions(stock, time);
 CREATE INDEX transactions_strategy ON trading.stock_transactions(strategy, time);
 
 -- Option Transactions
+-- ON DELETE RESTRICT: executed trades are an audit trail, deleting a strategy
+-- must not silently erase them.
 CREATE TABLE trading.option_transactions (
-    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE CASCADE,
+    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE RESTRICT,
     execution_id TEXT NOT NULL PRIMARY KEY,
     order_perm_id INTEGER NOT NULL,
     time TIMESTAMPTZ NOT NULL,
 
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     price DOUBLE PRECISION NOT NULL,
     fees NUMERIC(12, 6) NOT NULL,
     quantity DOUBLE PRECISION NOT NULL,
@@ -164,16 +233,22 @@ CREATE TABLE trading.option_transactions (
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type option_type NOT NULL
+    option_type trading.option_type NOT NULL
 );
--- CREATE UNIQUE INDEX option_transactions_unique_order_perm_id
---     ON trading.option_transactions(order_perm_id, time);
+-- Removed: (order_perm_id, time) is not unique in practice — a single order can
+-- produce several partial fills sharing the order timestamp.
 CREATE UNIQUE INDEX option_transactions_unique
     ON trading.option_transactions(stock, strategy, time, expiry, strike, multiplier, option_type);
 
+-- Staged Commissions table - to handle race conditions of commissions coming in
 CREATE TABLE trading.staged_commissions (
     execution_id TEXT NOT NULL PRIMARY KEY,
-    fees NUMERIC(12, 6) NOT NULL
+    fees NUMERIC(12, 6) NOT NULL,
+
+    -- created_at exposes a commission that never matched a transaction;
+    -- last_updated is bumped by trg_staged_commissions_last_updated below.
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ------------------------------------- TRADING -------------------------------------
 
@@ -193,33 +268,32 @@ CREATE TABLE market_data.historical_data (
     volume NUMERIC(30, 6) NOT NULL,
     PRIMARY KEY (stock, primary_exchange, currency, time)
 );
-CREATE INDEX historical_data_stock ON market_data.historical_data(stock);
-CREATE INDEX historical_data_stock_time ON market_data.historical_data(stock, time);
+-- Removed: redundant, (stock) is a prefix of historical_data_stock_time (stock, time)
+-- CREATE INDEX historical_data_stock ON market_data.historical_data(stock);
+-- Removed: historical_data_stock_time (stock, time) — superseded by the PK and by
+-- idx_historical_data_stock_exchange_time; it was an old artefact from before
+-- primary_exchange/currency were part of the key.
+CREATE INDEX idx_historical_data_stock_exchange_time
+ON market_data.historical_data (stock, primary_exchange, time);
+-- Removed: duplicate of idx_historical_data_stock_exchange_time; btree scans backwards for DESC
+-- CREATE INDEX idx_historical_data_stock_exchange_time_desc
+-- ON market_data.historical_data (stock, primary_exchange, time DESC);
 
--- 1 Day
--- CREATE TABLE market_data.daily_historical_data (
---     stock VARCHAR(50) NOT NULL,
---     time TIMESTAMPTZ NOT NULL,
---
---     open NUMERIC(30, 15) NOT NULL,
---     high NUMERIC(30, 15) NOT NULL,
---     low NUMERIC(30, 15) NOT NULL,
---     close NUMERIC(30, 15) NOT NULL,
---     volume NUMERIC(30, 6) NOT NULL,
---     PRIMARY KEY (stock, time)
--- );
--- CREATE INDEX daily_historical_data_stock ON market_data.daily_historical_data(stock);
--- CREATE INDEX daily_historical_data_stock_time ON market_data.daily_historical_data(stock, time);
+-- Pre-existing on the live cluster but never captured in a migration; kept for time-range scans.
+CREATE INDEX IF NOT EXISTS historical_data_time_idx
+ON market_data.historical_data (time DESC);
 
+-- Historical Options Data
 CREATE TABLE market_data.historical_options_data (
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
     time TIMESTAMPTZ NOT NULL,
 
     expiry VARCHAR(20) NOT NULL,
     strike DOUBLE PRECISION NOT NULL,
     multiplier VARCHAR(50) NOT NULL,
-    option_type option_type NOT NULL,
+    option_type trading.option_type NOT NULL,
 
     open DOUBLE PRECISION NOT NULL,
     high DOUBLE PRECISION NOT NULL,
@@ -227,23 +301,42 @@ CREATE TABLE market_data.historical_options_data (
     close DOUBLE PRECISION NOT NULL,
     volume NUMERIC(30, 6) NOT NULL,
 
-    PRIMARY KEY (stock, primary_exchange, expiry, strike, multiplier, option_type, time)
+    PRIMARY KEY (stock, primary_exchange, currency, expiry, strike, multiplier, option_type, time)
 );
 CREATE INDEX historical_options_data_stock ON market_data.historical_options_data(stock);
 CREATE INDEX historical_options_data_stock_time ON market_data.historical_options_data(stock, time);
+
+-- Historical Forex Data
+CREATE TABLE market_data.historical_forex_data (
+    pair VARCHAR(30) NOT NULL,
+    time TIMESTAMPTZ NOT NULL,
+
+    bid_open DOUBLE PRECISION,
+    bid_high DOUBLE PRECISION,
+    bid_low DOUBLE PRECISION,
+    bid_close DOUBLE PRECISION,
+    ask_open DOUBLE PRECISION,
+    ask_high DOUBLE PRECISION,
+    ask_low DOUBLE PRECISION,
+    ask_close DOUBLE PRECISION,
+
+    -- is_complete BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (pair, time)
+);
 ------------------------------------- MARKET_DATA -------------------------------------
 
 ------------------------------------- LOGS -------------------------------------
 
+-- id exists so two log lines written in the same microsecond with the same
+-- level/name cannot collide; logging must never fail on a unique violation.
 CREATE TABLE logs.logs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
     time TIMESTAMPTZ NOT NULL,
     level VARCHAR(50) NOT NULL,
     name VARCHAR(100) NOT NULL,
     message TEXT NOT NULL,
-    PRIMARY KEY (time, level, name)
+    PRIMARY KEY (time, id)
 );
-SELECT create_hypertable('logs.logs', 'time', chunk_time_interval => INTERVAL '1 day');
-SELECT add_retention_policy('logs.logs', INTERVAL '3 days');
 
 ------------------------------------- LOGS -------------------------------------
 
@@ -253,7 +346,8 @@ CREATE TABLE logs.cancelled_orders (
     order_perm_id INTEGER NOT NULL,
     order_id INTEGER NOT NULL,
 
-    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE CASCADE,
+    -- ON DELETE RESTRICT: cancelled orders are part of the audit trail.
+    strategy VARCHAR(50) NOT NULL REFERENCES trading.strategy(strategy) ON DELETE RESTRICT,
     stock VARCHAR(50) NOT NULL,
     primary_exchange VARCHAR(50) NOT NULL,
     currency VARCHAR(10) NOT NULL,
@@ -266,396 +360,35 @@ CREATE TABLE logs.cancelled_orders (
 
     PRIMARY KEY (time, order_perm_id, order_id)
 );
-
-CREATE TABLE trading.threshold_rebalancing (
-    time TIMESTAMPTZ NOT NULL,
-    threshold_equity_prop_000 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_001 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_002 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_003 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_004 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_005 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_006 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_007 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_008 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_009 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_010 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_011 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_012 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_013 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_014 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_015 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_016 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_017 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_018 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_019 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_020 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_021 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_022 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_023 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_024 DOUBLE PRECISION NOT NULL,
-    threshold_equity_prop_025 DOUBLE PRECISION NOT NULL,
-    PRIMARY KEY (time)
-);
-
-CREATE TABLE trading.calendar_rebalancing (
-    time TIMESTAMPTZ NOT NULL,
-    calendar_equity_prop DOUBLE PRECISION NOT NULL,
-    PRIMARY KEY (time)
-);
 ------------------------------------- MISCELLANEOUS (strategy specific) -------------------------------------
 
-------------------------------------- TIMESCALE DB -------------------------------------
-SELECT create_hypertable('market_data.historical_data', 'time', if_not_exists => TRUE);
+------------------------------------- TRIGGERS -------------------------------------
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS market_data.daily_ohlcv
-WITH (timescaledb.continuous) AS 
-SELECT
-    stock,
-    primary_exchange,
-    currency,
-    time_bucket('1 day', time) AS day,
-    first(open, time) AS open,
-    max(high) AS high,
-    min(low) AS low,
-    last(close, time) AS close,
-    sum(volume) AS volume
-FROM market_data.historical_data
-GROUP BY stock, primary_exchange, currency, day
-WITH NO DATA;
+-- Position timestamps: bump last_updated on every UPDATE
+CREATE OR REPLACE FUNCTION trading.set_last_updated()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_updated = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE VIEW market_data.daily_volatility AS
-SELECT
-    stock,
-    primary_exchange,
-    currency,
-    day,
-    stddev_samp(close / open) OVER (
-        PARTITION BY stock, primary_exchange, currency
-        ORDER BY day
-        ROWS BETWEEN 14 PRECEDING AND CURRENT ROW
-    ) AS rolling_volatility
-FROM market_data.daily_ohlcv; -- Querying the continuous aggregate
+CREATE TRIGGER trg_current_stock_positions_last_updated
+BEFORE UPDATE ON trading.current_stock_positions
+FOR EACH ROW
+EXECUTE FUNCTION trading.set_last_updated();
 
-SELECT add_continuous_aggregate_policy('market_data.daily_ohlcv',
-    start_offset => INTERVAL '1 month',
-    end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '30 minutes',
-    if_not_exists => TRUE);
-------------------------------------- TIMESCALE DB -------------------------------------
+CREATE TRIGGER trg_current_option_positions_last_updated
+BEFORE UPDATE ON trading.current_option_positions
+FOR EACH ROW
+EXECUTE FUNCTION trading.set_last_updated();
 
--- ------------------------------------- VIEWS -------------------------------------
--- -- ============================
--- -- CURRENT OPTION POSITIONS VIEW
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.current_option_positions_view AS
--- SELECT
---     cp.*,
---     cop.expiry,
---     cop.strike,
---     cop.multiplier,
---     cop.option_type,
---     FALSE as do_update
--- FROM trading.current_positions cp
--- JOIN trading.current_option_positions cop ON cp.id = cop.id
--- WHERE cp.asset_type = 'option';
---
--- -- Trigger functions
--- CREATE OR REPLACE FUNCTION trading.current_option_positions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     IF NEW.do_update THEN
---         INSERT INTO trading.current_positions(strategy, asset_type, stock, avg_price, quantity)
---         VALUES (NEW.strategy, 'option', NEW.stock, NEW.avg_price, NEW.quantity)
---         RETURNING id INTO NEW.id;
---
---         INSERT INTO trading.current_option_positions(id, expiry, strike, multiplier, option_type)
---         VALUES (NEW.id, NEW.expiry, NEW.strike, NEW.multiplier, NEW.option_type);
---
---         RETURN NEW;
---     ELSE
---         INSERT INTO trading.current_positions(strategy, asset_type, stock, avg_price, quantity)
---         VALUES (NEW.strategy, 'option', NEW.stock, NEW.avg_price, NEW.quantity)
---         RETURNING id INTO NEW.id;
---
---         INSERT INTO trading.current_option_positions(id, expiry, strike, multiplier, option_type)
---         VALUES (NEW.id, NEW.expiry, NEW.strike, NEW.multiplier, NEW.option_type);
---
---         RETURN NEW;
---     END IF;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.current_option_positions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.current_positions
---     SET strategy = NEW.strategy,
---         stock = NEW.stock,
---         avg_price = NEW.avg_price,
---         quantity = NEW.quantity
---     WHERE id = OLD.id;
---
---     UPDATE trading.current_option_positions
---     SET expiry = NEW.expiry,
---         strike = NEW.strike,
---         multiplier = NEW.multiplier,
---         option_type = NEW.option_type
---     WHERE id = OLD.id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.current_option_positions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.current_positions WHERE id = OLD.id;
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- -- Triggers on the view
--- CREATE TRIGGER trg_current_option_positions_insert
--- INSTEAD OF INSERT ON trading.current_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_option_positions_insert_trigger();
---
--- CREATE TRIGGER trg_current_option_positions_update
--- INSTEAD OF UPDATE ON trading.current_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_option_positions_update_trigger();
---
--- CREATE TRIGGER trg_current_option_positions_delete
--- INSTEAD OF DELETE ON trading.current_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_option_positions_delete_trigger();
---
--- -- ============================
--- -- TARGET OPTION POSITIONS VIEW
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.target_option_positions_view AS
--- SELECT
---     tp.*,
---     top.expiry,
---     top.strike,
---     top.multiplier,
---     top.option_type
--- FROM trading.target_positions tp
--- JOIN trading.target_option_positions top ON tp.id = top.id
--- WHERE tp.asset_type = 'option';
---
--- -- Trigger functions
--- CREATE OR REPLACE FUNCTION trading.target_option_positions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO trading.target_positions(strategy, asset_type, stock, avg_price, quantity)
---     VALUES (NEW.strategy, 'option', NEW.stock, NEW.avg_price, NEW.quantity)
---     RETURNING id INTO NEW.id;
---
---     INSERT INTO trading.target_option_positions(id, expiry, strike, multiplier, option_type)
---     VALUES (NEW.id, NEW.expiry, NEW.strike, NEW.multiplier, NEW.option_type);
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.target_option_positions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.target_positions
---     SET strategy = NEW.strategy,
---         stock = NEW.stock,
---         avg_price = NEW.avg_price,
---         quantity = NEW.quantity
---     WHERE id = OLD.id;
---
---     UPDATE trading.target_option_positions
---     SET expiry = NEW.expiry,
---         strike = NEW.strike,
---         multiplier = NEW.multiplier,
---         option_type = NEW.option_type
---     WHERE id = OLD.id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.target_option_positions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.target_positions WHERE id = OLD.id;
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- -- Triggers on the view
--- CREATE TRIGGER trg_target_option_positions_insert
--- INSTEAD OF INSERT ON trading.target_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_option_positions_insert_trigger();
---
--- CREATE TRIGGER trg_target_option_positions_update
--- INSTEAD OF UPDATE ON trading.target_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_option_positions_update_trigger();
---
--- CREATE TRIGGER trg_target_option_positions_delete
--- INSTEAD OF DELETE ON trading.target_option_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_option_positions_delete_trigger();
---
--- -- ============================
--- -- OPEN OPTION ORDERS VIEW
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.open_option_orders_view AS
--- SELECT
---     oo.*,
---     ooo.expiry,
---     ooo.strike,
---     ooo.multiplier,
---     ooo.option_type
--- FROM trading.open_orders oo
--- JOIN trading.open_option_orders ooo ON oo.id = ooo.id
--- WHERE oo.asset_type = 'option';
---
--- -- Trigger functions for INSERT, UPDATE, DELETE
---
--- CREATE OR REPLACE FUNCTION trading.open_option_orders_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO trading.open_orders(strategy, order_perm_id, order_id, time, asset_type, stock, quantity)
---     VALUES (NEW.strategy, NEW.order_perm_id, NEW.order_id, NEW.time, 'option', NEW.stock, NEW.quantity)
---     RETURNING id INTO NEW.id;
---
---     INSERT INTO trading.open_option_orders(id, expiry, strike, multiplier, option_type)
---     VALUES (NEW.id, NEW.expiry, NEW.strike, NEW.multiplier, NEW.option_type);
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.open_option_orders_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.open_orders
---     SET strategy = NEW.strategy,
---         order_perm_id = NEW.order_perm_id,
---         order_id = NEW.order_perm_id,
---         time = NEW.time,
---         stock = NEW.stock,
---         quantity = NEW.quantity
---     WHERE id = OLD.id;
---
---     UPDATE trading.open_option_orders
---     SET expiry = NEW.expiry,
---         strike = NEW.strike,
---         multiplier = NEW.multiplier,
---         option_type = NEW.option_type
---     WHERE id = OLD.id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.open_option_orders_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.open_orders WHERE id = OLD.id;
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
---
--- -- Attach triggers to the view
--- CREATE TRIGGER trg_open_option_orders_insert
--- INSTEAD OF INSERT ON trading.open_option_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_option_orders_insert_trigger();
---
--- CREATE TRIGGER trg_open_option_orders_update
--- INSTEAD OF UPDATE ON trading.open_option_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_option_orders_update_trigger();
---
--- CREATE TRIGGER trg_open_option_orders_delete
--- INSTEAD OF DELETE ON trading.open_option_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_option_orders_delete_trigger();
---
--- -- ============================
--- -- OPTION TRANSACTIONS VIEW
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.option_transactions_view AS
--- SELECT
---     t.*,
---     ot.expiry,
---     ot.strike,
---     ot.multiplier,
---     ot.option_type
--- FROM trading.transactions t
--- JOIN trading.option_transactions ot ON t.id = ot.id
--- WHERE t.asset_type = 'option';
---
--- -- Trigger functions for INSERT, UPDATE, DELETE
---
--- CREATE OR REPLACE FUNCTION trading.option_transactions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO trading.transactions(strategy, time, asset_type, stock, price, fees, quantity)
---     VALUES (NEW.strategy, NEW.time, 'option', NEW.stock, NEW.price, NEW.fees, NEW.quantity)
---     RETURNING id INTO NEW.id;
---
---     INSERT INTO trading.option_transactions(id, expiry, strike, multiplier, option_type)
---     VALUES (NEW.id, NEW.expiry, NEW.strike, NEW.multiplier, NEW.option_type);
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.option_transactions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.transactions
---     SET strategy = NEW.strategy,
---         time = NEW.time,
---         stock = NEW.stock,
---         price = NEW.price,
---         fees = NEW.fees,
---         quantity = NEW.quantity
---     WHERE id = OLD.id;
---
---     UPDATE trading.option_transactions
---     SET expiry = NEW.expiry,
---         strike = NEW.strike,
---         multiplier = NEW.multiplier,
---         option_type = NEW.option_type
---     WHERE id = OLD.id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.option_transactions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.transactions WHERE id = OLD.id;
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- -- Attach triggers to the view
--- CREATE TRIGGER trg_option_transactions_insert
--- INSTEAD OF INSERT ON trading.option_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.option_transactions_insert_trigger();
---
--- CREATE TRIGGER trg_option_transactions_update
--- INSTEAD OF UPDATE ON trading.option_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.option_transactions_update_trigger();
---
--- CREATE TRIGGER trg_option_transactions_delete
--- INSTEAD OF DELETE ON trading.option_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.option_transactions_delete_trigger();
---
--- ============================
--- Staged Commissions table - to handle race conditions of commissions coming in
--- ============================
+CREATE TRIGGER trg_staged_commissions_last_updated
+BEFORE UPDATE ON trading.staged_commissions
+FOR EACH ROW
+EXECUTE FUNCTION trading.set_last_updated();
 
+-- Staged commissions: apply late-arriving fees to already-recorded transactions
 CREATE OR REPLACE FUNCTION trading.apply_staged_commission_stocks()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -731,285 +464,127 @@ CREATE TRIGGER trg_try_apply_commission_stocks
 BEFORE INSERT OR UPDATE ON trading.staged_commissions
 FOR EACH ROW EXECUTE FUNCTION trading.try_apply_commission_to_transaction();
 
--- -- ============================
--- -- CURRENT STOCK POSITIONS
--- -- ============================
+------------------------------------- TRIGGERS -------------------------------------
+
+------------------------------------- HYPERTABLES -------------------------------------
+
+SELECT create_hypertable('market_data.historical_data', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('market_data.historical_options_data', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('market_data.historical_forex_data', 'time', if_not_exists => TRUE);
+
+SELECT create_hypertable('logs.logs', 'time', chunk_time_interval => INTERVAL '1 day');
+SELECT add_retention_policy('logs.logs', INTERVAL '3 days');
+
+-- Compression: chunks older than the policy threshold are rewritten columnar.
+-- segmentby = identity of one series; orderby = sort order within each series.
+ALTER TABLE market_data.historical_data SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'stock, primary_exchange, currency',
+    timescaledb.compress_orderby = 'time DESC'
+);
+
+ALTER TABLE market_data.historical_options_data SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'stock, primary_exchange, currency, expiry, strike, multiplier, option_type',
+    timescaledb.compress_orderby = 'time DESC'
+);
+
+ALTER TABLE market_data.historical_forex_data SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'pair',
+    timescaledb.compress_orderby = 'time DESC'
+);
+
+SELECT add_compression_policy('market_data.historical_data', INTERVAL '30 days');
+SELECT add_compression_policy('market_data.historical_options_data', INTERVAL '30 days');
+SELECT add_compression_policy('market_data.historical_forex_data', INTERVAL '30 days');
+
+------------------------------------- HYPERTABLES -------------------------------------
+
+------------------------------------- OPTIONS -------------------------------------
+-- Per-table storage/autovacuum tuning.
 --
--- CREATE OR REPLACE VIEW trading.current_stock_positions_view AS
--- SELECT strategy, asset_type, stock, avg_price, quantity FROM trading.current_positions
--- WHERE asset_type = 'stock';
+-- open_stock_orders / open_option_orders are the only high-churn tables in the
+-- schema: rows are inserted when an order is placed and deleted when it fills or
+-- is cancelled. That leaves almost no live rows but a steady stream of dead
+-- tuples, which the default autovacuum threshold (20% of a tiny table) never
+-- triggers on. Tighten the scale factor so dead tuples are reclaimed promptly
+-- instead of bloating the relation and its indexes.
+ALTER TABLE trading.open_stock_orders SET (
+    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_threshold = 50
+);
+
+ALTER TABLE trading.open_option_orders SET (
+    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_threshold = 50
+);
+
+-- Resource profile (selected in the ENVIRONMENT section at the top of this file).
 --
--- CREATE OR REPLACE FUNCTION trading.current_stock_positions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- DECLARE
---     existing_id INTEGER;
--- BEGIN
---     INSERT INTO trading.current_positions(strategy, asset_type, stock, avg_price, quantity)
---     VALUES (NEW.strategy, 'stock', NEW.stock, NEW.avg_price, NEW.quantity)
---     ON CONFLICT (asset_type, stock, strategy)
---     DO UPDATE SET
---         avg_price = EXCLUDED.avg_price,
---         quantity = EXCLUDED.quantity
---     RETURNING id INTO existing_id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.current_stock_positions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     IF NEW.asset_type IS DISTINCT FROM 'stock' THEN
---         RAISE EXCEPTION 'Modifying asset_type is not allowed from this view';
---     END IF;
---
---     UPDATE trading.current_positions
---     SET
---         avg_price = NEW.avg_price,
---         quantity = NEW.quantity
---     WHERE asset_type = 'stock'
---       AND stock = OLD.stock
---       AND strategy = OLD.strategy;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.current_stock_positions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.current_positions
---     WHERE asset_type = 'stock'
---       AND stock = OLD.stock
---       AND strategy = OLD.strategy;
---
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE TRIGGER trg_insert_current_stock_positions
--- INSTEAD OF INSERT ON trading.current_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_stock_positions_insert_trigger();
---
--- CREATE TRIGGER trg_update_current_stock_positions
--- INSTEAD OF UPDATE ON trading.current_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_stock_positions_update_trigger();
---
--- CREATE TRIGGER trg_delete_current_stock_positions
--- INSTEAD OF DELETE ON trading.current_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.current_stock_positions_delete_trigger();
---
--- -- ============================
--- -- TARGET STOCK POSITIONS
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.target_stock_positions_view AS
--- SELECT strategy, asset_type, stock, avg_price, quantity FROM trading.target_positions
--- WHERE asset_type = 'stock';
---
--- CREATE OR REPLACE FUNCTION trading.target_stock_positions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- DECLARE
---     existing_id INTEGER;
--- BEGIN
---     INSERT INTO trading.target_positions(strategy, asset_type, stock, avg_price, quantity)
---     VALUES (NEW.strategy, 'stock', NEW.stock, NEW.avg_price, NEW.quantity)
---     ON CONFLICT (asset_type, stock, strategy)
---     DO UPDATE SET
---         avg_price = EXCLUDED.avg_price,
---         quantity = EXCLUDED.quantity
---     RETURNING id INTO existing_id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.target_stock_positions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     IF NEW.asset_type IS DISTINCT FROM 'stock' THEN
---         RAISE EXCEPTION 'Modifying asset_type is not allowed from this view';
---     END IF;
---
---     UPDATE trading.target_positions
---     SET
---         avg_price = NEW.avg_price,
---         quantity = NEW.quantity
---     WHERE asset_type = 'stock'
---       AND stock = OLD.stock
---       AND strategy = OLD.strategy;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.target_stock_positions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.current_positions
---     WHERE asset_type = 'stock'
---       AND stock = OLD.stock
---       AND strategy = OLD.strategy;
---
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE TRIGGER trg_insert_target_stock_positions
--- INSTEAD OF INSERT ON trading.target_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_stock_positions_insert_trigger();
---
--- CREATE TRIGGER trg_update_target_stock_positions
--- INSTEAD OF UPDATE ON trading.target_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_stock_positions_update_trigger();
---
--- CREATE TRIGGER trg_delete_target_stock_positions
--- INSTEAD OF DELETE ON trading.target_stock_positions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.target_stock_positions_delete_trigger();
---
--- -- ============================
--- -- OPEN STOCK ORDERS
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.open_stock_orders_view AS
--- SELECT strategy, order_perm_id, order_id, time, asset_type, stock, quantity, filled, executions FROM trading.open_orders
--- WHERE asset_type = 'stock';
---
--- CREATE OR REPLACE FUNCTION trading.open_stock_orders_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO trading.open_orders (
---         strategy, order_perm_id, order_id, time,
---         asset_type, stock, quantity, filled, executions
---     )
---     VALUES (
---         NEW.strategy, NEW.order_perm_id, NEW.order_id, NEW.time,
---         'stock', NEW.stock, NEW.quantity, NEW.filled, NEW.executions
---     );
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.open_stock_orders_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.open_orders
---     SET
---         order_perm_id = NEW.order_perm_id,
---         order_id = NEW.order_id,
---         time = NEW.time,
---         stock = NEW.stock,
---         quantity = NEW.quantity,
---         filled = NEW.filled,
---         executions = NEW.executions
---     WHERE strategy = OLD.strategy
---       AND asset_type = 'stock'
---       AND stock = OLD.stock
---       AND order_perm_id = OLD.order_perm_id
---       AND order_id = OLD.order_id
---       AND time = OLD.time;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.open_stock_orders_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.open_orders
---     WHERE strategy = OLD.strategy
---       AND asset_type = 'stock'
---       AND stock = OLD.stock
---       AND order_perm_id = OLD.order_perm_id
---       AND order_id = OLD.order_id
---       AND time = OLD.time;
---
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE TRIGGER trg_insert_open_stock_orders
--- INSTEAD OF INSERT ON trading.open_stock_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_stock_orders_insert_trigger();
---
--- CREATE TRIGGER trg_update_open_stock_orders
--- INSTEAD OF UPDATE ON trading.open_stock_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_stock_orders_update_trigger();
---
--- CREATE TRIGGER trg_delete_open_stock_orders
--- INSTEAD OF DELETE ON trading.open_stock_orders_view
--- FOR EACH ROW EXECUTE FUNCTION trading.open_stock_orders_delete_trigger();
---
--- -- ============================
--- -- STOCK TRANSACTIONS
--- -- ============================
---
--- CREATE OR REPLACE VIEW trading.stock_transactions_view AS
--- SELECT strategy, order_perm_id, time, asset_type, stock, price, fees, quantity FROM trading.transactions
--- WHERE asset_type = 'stock';
---
--- CREATE OR REPLACE FUNCTION trading.stock_transactions_insert_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO trading.transactions (
---         strategy, order_perm_id, time,
---         asset_type, stock, price, fees, quantity
---     )
---     VALUES (
---         NEW.strategy, NEW.order_perm_id, NEW.time,
---         'stock', NEW.stock, NEW.price, NEW.fees, NEW.quantity
---     )
---     ON CONFLICT (asset_type, stock, strategy, time)
---     DO UPDATE SET
---         price = EXCLUDED.price,
---         fees = EXCLUDED.fees,
---         quantity = EXCLUDED.quantity,
---         order_perm_id = EXCLUDED.order_perm_id;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.stock_transactions_update_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     UPDATE trading.transactions
---     SET
---         price = NEW.price,
---         fees = NEW.fees,
---         quantity = NEW.quantity,
---         order_perm_id = NEW.order_perm_id
---     WHERE strategy = OLD.strategy
---       AND asset_type = 'stock'
---       AND stock = OLD.stock
---       AND time = OLD.time;
---
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE OR REPLACE FUNCTION trading.stock_transactions_delete_trigger()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     DELETE FROM trading.transactions
---     WHERE strategy = OLD.strategy
---       AND asset_type = 'stock'
---       AND stock = OLD.stock
---       AND time = OLD.time;
---
---     RETURN OLD;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE TRIGGER trg_insert_stock_transactions
--- INSTEAD OF INSERT ON trading.stock_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.stock_transactions_insert_trigger();
---
--- CREATE TRIGGER trg_update_stock_transactions
--- INSTEAD OF UPDATE ON trading.stock_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.stock_transactions_update_trigger();
---
--- CREATE TRIGGER trg_delete_stock_transactions
--- INSTEAD OF DELETE ON trading.stock_transactions_view
--- FOR EACH ROW EXECUTE FUNCTION trading.stock_transactions_delete_trigger();
+-- Only session-level parameters can be applied from a migration. Parameters
+-- whose context is postmaster (shared_buffers, max_connections, ...) or that
+-- cannot be set per database (autovacuum_work_mem) are rendered as ALTER SYSTEM
+-- statements in a WARNING: run them once, then reload/restart the server.
+DO $opt$
+DECLARE
+    env  text := coalesce(nullif(current_setting('trading_app.env', true), ''), 'local');
+    cfg  jsonb;
+    k    text;
+    v    text;
+    todo text := '';
+    per_db CONSTANT text[] := ARRAY[
+        'effective_cache_size', 'maintenance_work_mem', 'work_mem',
+        'temp_buffers', 'max_parallel_workers'
+    ];
+BEGIN
+    cfg := CASE env
+        -- 4 GB RAM server
+        WHEN 'small' THEN '{
+            "shared_buffers":"1GB","effective_cache_size":"3GB",
+            "maintenance_work_mem":"256MB","autovacuum_work_mem":"128MB",
+            "autovacuum_max_workers":2,"work_mem":"8MB","max_connections":30,
+            "max_worker_processes":12,"max_parallel_workers":8,
+            "wal_buffers":"16MB","timescaledb.max_background_workers":4}'::jsonb
+        -- 8 GB RAM server
+        WHEN 'medium' THEN '{
+            "shared_buffers":"2GB","effective_cache_size":"6GB",
+            "maintenance_work_mem":"512MB","autovacuum_work_mem":"256MB",
+            "autovacuum_max_workers":3,"work_mem":"8MB","max_connections":40,
+            "max_worker_processes":16,"max_parallel_workers":8,
+            "wal_buffers":"16MB","timescaledb.max_background_workers":6}'::jsonb
+        -- 16 GB RAM server
+        WHEN 'large' THEN '{
+            "shared_buffers":"3GB","effective_cache_size":"10GB",
+            "maintenance_work_mem":"1GB","autovacuum_work_mem":"256MB",
+            "autovacuum_max_workers":3,"work_mem":"16MB","max_connections":50,
+            "max_worker_processes":16,"max_parallel_workers":8,
+            "wal_buffers":"16MB","timescaledb.max_background_workers":8}'::jsonb
+        -- local / default: 16 GB development machine (also the fallback for typos)
+        ELSE '{
+            "shared_buffers":"1GB","effective_cache_size":"8GB",
+            "maintenance_work_mem":"512MB","autovacuum_work_mem":"256MB",
+            "autovacuum_max_workers":3,"work_mem":"8MB","max_connections":50,
+            "max_worker_processes":16,"max_parallel_workers":8,
+            "wal_buffers":"16MB","timescaledb.max_background_workers":6}'::jsonb
+    END;
+
+    -- Applied now, per database; effective for new connections.
+    FOREACH k IN ARRAY per_db LOOP
+        IF cfg ? k THEN
+            v := cfg->>k;
+            EXECUTE format('ALTER DATABASE %I SET %I = %L', current_database(), k, v);
+        END IF;
+    END LOOP;
+
+    -- Everything else cannot be applied from inside a migration.
+    FOR k, v IN
+        SELECT key, value FROM jsonb_each_text(cfg) WHERE key <> ALL (per_db)
+    LOOP
+        todo := todo || format(E'\n  ALTER SYSTEM SET %I = %L;', k, v);
+    END LOOP;
+
+    RAISE WARNING E'Resource profile "%" applied (per-database settings).\nRun these outside a transaction, then reload/restart:%', env, todo;
+END
+$opt$;
+------------------------------------- OPTIONS -------------------------------------
