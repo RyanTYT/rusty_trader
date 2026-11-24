@@ -314,9 +314,6 @@ impl SyncOps for SyncerEngine {
         default_strategy: Option<String>,
     ) {
         let mut db = crate::database::db::DbDirect::connect(&self.pool);
-        let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
-        let mut db = crate::database::db::DbDirect::connect(&self.pool);
-        let mut current_option_positions_crud = db.current_positions(&AssetType::Option);
         let mut stock_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut option_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut fx_map: HashMap<String, f64> = HashMap::new();
@@ -325,7 +322,7 @@ impl SyncOps for SyncerEngine {
         // =====================================
         // Consolidate locally tracked positions
         // =====================================
-        match &current_stock_positions_crud.get_all_pos_grouped().await {
+        match &db.current_positions(&AssetType::Stock).get_all_pos_grouped().await {
             Ok(current_stock_positions) => {
                 tracing::info!("Received local stock positions, inserting into stock_map now");
                 for position in current_stock_positions {
@@ -360,7 +357,7 @@ impl SyncOps for SyncerEngine {
                 ));
             }
         };
-        match current_option_positions_crud.get_all_pos_grouped().await {
+        match db.current_positions(&AssetType::Option).get_all_pos_grouped().await {
             Ok(current_option_positions) => {
                 tracing::info!("Received local option positions, inserting into stock_map now");
                 for position in current_option_positions {
