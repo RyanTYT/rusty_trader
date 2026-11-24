@@ -18,7 +18,7 @@ use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 
 // Enums
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "status", rename_all = "lowercase")]
+#[sqlx(type_name = "trading.status", rename_all = "lowercase")]
 pub enum Status {
     Active,
     Stopping,
@@ -26,7 +26,7 @@ pub enum Status {
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "asset_type", rename_all = "lowercase")]
+#[sqlx(type_name = "trading.asset_type", rename_all = "lowercase")]
 pub enum AssetType {
     Stock,
     Future,
@@ -38,7 +38,7 @@ pub enum AssetType {
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "option_type")]
+#[sqlx(type_name = "trading.option_type")]
 pub enum OptionType {
     #[sqlx(rename = "C")]
     Call,
