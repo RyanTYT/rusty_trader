@@ -1,10 +1,9 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use ibapi::orders::ExecutionData;
 use rust_decimal::dec;
-use sqlx::PgPool;
-
 use crate::{
     database::{
+        db::Exec,
         models::{
             AssetType, OptionTransactionsFullKeys, OptionTransactionsPrimaryKeys,
             OptionTransactionsUpdateKeys, OptionType, StockTransactionsFullKeys,
@@ -21,10 +20,9 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
-#[derive(Debug, Clone)]
-pub enum TransactionsCRUD {
-    Stock(StockTransactionsCRUD),
-    Options(OptionTransactionsCRUD),
+pub enum TransactionsCRUD<'a> {
+    Stock(StockTransactionsCRUD<'a>),
+    Options(OptionTransactionsCRUD<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -153,30 +151,30 @@ pub enum TransactionsUnderlyingPrimaryKeys {
 }
 
 #[hotpath::measure_all]
-impl TransactionsCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+impl<'a> TransactionsCRUD<'a> {
+    pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
-            Self::Stock(stk) => &stk.crud.pool,
-            Self::Options(opt) => &opt.crud.pool,
+            Self::Stock(stk) => &mut stk.crud.exec,
+            Self::Options(opt) => &mut opt.crud.exec,
         }
     }
 
-    pub fn stock(pool: PgPool) -> Self {
-        Self::Stock(StockTransactionsCRUD::new(pool))
+    pub fn stock(exec: Exec<'a>) -> Self {
+        Self::Stock(StockTransactionsCRUD::new(exec))
     }
 
-    pub fn option(pool: PgPool) -> Self {
-        Self::Options(OptionTransactionsCRUD::new(pool))
+    pub fn option(exec: Exec<'a>) -> Self {
+        Self::Options(OptionTransactionsCRUD::new(exec))
     }
 
-    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+    pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock
             | AssetType::Future
             | AssetType::CFD
             | AssetType::ForexPair
-            | AssetType::CASH => Self::stock(pool),
-            AssetType::Option => Self::option(pool),
+            | AssetType::CASH => Self::stock(exec),
+            AssetType::Option => Self::option(exec),
             AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
@@ -195,11 +193,11 @@ pub trait TransactionsOps {
     /// Returns an Err(...) when sql query fails
     /// - returns a None when query succeeds but no transactions recorded in DB
     async fn read_last_transaction(
-        &self,
+        &mut self,
         pk: TransactionsUnderlyingPrimaryKeys,
     ) -> Result<Option<TransactionsFullKeys>, String>;
     async fn read_all_transactions_of_strat(
-        &self,
+        &mut self,
         strategy: &str,
         since_opt: Option<DateTime<Utc>>,
     ) -> Result<Vec<TransactionsFullKeys>, String>;
@@ -207,9 +205,9 @@ pub trait TransactionsOps {
 
 #[async_trait::async_trait]
 #[hotpath::measure_all]
-impl TransactionsOps for TransactionsCRUD {
+impl TransactionsOps for TransactionsCRUD<'_> {
     async fn read_last_transaction(
-        &self,
+        &mut self,
         pk: TransactionsUnderlyingPrimaryKeys,
     ) -> Result<Option<TransactionsFullKeys>, String> {
         let result = match pk {
@@ -232,7 +230,7 @@ impl TransactionsOps for TransactionsCRUD {
                 primary_exchange,
                 currency
             )
-            .fetch_optional(self.get_pg_pool())
+            .fetch_optional(self.exec())
             .await
             .map(|ok_res| ok_res.map(TransactionsFullKeys::Stock)),
             TransactionsUnderlyingPrimaryKeys::Options(
@@ -282,7 +280,7 @@ impl TransactionsOps for TransactionsCRUD {
                 multiplier,
                 option_type as OptionType
             )
-            .fetch_optional(self.get_pg_pool())
+            .fetch_optional(self.exec())
             .await
             .map(|ok_res| ok_res.map(TransactionsFullKeys::Options)),
         };
@@ -296,13 +294,13 @@ impl TransactionsOps for TransactionsCRUD {
     }
 
     async fn read_all_transactions_of_strat(
-        &self,
+        &mut self,
         strategy: &str,
         since_opt: Option<DateTime<Utc>>,
     ) -> Result<Vec<TransactionsFullKeys>, String> {
         let result = match since_opt {
             Some(since) => match self {
-                TransactionsCRUD::Stock(_) => sqlx::query_as!(
+                TransactionsCRUD::Stock(stk) => sqlx::query_as!(
                     StockTransactionsFullKeys,
                     r#"
                     SELECT * 
@@ -314,7 +312,7 @@ impl TransactionsOps for TransactionsCRUD {
                     strategy,
                     since
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(&mut stk.crud.exec)
                 .await
                 .map(|ok_res| {
                     ok_res
@@ -322,7 +320,7 @@ impl TransactionsOps for TransactionsCRUD {
                         .map(TransactionsFullKeys::Stock)
                         .collect()
                 }),
-                TransactionsCRUD::Options(_) => sqlx::query_as!(
+                TransactionsCRUD::Options(opt) => sqlx::query_as!(
                     OptionTransactionsFullKeys,
                     r#"
                     SELECT 
@@ -348,7 +346,7 @@ impl TransactionsOps for TransactionsCRUD {
                     strategy,
                     since
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(&mut opt.crud.exec)
                 .await
                 .map(|ok_res| {
                     ok_res
@@ -358,7 +356,7 @@ impl TransactionsOps for TransactionsCRUD {
                 }),
             },
             None => match self {
-                TransactionsCRUD::Stock(_) => sqlx::query_as!(
+                TransactionsCRUD::Stock(stk) => sqlx::query_as!(
                     StockTransactionsFullKeys,
                     r#"
                 SELECT * 
@@ -368,7 +366,7 @@ impl TransactionsOps for TransactionsCRUD {
                 "#,
                     strategy
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(&mut stk.crud.exec)
                 .await
                 .map(|ok_res| {
                     ok_res
@@ -376,7 +374,7 @@ impl TransactionsOps for TransactionsCRUD {
                         .map(TransactionsFullKeys::Stock)
                         .collect()
                 }),
-                TransactionsCRUD::Options(_) => sqlx::query_as!(
+                TransactionsCRUD::Options(opt) => sqlx::query_as!(
                     OptionTransactionsFullKeys,
                     r#"
                 SELECT 
@@ -400,7 +398,7 @@ impl TransactionsOps for TransactionsCRUD {
                 "#,
                     strategy
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(&mut opt.crud.exec)
                 .await
                 .map(|ok_res| {
                     ok_res

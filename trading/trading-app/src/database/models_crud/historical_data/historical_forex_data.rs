@@ -1,8 +1,7 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{
             HistoricalForexDataFullKeys, HistoricalForexDataPrimaryKeys,
             HistoricalForexDataUpdateKeys,
@@ -11,9 +10,8 @@ use crate::{
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct HistoricalForexDataCRUD {
-    pub(super) crud: CRUD<
+pub struct HistoricalForexDataCRUD<'a> {
+    pub(super) crud: CRUD<'a, 
         HistoricalForexDataFullKeys,
         HistoricalForexDataPrimaryKeys,
         HistoricalForexDataUpdateKeys,
@@ -29,14 +27,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl HistoricalForexDataCRUD {
-    pub(crate) fn new(pool: PgPool) -> Self {
+impl<'a> HistoricalForexDataCRUD<'a> {
+    pub(crate) fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 HistoricalForexDataFullKeys,
                 HistoricalForexDataPrimaryKeys,
                 HistoricalForexDataUpdateKeys,
-            >::new(pool, String::from("market_data.historical_forex_data")),
+            >::new(exec, "market_data.historical_forex_data"),
         }
     }
 }

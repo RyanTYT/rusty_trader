@@ -1,16 +1,14 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys},
     },
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct StrategyCRUD {
-    pub(super) crud: CRUD<StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys>,
+pub struct StrategyCRUD<'a> {
+    pub(super) crud: CRUD<'a, StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -22,13 +20,10 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl StrategyCRUD {
-    pub fn new(pool: PgPool) -> Self {
+impl<'a> StrategyCRUD<'a> {
+    pub fn new(exec: Exec<'a>) -> Self {
         Self {
-            crud: CRUD::<StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys>::new(
-                pool,
-                String::from("trading.strategy"),
-            ),
+            crud: CRUD::<StrategyFullKeys, StrategyPrimaryKeys, StrategyUpdateKeys>::new(exec, "trading.strategy"),
         }
     }
 }

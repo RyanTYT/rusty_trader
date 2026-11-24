@@ -1,8 +1,7 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{
             CurrentStockPositionsFullKeys, CurrentStockPositionsPrimaryKeys,
             CurrentStockPositionsUpdateKeys,
@@ -11,9 +10,8 @@ use crate::{
     implement_all_crud_methods,
 };
 
-#[derive(Debug, Clone)]
-pub struct CurrentStockPositionsCRUD {
-    pub(super) crud: CRUD<
+pub struct CurrentStockPositionsCRUD<'a> {
+    pub(super) crud: CRUD<'a, 
         CurrentStockPositionsFullKeys,
         CurrentStockPositionsPrimaryKeys,
         CurrentStockPositionsUpdateKeys,
@@ -29,14 +27,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl CurrentStockPositionsCRUD {
-    pub(crate) fn new(pool: PgPool) -> Self {
+impl<'a> CurrentStockPositionsCRUD<'a> {
+    pub(crate) fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 CurrentStockPositionsFullKeys,
                 CurrentStockPositionsPrimaryKeys,
                 CurrentStockPositionsUpdateKeys,
-            >::new(pool, String::from("trading.current_stock_positions")),
+            >::new(exec, "trading.current_stock_positions"),
         }
     }
 }

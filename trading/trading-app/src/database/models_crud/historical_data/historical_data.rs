@@ -5,10 +5,11 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ibapi::{contracts::Contract, market_data::realtime::WhatToShow};
 use rust_decimal::{Decimal, dec, prelude::FromPrimitive};
-use sqlx::{PgPool, prelude::FromRow};
+use sqlx::prelude::FromRow;
 
 use crate::{
     database::{
+        db::Exec,
         models::{
             AssetType, DailyHistoricalStockDataPrimaryKeys, HistoricalForexDataFullKeys,
             HistoricalForexDataPrimaryKeys, HistoricalForexDataPrimaryKeysWoTime,
@@ -28,11 +29,10 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
-#[derive(Debug, Clone)]
-pub enum HistoricalDataCRUD {
-    Stock(HistoricalStockDataCRUD),
-    Options(HistoricalOptionsDataCRUD),
-    Forex(HistoricalForexDataCRUD),
+pub enum HistoricalDataCRUD<'a> {
+    Stock(HistoricalStockDataCRUD<'a>),
+    Options(HistoricalOptionsDataCRUD<'a>),
+    Forex(HistoricalForexDataCRUD<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -420,34 +420,34 @@ impl HistoricalDataUpdateKeys {
 }
 
 #[hotpath::measure_all]
-impl HistoricalDataCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+impl<'a> HistoricalDataCRUD<'a> {
+    pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
-            Self::Stock(stk) => &stk.crud.pool,
-            Self::Forex(fx) => &fx.crud.pool,
-            Self::Options(opt) => &opt.crud.pool,
+            Self::Stock(stk) => &mut stk.crud.exec,
+            Self::Forex(fx) => &mut fx.crud.exec,
+            Self::Options(opt) => &mut opt.crud.exec,
         }
     }
 
-    pub fn stock(pool: PgPool) -> Self {
-        Self::Stock(HistoricalStockDataCRUD::new(pool))
+    pub fn stock(exec: Exec<'a>) -> Self {
+        Self::Stock(HistoricalStockDataCRUD::new(exec))
     }
 
-    pub fn option(pool: PgPool) -> Self {
-        Self::Options(HistoricalOptionsDataCRUD::new(pool))
+    pub fn option(exec: Exec<'a>) -> Self {
+        Self::Options(HistoricalOptionsDataCRUD::new(exec))
     }
 
-    pub fn forex(pool: PgPool) -> Self {
-        Self::Forex(HistoricalForexDataCRUD::new(pool))
+    pub fn forex(exec: Exec<'a>) -> Self {
+        Self::Forex(HistoricalForexDataCRUD::new(exec))
     }
 
-    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+    pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::CASH => {
-                Self::stock(pool)
+                Self::stock(exec)
             }
-            AssetType::ForexPair => Self::forex(pool),
-            AssetType::Option => Self::option(pool),
+            AssetType::ForexPair => Self::forex(exec),
+            AssetType::Option => Self::option(exec),
             AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
@@ -486,27 +486,27 @@ impl VwapBarValue {
 #[async_trait]
 pub trait HistoricalDataOps {
     async fn read_last_n(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
         #[cfg(feature = "backtest")] now: Option<DateTime<Utc>>,
     ) -> Result<AggregatedBars, String>;
     async fn read_last_bar(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<HistoricalDataFullKeys, String>;
     async fn read_last_vwap(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timezone: Option<String>,
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String>;
     async fn get_rows_since(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         n: u64,
         datetime: &DateTime<Tz>,
@@ -517,13 +517,13 @@ pub trait HistoricalDataOps {
 pub trait NoiseOps {
     #[cfg(not(feature = "backtest"))]
     async fn get_avg_move_since_open(
-        &self,
+        &mut self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         avg_move_lookback: i64,
     ) -> Result<f64, String>;
     #[cfg(feature = "backtest")]
     async fn get_avg_move_since_open(
-        &self,
+        &mut self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
         avg_move_lookback: i64,
@@ -538,9 +538,9 @@ pub struct AggregatedBars {
 
 #[async_trait]
 #[hotpath::measure_all]
-impl HistoricalDataOps for HistoricalDataCRUD {
+impl HistoricalDataOps for HistoricalDataCRUD<'_> {
     async fn read_last_n(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         limit: u32,
@@ -600,7 +600,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     limit as i32,
                     now
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(self.exec())
                 .await
                 .map_err(|e| format!("Error reading stock bars in read_last_n: {}", e))?;
 
@@ -659,7 +659,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     limit as i32,
                     now
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(self.exec())
                 .await
                 .map_err(|e| format!("Error reading forex bars in read_last_n: {}", e))?;
 
@@ -746,7 +746,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     limit as i32,
                     now
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(self.exec())
                 .await
                 .map_err(|e| format!("Error reading option bars in read_last_n: {}", e))?;
 
@@ -786,7 +786,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
     }
 
     async fn read_last_bar(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
@@ -817,7 +817,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
     /// - Use 'timezone' to determine which bars to include for 'today'
     /// - For ForexBars ->
     async fn read_last_vwap(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timezone: Option<String>,
         vwap_bar_value: VwapBarValue,
@@ -859,7 +859,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     .bind(currency);
                 #[cfg(feature = "backtest")]
                 let q = q.bind(now);
-                q.fetch_optional(self.get_pg_pool()).await.map_err(|e| {
+                q.fetch_optional(self.exec()).await.map_err(|e| {
                     format!(
                         "Error when fetching most recent bar from HistoricalData \
                                     for in read_vwap: {e:?}",
@@ -893,7 +893,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 #[cfg(feature = "backtest")]
                 let query = query.bind(now);
                 query
-                    .fetch_optional(self.get_pg_pool())
+                    .fetch_optional(self.exec())
                     .await
                     .map_err(|e| {
                         format!(
@@ -949,7 +949,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                 let query = query.bind(now);
 
                 query
-                    .fetch_optional(self.get_pg_pool())
+                    .fetch_optional(self.exec())
                     .await
                     .map_err(|e| {
                         format!(
@@ -964,7 +964,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
     }
 
     async fn get_rows_since(
-        &self,
+        &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         n: u64,
         datetime: &DateTime<Tz>,
@@ -991,7 +991,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     currency,
                     datetime
                 )
-                .fetch_one(self.get_pg_pool())
+                .fetch_one(self.exec())
                 .await
             }
             HistoricalDataPrimaryKeysWoTime::Options(HistoricalOptionsDataPrimaryKeysWoTime {
@@ -1030,7 +1030,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     option_type as OptionType,
                     datetime
                 )
-                .fetch_one(self.get_pg_pool())
+                .fetch_one(self.exec())
                 .await
             }
             HistoricalDataPrimaryKeysWoTime::Forex(HistoricalForexDataPrimaryKeysWoTime {
@@ -1053,7 +1053,7 @@ impl HistoricalDataOps for HistoricalDataCRUD {
                     pair,
                     datetime
                 )
-                .fetch_one(self.get_pg_pool())
+                .fetch_one(self.exec())
                 .await
             }
         };
@@ -1073,12 +1073,12 @@ impl HistoricalDataOps for HistoricalDataCRUD {
 
 #[async_trait]
 #[hotpath::measure_all]
-impl NoiseOps for HistoricalDataCRUD {
+impl NoiseOps for HistoricalDataCRUD<'_> {
     /// Today's move will NOT be included in the calculation
     /// avg move is of the last 15 days
     #[cfg(not(feature = "backtest"))]
     async fn get_avg_move_since_open(
-        &self,
+        &mut self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         avg_move_lookback: i64,
     ) -> Result<f64, String> {
@@ -1118,7 +1118,7 @@ impl NoiseOps for HistoricalDataCRUD {
             pk.currency,
             avg_move_lookback
         )
-        .fetch_all(self.get_pg_pool())
+        .fetch_all(self.exec())
         .await
         {
             Ok(moves_since_open) => {
@@ -1143,7 +1143,7 @@ impl NoiseOps for HistoricalDataCRUD {
     /// (above) uses the real wall-clock latest.
     #[cfg(feature = "backtest")]
     async fn get_avg_move_since_open(
-        &self,
+        &mut self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         now: DateTime<Utc>,
         avg_move_lookback: i64,
@@ -1185,7 +1185,7 @@ impl NoiseOps for HistoricalDataCRUD {
             now,
             avg_move_lookback
         )
-        .fetch_all(self.get_pg_pool())
+        .fetch_all(self.exec())
         .await
         {
             Ok(moves_since_open) => {

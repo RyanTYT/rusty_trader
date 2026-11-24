@@ -1,17 +1,15 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys},
     },
     implement_all_crud_methods,
 };
 
-#[derive(Debug, Clone)]
-pub struct OpenStockOrdersCRUD {
+pub struct OpenStockOrdersCRUD<'a> {
     pub(super) crud:
-        CRUD<OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys>,
+        CRUD<'a, OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -23,14 +21,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl OpenStockOrdersCRUD {
-    pub(crate) fn new(pool: PgPool) -> Self {
+impl<'a> OpenStockOrdersCRUD<'a> {
+    pub(crate) fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 OpenStockOrdersFullKeys,
                 OpenStockOrdersPrimaryKeys,
                 OpenStockOrdersUpdateKeys,
-            >::new(pool, String::from("trading.open_stock_orders")),
+            >::new(exec, "trading.open_stock_orders"),
         }
     }
 }

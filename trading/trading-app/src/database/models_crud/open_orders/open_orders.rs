@@ -3,10 +3,9 @@ use ibapi::{
     contracts::Contract,
     orders::{Action, ExecutionData, Order},
 };
-use sqlx::PgPool;
-
 use crate::{
     database::{
+        db::Exec,
         models::{
             AssetType, OpenOptionOrdersFullKeys, OpenOptionOrdersPrimaryKeys,
             OpenOptionOrdersUpdateKeys, OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys,
@@ -20,10 +19,9 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
-#[derive(Debug, Clone)]
-pub enum OpenOrdersCRUD {
-    Stock(OpenStockOrdersCRUD),
-    Options(OpenOptionOrdersCRUD),
+pub enum OpenOrdersCRUD<'a> {
+    Stock(OpenStockOrdersCRUD<'a>),
+    Options(OpenOptionOrdersCRUD<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -283,30 +281,31 @@ impl OpenOrdersUpdateKeys {
 }
 
 #[hotpath::measure_all]
-impl OpenOrdersCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+impl<'a> OpenOrdersCRUD<'a> {
+    /// Reborrow the inner executor for raw SQL that is not part of `CRUDTrait`.
+    pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
-            Self::Stock(stk) => &stk.crud.pool,
-            Self::Options(opt) => &opt.crud.pool,
+            Self::Stock(stk) => &mut stk.crud.exec,
+            Self::Options(opt) => &mut opt.crud.exec,
         }
     }
 
-    pub fn stock(pool: PgPool) -> Self {
-        Self::Stock(OpenStockOrdersCRUD::new(pool))
+    pub fn stock(exec: Exec<'a>) -> Self {
+        Self::Stock(OpenStockOrdersCRUD::new(exec))
     }
 
-    pub fn option(pool: PgPool) -> Self {
-        Self::Options(OpenOptionOrdersCRUD::new(pool))
+    pub fn option(exec: Exec<'a>) -> Self {
+        Self::Options(OpenOptionOrdersCRUD::new(exec))
     }
 
-    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+    pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock
             | AssetType::Future
             | AssetType::CFD
             | AssetType::ForexPair
-            | AssetType::CASH => Self::stock(pool),
-            AssetType::Option => Self::option(pool),
+            | AssetType::CASH => Self::stock(exec),
+            AssetType::Option => Self::option(exec),
             AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
@@ -326,19 +325,18 @@ use crate::backtester::setup::config::BacktestMode;
 #[async_trait::async_trait]
 pub trait OpenOrdersOps {
     async fn get_orders_for_strat(
-        &self,
+        &mut self,
         strategy: &str,
         #[cfg(feature = "backtest")] mode: BacktestMode,
-    )
-    -> Result<Vec<OpenOrdersFullKeys>, String>;
-    async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String>;
+    ) -> Result<Vec<OpenOrdersFullKeys>, String>;
+    async fn delete_orders_for_strat(&mut self, strategy: &str) -> Result<u64, String>;
 }
 
 #[async_trait::async_trait]
 #[hotpath::measure_all]
-impl OpenOrdersOps for OpenOrdersCRUD {
+impl<'a> OpenOrdersOps for OpenOrdersCRUD<'a> {
     async fn get_orders_for_strat(
-        &self,
+        &mut self,
         strategy: &str,
         #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<OpenOrdersFullKeys>, String> {
@@ -393,10 +391,9 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                 .collect();
             return Ok(rows);
         }
-        // Db body — the live path, and BacktestMode::Db under backtest builds.
-        {
-            let result = match self {
-                Self::Stock(_) => sqlx::query_as!(
+        let result = match self {
+            Self::Stock(stk) => {
+                let query = sqlx::query_as!(
                     OpenStockOrdersFullKeys,
                     r#"
                         SELECT 
@@ -415,15 +412,18 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                         WHERE strategy = $1;
                         "#,
                     strategy
-                )
-                .fetch_all(self.get_pg_pool())
-                .await
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(OpenOrdersFullKeys::Stock)
-                        .collect::<Vec<OpenOrdersFullKeys>>()
-                }),
-                Self::Options(_) => sqlx::query_as!(
+                );
+                query
+                    .fetch_all(&mut stk.crud.exec)
+                    .await
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(OpenOrdersFullKeys::Stock)
+                            .collect::<Vec<OpenOrdersFullKeys>>()
+                    })
+            }
+            Self::Options(opt) => {
+                let query = sqlx::query_as!(
                     OpenOptionOrdersFullKeys,
                     r#"
                         SELECT 
@@ -446,46 +446,43 @@ impl OpenOrdersOps for OpenOrdersCRUD {
                         WHERE strategy = $1;
                         "#,
                     strategy
-                )
-                .fetch_all(self.get_pg_pool())
-                .await
-                .map(|rows| rows.into_iter().map(OpenOrdersFullKeys::Options).collect()),
-            };
+                );
+                query
+                    .fetch_all(&mut opt.crud.exec)
+                    .await
+                    .map(|rows| rows.into_iter().map(OpenOrdersFullKeys::Options).collect())
+            }
+        };
 
-            return result.map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"));
-        }
+        result.map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"))
     }
 
-    async fn delete_orders_for_strat(&self, strategy: &str) -> Result<u64, String> {
+    async fn delete_orders_for_strat(&mut self, strategy: &str) -> Result<u64, String> {
         let result = match self {
-            Self::Stock(_) => {
-                sqlx::query_as!(
-                    OpenStockOrdersFullKeys,
+            Self::Stock(stk) => {
+                let query = sqlx::query!(
                     r#"
                 DELETE FROM trading.open_stock_orders
                 WHERE strategy = $1;
                 "#,
                     strategy
-                )
-                .execute(self.get_pg_pool())
-                .await
+                );
+                stk.crud.exec.execute(query).await
             }
-            Self::Options(_) => {
-                sqlx::query_as!(
-                    OpenOptionOrdersFullKeys,
+            Self::Options(opt) => {
+                let query = sqlx::query!(
                     r#"
                     DELETE FROM trading.open_option_orders
                     WHERE strategy = $1;
                     "#,
                     strategy
-                )
-                .execute(self.get_pg_pool())
-                .await
+                );
+                opt.crud.exec.execute(query).await
             }
         };
 
         result
             .map(|res| res.rows_affected())
-            .map_err(|e| format!("Failed to get_orders_for_strat: {e:?}"))
+            .map_err(|e| format!("Failed to delete_orders_for_strat: {e:?}"))
     }
 }

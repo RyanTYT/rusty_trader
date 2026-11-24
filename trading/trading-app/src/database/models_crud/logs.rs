@@ -1,16 +1,14 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys},
     },
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct LogsCRUD {
-    pub(super) crud: CRUD<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>,
+pub struct LogsCRUD<'a> {
+    pub(super) crud: CRUD<'a, LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -22,13 +20,10 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl LogsCRUD {
-    pub fn new(pool: PgPool) -> Self {
+impl<'a> LogsCRUD<'a> {
+    pub fn new(exec: Exec<'a>) -> Self {
         Self {
-            crud: CRUD::<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>::new(
-                pool,
-                String::from("logs.logs"),
-            ),
+            crud: CRUD::<LogsFullKeys, LogsPrimaryKeys, LogsUpdateKeys>::new(exec, "logs.logs"),
         }
     }
 }

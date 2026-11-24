@@ -1,7 +1,9 @@
 // use anyhow::Result;
 use async_trait::async_trait;
 use crud_insertable::Insertable;
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
+
+use crate::database::db::{DbError, Exec};
 
 /// pub(crate) visibility ONLY for testing purposes
 pub(crate) fn map_to_placeholder(key: usize, column_name: &str) -> String {
@@ -13,18 +15,22 @@ pub(crate) fn map_to_placeholder(key: usize, column_name: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CRUD<FK, PK, UK> {
-    pub pool: PgPool,
-    pub table: String,
+/// Core CRUD implementation, bound to an [`Exec`] target.
+///
+/// The executor is either a borrowed pool or a borrowed connection (a
+/// transaction or a held direct session). This is what lets the same model
+/// code run inside or outside a transaction without duplicating SQL.
+pub struct CRUD<'a, FK, PK, UK> {
+    pub table: &'static str,
+    pub exec: Exec<'a>,
     pub _marker: std::marker::PhantomData<(FK, PK, UK)>, // Just to "use" the generics
 }
 
-impl<FK, PK, UK> CRUD<FK, PK, UK> {
-    pub fn new(pool: PgPool, table: String) -> Self {
+impl<'a, FK, PK, UK> CRUD<'a, FK, PK, UK> {
+    pub fn new(exec: Exec<'a>, table: &'static str) -> Self {
         Self {
-            pool,
             table,
+            exec,
             _marker: std::marker::PhantomData,
         }
     }
@@ -38,25 +44,34 @@ where
     UpdateKeys: Sized + Send + Sync,
 {
     // fn new(pool: PgPool, table: String) -> Self;
-    async fn create(&self, raw_item: &FullKeys) -> Result<(), String>;
-    async fn create_or_ignore(&self, raw_item: &FullKeys) -> Result<(), String>;
-    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), String>;
-    async fn read(&self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, String>
+    async fn create(&mut self, raw_item: &FullKeys) -> Result<(), DbError>;
+    async fn create_or_ignore(&mut self, raw_item: &FullKeys) -> Result<(), DbError>;
+    async fn create_or_update(
+        &mut self,
+        pk: &PrimaryKeys,
+        uk: &UpdateKeys,
+    ) -> Result<(), DbError>;
+    async fn read(&mut self, raw_pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
-    async fn read_all(&self) -> Result<Vec<FullKeys>, String>
+    async fn read_all(&mut self) -> Result<Vec<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>;
-    async fn update(&self, raw_pk: &PrimaryKeys, raw_update: &UpdateKeys) -> Result<u64, String>;
-    async fn delete(&self, raw_pk: &PrimaryKeys) -> Result<(), String>;
+    async fn update(
+        &mut self,
+        raw_pk: &PrimaryKeys,
+        raw_update: &UpdateKeys,
+    ) -> Result<u64, DbError>;
+    async fn delete(&mut self, raw_pk: &PrimaryKeys) -> Result<(), DbError>;
 }
 
 #[async_trait]
 impl<
+    'a,
     FullKeys: Sized + Send + Sync + Insertable,
     PrimaryKeys: Sized + Send + Sync + Insertable,
     UpdateKeys: Sized + Send + Sync + Insertable,
-> CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys> for CRUD<FullKeys, PrimaryKeys, UpdateKeys>
+> CRUDTrait<FullKeys, PrimaryKeys, UpdateKeys> for CRUD<'a, FullKeys, PrimaryKeys, UpdateKeys>
 {
     // fn new(pool: PgPool, table: String) -> Self {
     //     Self {
@@ -67,7 +82,7 @@ impl<
     // }
 
     /// A typical create function - pass in all FullKeys without Option<>
-    async fn create(&self, full_keys: &FullKeys) -> Result<(), String> {
+    async fn create(&mut self, full_keys: &FullKeys) -> Result<(), DbError> {
         let mut all_cols = full_keys.pri_column_names();
         all_cols.extend(full_keys.opt_column_names());
         let all_placeholders = all_cols
@@ -86,17 +101,20 @@ impl<
         let query = full_keys.bind_pri(&sql);
         let query = full_keys.bind_opt_to_query(query);
 
-        query
-            .execute(&self.pool)
+        self.exec
+            .execute(query)
             .await
-            .map_err(|e| format!("Failed to perform general create: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "create",
+                source,
+            })?;
         Ok(())
     }
 
     /// A create_or_ignore function - ignores if conflicts
     /// - NOTE: the query uses inbuilt conflict in the table. i.e. if the conflict doesn't exist on
     /// any unique_index or primary key, it may raise an error with insertion
-    async fn create_or_ignore(&self, full_keys: &FullKeys) -> Result<(), String> {
+    async fn create_or_ignore(&mut self, full_keys: &FullKeys) -> Result<(), DbError> {
         let mut all_cols = full_keys.pri_column_names();
         all_cols.extend(full_keys.opt_column_names());
         let all_placeholders = all_cols
@@ -115,16 +133,23 @@ impl<
         let query = full_keys.bind_pri(&sql);
         let query = full_keys.bind_opt_to_query(query);
 
-        query
-            .execute(&self.pool)
+        self.exec
+            .execute(query)
             .await
-            .map_err(|e| format!("Failed to perform general create_or_ignore: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "create_or_ignore",
+                source,
+            })?;
         Ok(())
     }
 
     /// A create_or_update function - upsert basically
     /// - function is split into 2 parameters for ease of processing for function
-    async fn create_or_update(&self, pk: &PrimaryKeys, uk: &UpdateKeys) -> Result<(), String> {
+    async fn create_or_update(
+        &mut self,
+        pk: &PrimaryKeys,
+        uk: &UpdateKeys,
+    ) -> Result<(), DbError> {
         let mut all_cols = pk.pri_column_names();
         all_cols.extend(uk.opt_column_names());
         let all_placeholders = all_cols
@@ -151,15 +176,18 @@ impl<
         let mut query = pk.bind_pri(&sql);
         query = uk.bind_opt_to_query(query);
 
-        query
-            .execute(&self.pool)
+        self.exec
+            .execute(query)
             .await
-            .map_err(|e| format!("Failed to perform general create_or_update: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "create_or_update",
+                source,
+            })?;
         Ok(())
     }
 
     /// A typical read function for a table - give primary keys without Option<>
-    async fn read(&self, pk: &PrimaryKeys) -> Result<Option<FullKeys>, String>
+    async fn read(&mut self, pk: &PrimaryKeys) -> Result<Option<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>,
     {
@@ -175,32 +203,44 @@ impl<
         let mut query = sqlx::query_as::<_, FullKeys>(&sql);
         query = pk.bind_pri_to_query_as(query);
 
-        let result = query
-            .fetch_optional(&self.pool)
+        let result = self
+            .exec
+            .fetch_optional(query)
             .await
-            .map_err(|e| format!("Failed to perform general read: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "read",
+                source,
+            })?;
         Ok(result)
     }
 
     /// Typical read_all function that returns all rows in DB
     /// - thus, could be a potentially taxing query
-    async fn read_all(&self) -> Result<Vec<FullKeys>, String>
+    async fn read_all(&mut self) -> Result<Vec<FullKeys>, DbError>
     where
         FullKeys: Unpin + for<'r> FromRow<'r, sqlx::postgres::PgRow>,
     {
         let sql = format!("SELECT * FROM {};", &self.table);
         let query = sqlx::query_as::<_, FullKeys>(&sql);
-        let result = query
-            .fetch_all(&self.pool)
+        let result = self
+            .exec
+            .fetch_all(query)
             .await
-            .map_err(|e| format!("Failed to perform general read_all: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "read_all",
+                source,
+            })?;
         Ok(result)
     }
 
     /// Typical update function that updates the matching row in table
     /// - Primary keys should be passed without Option
     /// - Update keys should be passed as Option<>: If a key should not be updated, pass None
-    async fn update(&self, pk: &PrimaryKeys, update: &UpdateKeys) -> Result<u64, String> {
+    async fn update(
+        &mut self,
+        pk: &PrimaryKeys,
+        update: &UpdateKeys,
+    ) -> Result<u64, DbError> {
         // Make Set clauses
         let set_placeholders: Vec<String> = update
             .opt_column_names()
@@ -236,15 +276,19 @@ impl<
         query = update.bind_opt_to_query(query);
         query = pk.bind_pri_to_query(query);
 
-        let res = query
-            .execute(&self.pool)
+        let res = self
+            .exec
+            .execute(query)
             .await
-            .map_err(|e| format!("Failed to perform general update: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "update",
+                source,
+            })?;
         Ok(res.rows_affected())
     }
 
     /// Typical delete function that deletes the matching row in the table
-    async fn delete(&self, pk: &PrimaryKeys) -> Result<(), String> {
+    async fn delete(&mut self, pk: &PrimaryKeys) -> Result<(), DbError> {
         let conditions = pk
             .pri_column_names()
             .iter()
@@ -256,10 +300,13 @@ impl<
         let sql = format!("DELETE FROM {} WHERE {};", &self.table, conditions);
         let mut query = sqlx::query(&sql);
         query = pk.bind_pri_to_query(query);
-        query
-            .execute(&self.pool)
+        self.exec
+            .execute(query)
             .await
-            .map_err(|e| format!("Failed to perform general delete: {e:?}"))?;
+            .map_err(|source| DbError::Query {
+                operation: "delete",
+                source,
+            })?;
 
         Ok(())
     }
@@ -269,40 +316,54 @@ impl<
 macro_rules! implement_all_crud_methods {
     ($delegator:ident, $FullKeys:ty, $PrimaryKeys:ty, $UpdateKeys:ty, $crud:ident) => {
         #[async_trait::async_trait]
-        impl crate::database::crud::CRUDTrait<$FullKeys, $PrimaryKeys, $UpdateKeys> for $crud {
-            async fn create(&self, raw_item: &$FullKeys) -> Result<(), String> {
+        impl<'a> crate::database::crud::CRUDTrait<$FullKeys, $PrimaryKeys, $UpdateKeys>
+            for $crud<'a>
+        {
+            async fn create(
+                &mut self,
+                raw_item: &$FullKeys,
+            ) -> Result<(), crate::database::db::DbError> {
                 self.$delegator.create(raw_item).await
             }
-            async fn create_or_ignore(&self, raw_item: &$FullKeys) -> Result<(), String> {
+            async fn create_or_ignore(
+                &mut self,
+                raw_item: &$FullKeys,
+            ) -> Result<(), crate::database::db::DbError> {
                 self.$delegator.create_or_ignore(raw_item).await
             }
-            async fn read(&self, raw_pk: &$PrimaryKeys) -> Result<Option<$FullKeys>, String>
+            async fn read(
+                &mut self,
+                raw_pk: &$PrimaryKeys,
+            ) -> Result<Option<$FullKeys>, crate::database::db::DbError>
             where
                 $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
             {
                 self.$delegator.read(raw_pk).await
             }
             async fn create_or_update(
-                &self,
+                &mut self,
                 pk: &$PrimaryKeys,
                 uk: &$UpdateKeys,
-            ) -> anyhow::Result<(), String> {
+            ) -> Result<(), crate::database::db::DbError> {
                 self.$delegator.create_or_update(pk, uk).await
             }
-            async fn read_all(&self) -> Result<Vec<$FullKeys>, String>
+            async fn read_all(&mut self) -> Result<Vec<$FullKeys>, crate::database::db::DbError>
             where
                 $FullKeys: Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
             {
                 self.$delegator.read_all().await
             }
             async fn update(
-                &self,
+                &mut self,
                 raw_pk: &$PrimaryKeys,
                 raw_update: &$UpdateKeys,
-            ) -> Result<u64, String> {
+            ) -> Result<u64, crate::database::db::DbError> {
                 self.$delegator.update(raw_pk, raw_update).await
             }
-            async fn delete(&self, raw_pk: &$PrimaryKeys) -> Result<(), String> {
+            async fn delete(
+                &mut self,
+                raw_pk: &$PrimaryKeys,
+            ) -> Result<(), crate::database::db::DbError> {
                 self.$delegator.delete(raw_pk).await
             }
         }
@@ -311,14 +372,14 @@ macro_rules! implement_all_crud_methods {
 
 #[macro_export]
 macro_rules! implement_crud_trait_for_interface {
-    ($crud:ty, $fk:ident, $pk:ident, $uk:ident, [$($variant:ident),* $(,)?]) => {
+    ($crud:ident, $fk:ident, $pk:ident, $uk:ident, [$($variant:ident),* $(,)?]) => {
         #[async_trait::async_trait]
-        impl crate::database::crud::CRUDTrait<$fk,$pk,$uk> for $crud
+        impl<'a> crate::database::crud::CRUDTrait<$fk, $pk, $uk> for $crud<'a>
         {
             async fn read(
-                &self,
+                &mut self,
                 raw_pk: &$pk,
-            ) -> Result<Option<$fk>, String>
+            ) -> Result<Option<$fk>, crate::database::db::DbError>
             where
                 $fk: Unpin + for<'r> sqlx::prelude::FromRow<'r, sqlx::postgres::PgRow>,
             {
@@ -328,44 +389,58 @@ macro_rules! implement_crud_trait_for_interface {
                             s.read(actual_pk).await.map(|ok_res| ok_res.map($fk::$variant))
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD read".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "read",
+                    }),
                 }
             }
-            async fn create(&self, raw_item: &$fk) -> Result<(), String> {
+            async fn create(
+                &mut self,
+                raw_item: &$fk,
+            ) -> Result<(), crate::database::db::DbError> {
                 match (self, raw_item) {
                     $(
                         (Self::$variant(s), $fk::$variant(actual_fk)) => {
                             s.create(actual_fk).await
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD create".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "create",
+                    }),
                 }
             }
             async fn update(
-                &self,
+                &mut self,
                 raw_pk: &$pk,
                 raw_uk: &$uk,
-            ) -> Result<u64, String> {
+            ) -> Result<u64, crate::database::db::DbError> {
                 match (self, raw_pk, raw_uk) {
                     $(
                         (Self::$variant(s), $pk::$variant(actual_pk), $uk::$variant(actual_uk)) => {
                             s.update(actual_pk, actual_uk).await
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD update".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "update",
+                    }),
                 }
             }
-            async fn delete(&self, raw_pk: &$pk) -> Result<(), String> {
+            async fn delete(
+                &mut self,
+                raw_pk: &$pk,
+            ) -> Result<(), crate::database::db::DbError> {
                 match (self, raw_pk) {
                     $(
                         (Self::$variant(s), $pk::$variant(actual_pk)) => {
                             s.delete(actual_pk).await
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD delete".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "delete",
+                    }),
                 }
             }
-            async fn read_all(&self) -> Result<Vec<$fk>, String>
+            async fn read_all(&mut self) -> Result<Vec<$fk>, crate::database::db::DbError>
             where
                 $fk:
                     Unpin + for<'r> sqlx::prelude::FromRow<'r, sqlx::postgres::PgRow>,
@@ -375,30 +450,34 @@ macro_rules! implement_crud_trait_for_interface {
                 }
             }
             async fn create_or_ignore(
-                &self,
+                &mut self,
                 raw_item: &$fk,
-            ) -> Result<(), String> {
+            ) -> Result<(), crate::database::db::DbError> {
                 match (self, raw_item) {
                     $(
                         (Self::$variant(s), $fk::$variant(actual_fk)) => {
                             s.create_or_ignore(actual_fk).await
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD create_or_ignore".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "create_or_ignore",
+                    }),
                 }
             }
             async fn create_or_update(
-                &self,
+                &mut self,
                 raw_pk: &$pk,
                 raw_uk: &$uk,
-            ) -> Result<(), String> {
+            ) -> Result<(), crate::database::db::DbError> {
                 match (self, raw_pk, raw_uk) {
                     $(
                         (Self::$variant(s), $pk::$variant(actual_pk), $uk::$variant(actual_uk)) => {
                             s.create_or_update(actual_pk, actual_uk).await
                         }
                     ),*
-                    _ => Err("Invalid key variant combination for Interface CRUD update".to_string()),
+                    _ => Err(crate::database::db::DbError::KeyVariantMismatch {
+                        operation: "create_or_update",
+                    }),
                 }
             }
         }

@@ -1,17 +1,15 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{CancelledOrdersFullKeys, CancelledOrdersPrimaryKeys, CancelledOrdersUpdateKeys},
     },
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct CancelledOrdersCRUD {
+pub struct CancelledOrdersCRUD<'a> {
     pub(super) crud:
-        CRUD<CancelledOrdersFullKeys, CancelledOrdersPrimaryKeys, CancelledOrdersUpdateKeys>,
+        CRUD<'a, CancelledOrdersFullKeys, CancelledOrdersPrimaryKeys, CancelledOrdersUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -23,14 +21,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl CancelledOrdersCRUD {
-    pub fn new(pool: PgPool) -> Self {
+impl<'a> CancelledOrdersCRUD<'a> {
+    pub fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 CancelledOrdersFullKeys,
                 CancelledOrdersPrimaryKeys,
                 CancelledOrdersUpdateKeys,
-            >::new(pool, String::from("logs.cancelled_orders")),
+            >::new(exec, "logs.cancelled_orders"),
         }
     }
 }

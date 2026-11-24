@@ -1,8 +1,9 @@
 use ibapi::{contracts::Contract, orders::ExecutionData};
-use sqlx::{PgPool, postgres::PgRow, prelude::FromRow};
+use sqlx::{postgres::PgRow, prelude::FromRow};
 
 use crate::{
     database::{
+        db::Exec,
         models::{
             AssetType, CurrentOptionPositionsFullKeys, CurrentOptionPositionsPrimaryKeys,
             CurrentOptionPositionsUpdateKeys, CurrentStockPositionsFullKeys,
@@ -21,10 +22,9 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
-#[derive(Debug, Clone)]
-pub enum CurrentPositionsCRUD {
-    Options(CurrentOptionPositionsCRUD),
-    Stock(CurrentStockPositionsCRUD),
+pub enum CurrentPositionsCRUD<'a> {
+    Options(CurrentOptionPositionsCRUD<'a>),
+    Stock(CurrentStockPositionsCRUD<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -295,30 +295,30 @@ impl CurrentPositionsUpdateKeys {
 }
 
 #[hotpath::measure_all]
-impl CurrentPositionsCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+impl<'a> CurrentPositionsCRUD<'a> {
+    pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
-            Self::Options(opt) => &opt.crud.pool,
-            Self::Stock(stk) => &stk.crud.pool,
+            Self::Options(opt) => &mut opt.crud.exec,
+            Self::Stock(stk) => &mut stk.crud.exec,
         }
     }
 
-    pub fn stock(pool: PgPool) -> Self {
-        Self::Stock(CurrentStockPositionsCRUD::new(pool))
+    pub fn stock(exec: Exec<'a>) -> Self {
+        Self::Stock(CurrentStockPositionsCRUD::new(exec))
     }
 
-    pub fn option(pool: PgPool) -> Self {
-        Self::Options(CurrentOptionPositionsCRUD::new(pool))
+    pub fn option(exec: Exec<'a>) -> Self {
+        Self::Options(CurrentOptionPositionsCRUD::new(exec))
     }
 
-    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+    pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock
             | AssetType::Future
             | AssetType::CFD
             | AssetType::ForexPair
-            | AssetType::CASH => Self::stock(pool),
-            AssetType::Option => Self::option(pool),
+            | AssetType::CASH => Self::stock(exec),
+            AssetType::Option => Self::option(exec),
             AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
@@ -338,25 +338,25 @@ use crate::backtester::setup::config::BacktestMode;
 #[async_trait::async_trait]
 pub trait CurrentPositionsOps {
     async fn get_pos_by_strat(
-        &self,
+        &mut self,
         strategy: &str,
         #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<CurrentPositionsFullKeys>, String>;
     /// Returns position if exists, else None
     /// - Note: Returns outer Result Err on sql fail, returns inner None when 404
     async fn get_pos_by_pk(
-        &self,
+        &mut self,
         pk: CurrentPositionsPrimaryKeys,
     ) -> Result<Option<CurrentPositionsFullKeys>, String>;
     /// Returns all positions across the database grouped by Primary Keys
-    async fn get_all_pos_grouped(&self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
-    async fn get_all_pos_grouped_by_strat(&self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
+    async fn get_all_pos_grouped(&mut self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
+    async fn get_all_pos_grouped_by_strat(&mut self) -> Result<Vec<CurrentPositionsFullKeys>, String>;
     /// Should insert into DB, and on conflict, add the position to the row
     /// - i.e. quantity is added + avg_price is updated accordingly
     ///     - if quantity is in opp direction of current position
     ///       -> no change to avg_price
     async fn update_positions_additive(
-        &self,
+        &mut self,
         pk: CurrentPositionsPrimaryKeys,
         uk: CurrentPositionsUpdateKeys,
         #[cfg(feature = "backtest")] mode: BacktestMode,
@@ -365,9 +365,9 @@ pub trait CurrentPositionsOps {
 
 #[async_trait::async_trait]
 #[hotpath::measure_all]
-impl CurrentPositionsOps for CurrentPositionsCRUD {
+impl CurrentPositionsOps for CurrentPositionsCRUD<'_> {
     async fn get_pos_by_strat(
-        &self,
+        &mut self,
         strategy: &str,
         #[cfg(feature = "backtest")] mode: BacktestMode,
     ) -> Result<Vec<CurrentPositionsFullKeys>, String> {
@@ -426,7 +426,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                         "#,
                     &strategy
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(self.exec())
                 .await
                 .map(|positions| {
                     positions
@@ -454,7 +454,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                         "#,
                     &strategy
                 )
-                .fetch_all(self.get_pg_pool())
+                .fetch_all(self.exec())
                 .await
                 .map(|positions| {
                     positions
@@ -474,7 +474,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
     }
 
     async fn get_pos_by_pk(
-        &self,
+        &mut self,
         pk: CurrentPositionsPrimaryKeys,
     ) -> Result<Option<CurrentPositionsFullKeys>, String> {
         let result = match pk {
@@ -505,7 +505,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 primary_exchange,
                 currency
             )
-            .fetch_optional(self.get_pg_pool())
+            .fetch_optional(self.exec())
             .await
             .map(|ok_res| ok_res.map(CurrentPositionsFullKeys::Stock)),
             CurrentPositionsPrimaryKeys::Options(CurrentOptionPositionsPrimaryKeys {
@@ -551,7 +551,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                 multiplier,
                 option_type as OptionType
             )
-            .fetch_optional(self.get_pg_pool())
+            .fetch_optional(self.exec())
             .await
             .map(|ok_res| ok_res.map(CurrentPositionsFullKeys::Options)),
         };
@@ -565,7 +565,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
     }
 
     /// Currently wrong - need to update avg_price to return correct number
-    async fn get_all_pos_grouped(&self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
+    async fn get_all_pos_grouped(&mut self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
         let result = match self {
             Self::Stock(_) => sqlx::query_as!(
                 CurrentStockPositionsFullKeys,
@@ -582,7 +582,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY stock, primary_exchange, currency;
                     "#,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|positions| {
                 positions
@@ -615,7 +615,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
                     "#,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|positions| {
                 positions
@@ -636,7 +636,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
 
     /// This implementation of avg_price should be fine since one strategy should only have
     /// a single position (i.e. row) for a single contract
-    async fn get_all_pos_grouped_by_strat(&self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
+    async fn get_all_pos_grouped_by_strat(&mut self) -> Result<Vec<CurrentPositionsFullKeys>, String> {
         let result = match self {
             Self::Stock(_) => sqlx::query_as!(
                 CurrentStockPositionsFullKeys,
@@ -653,7 +653,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY strategy, stock, primary_exchange, currency;
                     "#,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|positions| {
                 positions
@@ -680,7 +680,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     GROUP BY strategy, stock, primary_exchange, currency, expiry, strike, multiplier, option_type;
                     "#,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|positions| {
                 positions
@@ -694,7 +694,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
     }
 
     async fn update_positions_additive(
-        &self,
+        &mut self,
         pk: CurrentPositionsPrimaryKeys,
         uk: CurrentPositionsUpdateKeys,
         #[cfg(feature = "backtest")] mode: BacktestMode,
@@ -791,7 +791,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     quantity,
                     avg_price.unwrap_or(0.0)
                 )
-                .execute(self.get_pg_pool())
+                .execute(self.exec())
                 .await
                 .map_err(|e| {
                     format!(
@@ -856,7 +856,7 @@ impl CurrentPositionsOps for CurrentPositionsCRUD {
                     quantity,
                     avg_price.unwrap_or(0.0)
                 )
-                .execute(self.get_pg_pool())
+                .execute(self.exec())
                 .await
                 .map_err(|e| {
                     format!(

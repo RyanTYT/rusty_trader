@@ -1,16 +1,14 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys},
     },
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct NotificationCRUD {
-    pub(super) crud: CRUD<NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys>,
+pub struct NotificationCRUD<'a> {
+    pub(super) crud: CRUD<'a, NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -22,14 +20,11 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl NotificationCRUD {
-    pub fn new(pool: PgPool) -> Self {
+impl<'a> NotificationCRUD<'a> {
+    pub fn new(exec: Exec<'a>) -> Self {
         Self {
             crud:
-                CRUD::<NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys>::new(
-                    pool,
-                    String::from("trading.notifications"),
-                ),
+                CRUD::<NotificationFullKeys, NotificationPrimaryKeys, NotificationUpdateKeys>::new(exec, "trading.notifications"),
         }
     }
 }

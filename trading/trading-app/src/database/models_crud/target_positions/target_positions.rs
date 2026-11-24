@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use sqlx::PgPool;
 
 use crate::{
     database::{
+        db::Exec,
         models::{
             AssetType, OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
             TargetOptionPositionsUpdateKeys, TargetStockPositionsFullKeys,
@@ -16,10 +16,9 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
-#[derive(Debug, Clone)]
-pub enum TargetPositionsCRUD {
-    Stock(TargetStockPositionsCRUD),
-    Options(TargetOptionPositionsCRUD),
+pub enum TargetPositionsCRUD<'a> {
+    Stock(TargetStockPositionsCRUD<'a>),
+    Options(TargetOptionPositionsCRUD<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -86,30 +85,30 @@ pub enum TargetPositionsUpdateKeys {
 }
 
 #[hotpath::measure_all]
-impl TargetPositionsCRUD {
-    fn get_pg_pool<'a>(&'a self) -> &'a PgPool {
+impl<'a> TargetPositionsCRUD<'a> {
+    pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
-            Self::Stock(stk) => &stk.crud.pool,
-            Self::Options(opt) => &opt.crud.pool,
+            Self::Stock(stk) => &mut stk.crud.exec,
+            Self::Options(opt) => &mut opt.crud.exec,
         }
     }
 
-    pub fn stock(pool: PgPool) -> Self {
-        Self::Stock(TargetStockPositionsCRUD::new(pool))
+    pub fn stock(exec: Exec<'a>) -> Self {
+        Self::Stock(TargetStockPositionsCRUD::new(exec))
     }
 
-    pub fn option(pool: PgPool) -> Self {
-        Self::Options(TargetOptionPositionsCRUD::new(pool))
+    pub fn option(exec: Exec<'a>) -> Self {
+        Self::Options(TargetOptionPositionsCRUD::new(exec))
     }
 
-    pub fn from(asset_type: &AssetType, pool: PgPool) -> Self {
+    pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock
             | AssetType::Future
             | AssetType::CFD
             | AssetType::ForexPair
-            | AssetType::CASH => Self::stock(pool),
-            AssetType::Option => Self::option(pool),
+            | AssetType::CASH => Self::stock(exec),
+            AssetType::Option => Self::option(exec),
             AssetType::Unknown => panic!("Tried to get CRUD instance from an Unknown Asset Type!"),
         }
     }
@@ -126,21 +125,21 @@ implement_crud_trait_for_interface!(
 #[async_trait]
 pub trait TargetPositionsOps {
     async fn get_target_pos_diff_by_pk(
-        &self,
+        &mut self,
         pk: TargetPositionsPrimaryKeys,
     ) -> Result<Vec<TargetPositionsQtyDiff>, String>;
     async fn get_target_pos_diff_by_strat(
-        &self,
+        &mut self,
         strategy: &str,
     ) -> Result<Vec<TargetPositionsQtyDiff>, String>;
-    async fn clear_strat_pos(&self, strategy: &str) -> Result<(), String>;
+    async fn clear_strat_pos(&mut self, strategy: &str) -> Result<(), String>;
 }
 
 #[async_trait]
 #[hotpath::measure_all]
-impl TargetPositionsOps for TargetPositionsCRUD {
+impl TargetPositionsOps for TargetPositionsCRUD<'_> {
     async fn get_target_pos_diff_by_pk(
-        &self,
+        &mut self,
         pk: TargetPositionsPrimaryKeys,
     ) -> Result<Vec<TargetPositionsQtyDiff>, String> {
         let result = match pk {
@@ -176,7 +175,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 primary_exchange,
                 currency
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|ok_res| {
                 ok_res
@@ -237,7 +236,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 multiplier,
                 option_type as OptionType
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(self.exec())
             .await
             .map(|ok_res| {
                 ok_res
@@ -255,11 +254,11 @@ impl TargetPositionsOps for TargetPositionsCRUD {
     }
 
     async fn get_target_pos_diff_by_strat(
-        &self,
+        &mut self,
         strategy: &str,
     ) -> Result<Vec<TargetPositionsQtyDiff>, String> {
         let result = match self {
-            Self::Stock(_) => sqlx::query_as!(
+            Self::Stock(stk) => sqlx::query_as!(
                 TargetStockPositionsQtyDiff,
                 r#"
                 SELECT
@@ -280,7 +279,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 "#,
                 strategy,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(&mut stk.crud.exec)
             .await
             .map(|ok_res| {
                 ok_res
@@ -289,7 +288,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     .collect()
             }),
 
-            Self::Options(_) => sqlx::query_as!(
+            Self::Options(opt) => sqlx::query_as!(
                 TargetOptionPositionsQtyDiff,
                 r#"
                 SELECT
@@ -318,7 +317,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                 "#,
                 strategy,
             )
-            .fetch_all(self.get_pg_pool())
+            .fetch_all(&mut opt.crud.exec)
             .await
             .map(|ok_res| {
                 ok_res
@@ -335,9 +334,9 @@ impl TargetPositionsOps for TargetPositionsCRUD {
         })
     }
 
-    async fn clear_strat_pos(&self, strategy: &str) -> Result<(), String> {
+    async fn clear_strat_pos(&mut self, strategy: &str) -> Result<(), String> {
         let result = match self {
-            Self::Stock(_) => {
+            Self::Stock(stk) => {
                 sqlx::query!(
                     r#"
                     DELETE
@@ -346,10 +345,10 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     "#,
                     strategy,
                 )
-                .execute(self.get_pg_pool())
+                .execute(&mut stk.crud.exec)
                 .await
             }
-            Self::Options(_) => {
+            Self::Options(opt) => {
                 sqlx::query!(
                     r#"
                     DELETE
@@ -358,7 +357,7 @@ impl TargetPositionsOps for TargetPositionsCRUD {
                     "#,
                     strategy,
                 )
-                .execute(self.get_pg_pool())
+                .execute(&mut opt.crud.exec)
                 .await
             }
         };

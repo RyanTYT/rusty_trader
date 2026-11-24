@@ -1,8 +1,7 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{
             StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys,
         },
@@ -10,10 +9,9 @@ use crate::{
     implement_all_crud_methods,
 };
 
-#[derive(Clone, Debug)]
-pub struct StagedCommissionsCRUD {
+pub struct StagedCommissionsCRUD<'a> {
     pub(super) crud:
-        CRUD<StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys>,
+        CRUD<'a, StagedCommissionsFullKeys, StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys>,
 }
 
 implement_all_crud_methods!(
@@ -25,14 +23,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl StagedCommissionsCRUD {
-    pub fn new(pool: PgPool) -> Self {
+impl<'a> StagedCommissionsCRUD<'a> {
+    pub fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 StagedCommissionsFullKeys,
                 StagedCommissionsPrimaryKeys,
                 StagedCommissionsUpdateKeys,
-            >::new(pool, String::from("trading.staged_commissions")),
+            >::new(exec, "trading.staged_commissions"),
         }
     }
 }

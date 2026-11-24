@@ -1,8 +1,7 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{
             StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys,
         },
@@ -10,20 +9,20 @@ use crate::{
     implement_all_crud_methods,
 };
 
-pub fn get_stock_transactions_crud(
-    pool: PgPool,
-) -> CRUD<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys> {
+pub fn get_stock_transactions_crud<'a>(
+    exec: Exec<'a>,
+) -> CRUD<'a, StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>
+{
     CRUD::<
         StockTransactionsFullKeys,
         StockTransactionsPrimaryKeys,
         StockTransactionsUpdateKeys,
-    >::new(pool, String::from("trading.stock_transactions"))
+    >::new(exec, "trading.stock_transactions")
 }
 
-#[derive(Debug, Clone)]
-pub struct StockTransactionsCRUD {
+pub struct StockTransactionsCRUD<'a> {
     pub(super) crud:
-        CRUD<StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>,
+        CRUD<'a, StockTransactionsFullKeys, StockTransactionsPrimaryKeys, StockTransactionsUpdateKeys>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,14 +41,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl StockTransactionsCRUD {
-    pub(crate) fn new(pool: PgPool) -> Self {
+impl<'a> StockTransactionsCRUD<'a> {
+    pub(crate) fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 StockTransactionsFullKeys,
                 StockTransactionsPrimaryKeys,
                 StockTransactionsUpdateKeys,
-            >::new(pool, String::from("trading.stock_transactions")),
+            >::new(exec, "trading.stock_transactions"),
         }
     }
 }

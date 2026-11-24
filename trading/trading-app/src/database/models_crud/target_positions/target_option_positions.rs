@@ -1,8 +1,7 @@
-use sqlx::PgPool;
-
 use crate::{
     database::{
         crud::CRUD,
+        db::Exec,
         models::{
             OptionType, TargetOptionPositionsFullKeys, TargetOptionPositionsPrimaryKeys,
             TargetOptionPositionsUpdateKeys,
@@ -11,9 +10,8 @@ use crate::{
     implement_all_crud_methods,
 };
 
-#[derive(Debug, Clone)]
-pub struct TargetOptionPositionsCRUD {
-    pub(super) crud: CRUD<
+pub struct TargetOptionPositionsCRUD<'a> {
+    pub(super) crud: CRUD<'a, 
         TargetOptionPositionsFullKeys,
         TargetOptionPositionsPrimaryKeys,
         TargetOptionPositionsUpdateKeys,
@@ -44,14 +42,14 @@ implement_all_crud_methods!(
 );
 
 #[hotpath::measure_all]
-impl TargetOptionPositionsCRUD {
-    pub(crate) fn new(pool: PgPool) -> Self {
+impl<'a> TargetOptionPositionsCRUD<'a> {
+    pub(crate) fn new(exec: Exec<'a>) -> Self {
         Self {
             crud: CRUD::<
                 TargetOptionPositionsFullKeys,
                 TargetOptionPositionsPrimaryKeys,
                 TargetOptionPositionsUpdateKeys,
-            >::new(pool, String::from("trading.target_option_positions")),
+            >::new(exec, "trading.target_option_positions"),
         }
     }
 }
