@@ -101,7 +101,10 @@ impl BarCache {
         // Track the most-recent bar (the end of the window) — excluded in the backtest.
         if let Some(latest) = window.last() {
             let t = latest.get_time();
-            let mut max_end = self.max_end_time.lock().expect("bar cache max_end_time poisoned");
+            let mut max_end = self
+                .max_end_time
+                .lock()
+                .expect("bar cache max_end_time poisoned");
             match *max_end {
                 Some(cur) if t > cur => *max_end = Some(t),
                 None => *max_end = Some(t),
@@ -115,7 +118,10 @@ impl BarCache {
     /// backtest. The backtester reads this after warm-up to trim the replay
     /// stream (discard bars <= this time).
     pub fn max_end_time(&self) -> Option<DateTime<Utc>> {
-        *self.max_end_time.lock().expect("bar cache max_end_time poisoned")
+        *self
+            .max_end_time
+            .lock()
+            .expect("bar cache max_end_time poisoned")
     }
 }
 
@@ -124,11 +130,6 @@ fn bar_matches_pk(bar: &HistoricalDataFullKeys, pk: &HistoricalDataPrimaryKeysWo
     use crate::database::models_crud::historical_data::historical_data::HistoricalDataPrimaryKeysWoTime as Pk;
     match (bar, pk) {
         (HistoricalDataFullKeys::Stock(b), Pk::Stock(p)) => {
-            b.stock == p.stock
-                && b.primary_exchange == p.primary_exchange
-                && b.currency == p.currency
-        }
-        (HistoricalDataFullKeys::DailyStock(b), Pk::DailyStock(p)) => {
             b.stock == p.stock
                 && b.primary_exchange == p.primary_exchange
                 && b.currency == p.currency

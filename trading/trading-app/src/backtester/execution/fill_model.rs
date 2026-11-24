@@ -32,7 +32,6 @@ fn bar_ohlc(bar: &HistoricalDataFullKeys) -> Option<(f64, f64, f64)> {
     match bar {
         HistoricalDataFullKeys::Stock(v) => Some((v.low, v.high, v.close)),
         HistoricalDataFullKeys::Options(v) => Some((v.low, v.high, v.close)),
-        HistoricalDataFullKeys::DailyStock(v) => Some((v.low, v.high, v.close)),
         HistoricalDataFullKeys::Forex(_) => None,
     }
 }
