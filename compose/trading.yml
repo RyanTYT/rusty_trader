@@ -54,6 +54,7 @@ services:
       - TRADING_TYPE=paper
       - RUST_BACKTRACE=1
       - ORDERS_FILE_PATH=/data/orders/orders.redb
+      - MEMORY_LIMIT=${MEMORY_LIMIT}
     ports:
       - 7462:7462
       - 4002:4002
