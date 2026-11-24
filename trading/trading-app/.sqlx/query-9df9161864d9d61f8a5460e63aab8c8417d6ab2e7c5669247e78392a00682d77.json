@@ -20,7 +20,7 @@
         "Text",
         {
           "Custom": {
-            "name": "option_type",
+            "name": "trading.option_type",
             "kind": {
               "Enum": [
                 "C",
