@@ -340,7 +340,12 @@ impl PoolState {
     /// behind; duplicates are a loud construction error (a second
     /// `FundGate::new` for one sleeve would double-mint and desync the
     /// name/idx mapping).
-    fn mint(&self, own: &str, m_scale: f64, subscription: f64) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
+    fn mint(
+        &self,
+        own: &str,
+        m_scale: f64,
+        subscription: f64,
+    ) -> MpscRingBufferProducer<FundInput, FUND_RING, FUND_PRODUCERS> {
         // A new run begins at the first mint after every producer handle
         // from the previous run has dropped: only the pool still holds that
         // ring. Reset BEFORE allocating — the stale ring's producer index is
@@ -429,12 +434,14 @@ impl PoolState {
             AssetType, CurrentStockPositionsPrimaryKeys, CurrentStockPositionsUpdateKeys,
         };
         use crate::database::models_crud::current_positions::current_positions::{
-            CurrentPositionsCRUD, CurrentPositionsOps, CurrentPositionsPrimaryKeys,
-            CurrentPositionsUpdateKeys,
+            CurrentPositionsOps, CurrentPositionsPrimaryKeys, CurrentPositionsUpdateKeys,
         };
 
         let names = unsafe { &*self.names.get() }.clone();
-        let sub = unsafe { &*self.fund_subs.get() }.first().copied().unwrap_or(0.0);
+        let sub = unsafe { &*self.fund_subs.get() }
+            .first()
+            .copied()
+            .unwrap_or(0.0);
         if sub > 0.0 {
             tracing::warn!(
                 "fund subscription set — subscriptions are not yet \
@@ -947,7 +954,9 @@ impl FundGate {
         // construction; minting beyond FUND_PRODUCERS panics — loud, never
         // silent). The FIRST gate construction creates the pool;
         // `pool_init` readies it before any flush.
-        let producer = POOL.get_or_init(PoolState::new).mint(&own, m_scale, subscription);
+        let producer = POOL
+            .get_or_init(PoolState::new)
+            .mint(&own, m_scale, subscription);
         Self {
             own,
             last_px: HashMap::new(),
@@ -1424,4 +1433,3 @@ mod two_phase_tests {
         assert_eq!(out["A"], 0);
     }
 }
-

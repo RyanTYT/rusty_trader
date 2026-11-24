@@ -24,11 +24,10 @@ use crate::{
         },
         models_crud::{
             historical_data::historical_data::{
-                HistoricalDataCRUD, HistoricalDataFullKeys, HistoricalDataOps,
-                HistoricalDataPrimaryKeysWoTime,
+                HistoricalDataFullKeys, HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
             },
             target_positions::target_positions::{
-                TargetPositionsCRUD, TargetPositionsPrimaryKeys, TargetPositionsUpdateKeys,
+                TargetPositionsPrimaryKeys, TargetPositionsUpdateKeys,
             },
         },
     },
