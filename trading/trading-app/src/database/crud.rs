@@ -274,6 +274,9 @@ impl<
             .enumerate()
             .map(|(index, col)| format!("{} = {}", col, map_to_placeholder(index + 1, col)))
             .collect();
+        if set_placeholders.is_empty() {
+            return Ok(0);
+        }
         let set_clause = set_placeholders.join(", ");
 
         // Make Where clauses
