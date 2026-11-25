@@ -1,5 +1,5 @@
-use crate::database::tables::DbTables;
-use std::{sync::Weak, time::Duration};
+use crate::{database::tables::DbTables, market_data::traits::contracts::ContractBroker};
+use std::sync::Weak;
 
 use ibapi::{
     contracts::{Contract, SecurityType},
@@ -7,29 +7,29 @@ use ibapi::{
 };
 use sqlx::PgPool;
 
-use crate::{
-    database::{
-        crud::CRUDTrait,
-        db::DbTxn,
-        models::AssetType,
-        models_crud::open_orders::open_orders::{OpenOrdersFullKeys, OpenOrdersPrimaryKeys},
-    },
-    market_data::consolidator::Consolidator,
+use crate::database::{
+    crud::CRUDTrait,
+    db::DbTxn,
+    models::AssetType,
+    models_crud::open_orders::open_orders::{OpenOrdersFullKeys, OpenOrdersPrimaryKeys},
 };
 
 /// Should be triggered by Submitted and PreSubmitted Order Events to update the local OpenOrders
 /// table
-pub fn submitted(
-    consolidator: &Weak<Consolidator>,
+pub fn submitted<MarketBroker>(
+    consolidator: &Weak<MarketBroker>,
     pool: PgPool,
     contract: &Contract,
     order: &Order,
-) -> Result<tokio::task::JoinHandle<()>, String> {
+) -> Result<tokio::task::JoinHandle<()>, String>
+where
+    MarketBroker: ContractBroker,
+{
     let contract = {
         consolidator
             .upgrade()
             .ok_or("Consolidator died when received submitted order update")?
-            .validate_contract(contract.clone(), Duration::from_secs(10))
+            .get_validated_contract(contract.clone())
             .ok_or("No valid contract for contract for order update")?
     };
     let asset_type = AssetType::from_str(&contract.security_type);
@@ -80,7 +80,11 @@ pub fn cancelled(pool: PgPool, order_id: i32, order_perm_id: i32, security_type:
             tracing::error!("Failed to cancel Open Order: {e:?}");
             return;
         }
-        if let Err(e) = db.open_orders(&asset_type).delete(&open_orders_pk_fake).await {
+        if let Err(e) = db
+            .open_orders(&asset_type)
+            .delete(&open_orders_pk_fake)
+            .await
+        {
             tracing::error!("Failed to cancel Optimistic Open Order: {e:?}");
             return;
         }

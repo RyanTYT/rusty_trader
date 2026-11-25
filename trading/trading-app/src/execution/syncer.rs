@@ -98,18 +98,19 @@ impl SyncerEngine {
 
 #[async_trait]
 pub trait SyncOps {
-    fn sync_executions<Broker>(
+    fn sync_executions<Broker, MarketBroker>(
         &self,
         client: &Arc<Broker>,
         execution_event_producers: Arc<
             HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
-        consolidator: &Weak<Consolidator>,
+        consolidator: &Weak<MarketBroker>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String>
     where
-        Broker: PositionsTracker + OrderRouter + Send + Sync + 'static;
+        Broker: PositionsTracker + OrderRouter + Send + Sync + 'static,
+        MarketBroker: PriceSupplier + ContractBroker;
     fn sync_open_orders<Broker, MarketBroker>(
         &self,
         client: &Broker,
@@ -133,27 +134,28 @@ impl SyncOps for SyncerEngine {
     // Call before sync_positions - tries its best to sync all missed orders since last session
     // - but may miss some position updates -> Have to reconcile manually and via sync_positions
     // - luckily for this, we can simply reuse live order event handles
-    fn sync_executions<Broker>(
+    fn sync_executions<Broker, MarketBroker>(
         &self,
         client: &Arc<Broker>,
         execution_event_producers: Arc<
             HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
-        consolidator: &Weak<Consolidator>,
+        consolidator: &Weak<MarketBroker>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
     ) -> Result<(), String>
     where
         Broker: PositionsTracker + OrderRouter + Send + Sync + 'static,
+        MarketBroker: PriceSupplier + ContractBroker,
     {
         let subscription = client.get_executions(ibapi::orders::ExecutionFilter {
             ..ExecutionFilter::default()
         });
         // Assumption: Will always receive execution 1st b4 associated commission
         let def_strat = default_strategy.unwrap_or("unknown".to_string());
-        for execution in subscription.timeout_iter(std::time::Duration::from_secs(10)) {
+        for execution in subscription {
             match execution {
-                Executions::ExecutionData(execution_data) => {
+                Ok(Executions::ExecutionData(execution_data)) => {
                     // let strategy = {
                     //     let order_map = order_map
                     //         .read()
@@ -190,7 +192,7 @@ impl SyncOps for SyncerEngine {
                     };
                 }
 
-                Executions::CommissionReport(commission_report) => {
+                Ok(Executions::CommissionReport(commission_report)) => {
                     if let Err(e) =
                         order_update_stream::event_handlers::commission_report::on_commission_update(
                             self.pool.clone(),
@@ -201,8 +203,12 @@ impl SyncOps for SyncerEngine {
                     };
                 }
 
-                Executions::Notice(message) => {
+                Ok(Executions::Notice(message)) => {
                     tracing::warn!("Message from OrderEngine.sync_executions: {message:?}");
+                }
+                Err(e) => {
+                    tracing::error!("Error while syncing executions: {e:?}");
+                    break;
                 }
             }
         }
@@ -222,14 +228,9 @@ impl SyncOps for SyncerEngine {
         // open_orders: for syncing between OrderData && OrderStatus
         let mut open_orders: HashMap<i32, (Option<Contract>, Option<Order>, Option<OrderStatus>)> =
             HashMap::new();
-        let subscription = client.get_all_open_orders();
-        if let Some(e) = subscription.error() {
-            tracing::warn!("Encountered Error while syncing open orders: {e:?}");
-            return;
-        }
-        for open_order in subscription.timeout_iter(std::time::Duration::from_secs(10)) {
+        for open_order in client.get_all_open_orders() {
             match open_order {
-                ibapi::orders::Orders::OrderData(order_data) => {
+                Ok(ibapi::orders::Orders::OrderData(order_data)) => {
                     let perm_id = order_data.order.perm_id;
                     open_orders.insert(
                         perm_id,
@@ -240,7 +241,7 @@ impl SyncOps for SyncerEngine {
                         ),
                     );
                 }
-                ibapi::orders::Orders::OrderStatus(order_status) => {
+                Ok(ibapi::orders::Orders::OrderStatus(order_status)) => {
                     open_orders.insert(
                         order_status.perm_id,
                         (
@@ -254,8 +255,12 @@ impl SyncOps for SyncerEngine {
                         ),
                     );
                 }
-                ibapi::orders::Orders::Notice(notice) => {
+                Ok(ibapi::orders::Orders::Notice(notice)) => {
                     tracing::warn!("Notice from OrderEngine.sync_open_orders: {notice:?}");
+                }
+                Err(e) => {
+                    tracing::warn!("Encountered Error while syncing open orders: {e:?}");
+                    return;
                 }
             }
         }
@@ -491,13 +496,10 @@ async fn sync_fx_positions<MarketBroker, PositionsBroker>(
     // =====================================
     // Compare FX broker positions
     // =====================================
-    let fx_subscription = client.get_account_updates(&AccountId(account));
     let mut broker_currency = HashMap::<String, f64>::new();
-    while let Some(account_update) =
-        fx_subscription.next_timeout(std::time::Duration::from_secs(10))
-    {
+    for account_update in client.get_account_updates(&AccountId(account)) {
         match account_update {
-            ibapi::prelude::AccountUpdate::AccountValue(account_value) => {
+            Ok(ibapi::prelude::AccountUpdate::AccountValue(account_value)) => {
                 if account_value.key == "CashBalance" {
                     let currency = if account_value.currency == "BASE" {
                         "SGD".to_string()
@@ -514,7 +516,7 @@ async fn sync_fx_positions<MarketBroker, PositionsBroker>(
                 }
             }
             #[allow(unused_variables)]
-            ibapi::prelude::AccountUpdate::PortfolioValue(portfolio_value) => {
+            Ok(ibapi::prelude::AccountUpdate::PortfolioValue(portfolio_value)) => {
                 continue;
                 // let currency = portfolio_value.contract.currency.as_str();
                 // let currency_balance = portfolio_value.average_cost * portfolio_value.position;
@@ -526,10 +528,17 @@ async fn sync_fx_positions<MarketBroker, PositionsBroker>(
                 //     broker_currency.get(currency).unwrap() + currency_balance,
                 // );
             }
-            ibapi::prelude::AccountUpdate::UpdateTime(_) => {
+            Ok(ibapi::prelude::AccountUpdate::UpdateTime(_)) => {
                 continue;
             }
-            ibapi::prelude::AccountUpdate::End => {
+            Ok(ibapi::prelude::AccountUpdate::End) => {
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Encountered Error while syncing FX positions: {e:?}");
+                errors.push(format!(
+                    "Encountered Error while syncing FX positions: {e:?}"
+                ));
                 break;
             }
         }
@@ -615,19 +624,11 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
 {
     let mut broker_stock_positions_received = HashMap::<HashContract, (f64, f64)>::new();
     let mut broker_option_positions_received = HashMap::<HashContract, (f64, f64)>::new();
-    let subscription =
-        client.get_positions_multi(Some(&ibapi::accounts::types::AccountId(account)), None);
-    if let Some(e) = subscription.error() {
-        tracing::warn!("Encountered Error while syncing positions: {e:?}");
-        errors.push(format!("Encountered Error while syncing positions: {e:?}"));
-        return;
-    }
-
-    while let Some(position_response) =
-        subscription.next_timeout(std::time::Duration::from_secs(10))
+    for position_response in
+        client.get_positions_multi(Some(&ibapi::accounts::types::AccountId(account)), None)
     {
         match position_response {
-            PositionUpdateMulti::Position(position) => {
+            Ok(PositionUpdateMulti::Position(position)) => {
                 let contract = {
                     let validated_contract =
                         consolidator.get_validated_contract(position.contract.clone());
@@ -659,9 +660,13 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
                     }
                 }
             }
-            PositionUpdateMulti::PositionEnd => {
+            Ok(PositionUpdateMulti::PositionEnd) => {
                 println!("initial set of positions received - cancelling request");
-                subscription.cancel();
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Encountered Error while syncing positions: {e:?}");
+                errors.push(format!("Encountered Error while syncing positions: {e:?}"));
                 break;
             }
         }
