@@ -392,16 +392,18 @@ EXECUTE FUNCTION trading.set_last_updated();
 CREATE OR REPLACE FUNCTION trading.apply_staged_commission_stocks()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Try to apply a matching staged commission
-    UPDATE trading.stock_transactions
-    SET fees = sc.fees
-    FROM trading.staged_commissions sc
-    WHERE trading.stock_transactions.execution_id = NEW.execution_id
-        AND sc.execution_id = NEW.execution_id;
-
-    -- Delete the staging row if matched
-    DELETE FROM trading.staged_commissions
-    WHERE execution_id = NEW.execution_id;
+    -- Apply the latest staged commission and delete only the row we applied.
+    WITH applied AS (
+        UPDATE trading.stock_transactions
+        SET fees = sc.fees
+        FROM trading.staged_commissions sc
+        WHERE trading.stock_transactions.execution_id = NEW.execution_id
+            AND sc.execution_id = NEW.execution_id
+        RETURNING sc.execution_id
+    )
+    DELETE FROM trading.staged_commissions sc
+    USING applied a
+    WHERE sc.execution_id = a.execution_id;
 
     RETURN NEW;
 END;
@@ -410,16 +412,18 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION trading.apply_staged_commission_options()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Try to apply a matching staged commission
-    UPDATE trading.option_transactions
-    SET fees = sc.fees
-    FROM trading.staged_commissions sc
-    WHERE trading.option_transactions.execution_id = NEW.execution_id
-        AND sc.execution_id = NEW.execution_id;
-
-    -- Delete the staging row if matched
-    DELETE FROM trading.staged_commissions
-    WHERE execution_id = NEW.execution_id;
+    -- Apply the latest staged commission and delete only the row we applied.
+    WITH applied AS (
+        UPDATE trading.option_transactions
+        SET fees = sc.fees
+        FROM trading.staged_commissions sc
+        WHERE trading.option_transactions.execution_id = NEW.execution_id
+            AND sc.execution_id = NEW.execution_id
+        RETURNING sc.execution_id
+    )
+    DELETE FROM trading.staged_commissions sc
+    USING applied a
+    WHERE sc.execution_id = a.execution_id;
 
     RETURN NEW;
 END;
@@ -428,27 +432,32 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION trading.try_apply_commission_to_transaction()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Attempt to apply commission if matching transaction exists
-    UPDATE trading.stock_transactions
-    SET fees = NEW.fees
+    -- Take the transaction row lock before deciding. If a fill for this execution
+    -- is being inserted concurrently, this waits for it to commit (the row is
+    -- locked by the uncommitted insert), then applies the fee to the committed row
+    -- instead of staging a commission that nobody will ever merge. A later
+    -- commission overwrites the earlier fee (last wins).
+    PERFORM 1 FROM trading.stock_transactions
     WHERE execution_id = NEW.execution_id
-    AND trading.stock_transactions.fees = 0.0;
-
-    -- If successful (i.e., a row was updated), delete from staging
+    FOR UPDATE;
     IF FOUND THEN
+        UPDATE trading.stock_transactions
+        SET fees = NEW.fees
+        WHERE execution_id = NEW.execution_id;
         RETURN NULL; -- Prevents insert into staged_commissions
-    ELSE
+    END IF;
+
+    PERFORM 1 FROM trading.option_transactions
+    WHERE execution_id = NEW.execution_id
+    FOR UPDATE;
+    IF FOUND THEN
         UPDATE trading.option_transactions
         SET fees = NEW.fees
-        WHERE execution_id = NEW.execution_id
-        AND trading.option_transactions.fees = 0.0;
-
-        IF FOUND THEN
-            RETURN NULL;
-        ELSE
-            RETURN NEW;  -- Keep the staging row
-        END IF;
+        WHERE execution_id = NEW.execution_id;
+        RETURN NULL; -- Prevents insert into staged_commissions
     END IF;
+
+    RETURN NEW;  -- Keep the staging row
 END;
 $$ LANGUAGE plpgsql;
 
