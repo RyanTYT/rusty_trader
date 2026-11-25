@@ -11,8 +11,6 @@ use ibapi::{
     prelude::Currency,
 };
 
-#[cfg(not(feature = "backtest"))]
-use crate::market_data::consolidator::Consolidator;
 use crate::{
     database::models_crud::target_positions::target_positions::TargetPositionsQtyDiff,
     execution::{
@@ -57,15 +55,18 @@ impl OrderEngine {
     ///
     /// Matching is greedy: shortfalls are iterated in order, and each is satisfied
     /// by consuming sell proceeds until the shortfall is covered or no more sells remain.
-    pub fn get_required_fx_attachments(
+    pub fn get_required_fx_attachments<MarketBroker>(
         funds: HashMap<String, f64>,
         funds_from_selling: HashMap<HashContract, Vec<f64>>,
         insufficient_funds: HashMap<HashContract, ((f64, f64), f64)>,
         strategy: &str,
-        #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
+        #[cfg(not(feature = "backtest"))] consolidator: &Weak<MarketBroker>,
         #[cfg(feature = "backtest")]
         price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
-    ) -> FxAttachments {
+    ) -> FxAttachments
+    where
+        MarketBroker: PriceSupplier,
+    {
         let mut remaining_proceeds: HashMap<HashContract, f64> = funds_from_selling
             .into_iter()
             .map(|(contract, amounts)| (contract, amounts.iter().sum()))
@@ -196,13 +197,16 @@ impl OrderEngine {
     ///   places both.
     /// - Prices fall back to `avg_price`; a zero price defers the opening.
     #[allow(dead_code)]
-    pub fn get_fx_attachments(
+    pub fn get_fx_attachments<F>(
         target_pos_diffs: &[TargetPositionsQtyDiff],
         strategy_name: &str,
         order_store: &OrderStore,
-        #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
+        #[cfg(not(feature = "backtest"))] consolidator: &Weak<F>,
         #[cfg(feature = "backtest")] price_supplier: &dyn PriceSupplier,
-    ) -> Result<FxFundingPlan, String> {
+    ) -> Result<FxFundingPlan, String>
+    where
+        F: PriceSupplier,
+    {
         #[cfg(not(feature = "backtest"))]
         let fetch_price = |contract: Contract| -> Result<f64, String> {
             consolidator
@@ -582,4 +586,183 @@ fn fx_conversion_rate(
         ..Default::default()
     };
     fetch_price(contract)
+}
+
+#[cfg(test)]
+mod conversion_rate_tests {
+    use super::fx_conversion_rate;
+
+    #[test]
+    fn same_currency_is_one_without_fetching() {
+        let rate = fx_conversion_rate(&|_contract| Err("must not fetch".to_string()), "USD", "USD")
+            .unwrap();
+        assert_eq!(rate, 1.0);
+    }
+
+    #[test]
+    fn different_currency_returns_the_fetched_rate() {
+        let rate = fx_conversion_rate(&|_contract| Ok(1.25), "EUR", "USD").unwrap();
+        assert_eq!(rate, 1.25);
+    }
+
+    #[test]
+    fn fetch_error_is_propagated() {
+        let result = fx_conversion_rate(&|_contract| Err("no price".to_string()), "EUR", "USD");
+        assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod funding_plan_tests {
+    use super::*;
+    use crate::database::models_crud::target_positions::target_positions::TargetPositionsQtyDiff;
+    use crate::database::models_crud::target_positions::target_stock_positions::TargetStockPositionsQtyDiff;
+    use crate::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
+    use ibapi::contracts::SecurityType;
+    use std::sync::{Arc, Mutex, MutexGuard};
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct FakePrice(f64);
+
+    #[async_trait::async_trait]
+    impl PriceSupplier for FakePrice {
+        fn get_current_price(
+            &self,
+            _contract: Contract,
+            _vwap: bool,
+            _generic_ticks: &[&str],
+        ) -> Result<f64, String> {
+            Ok(self.0)
+        }
+
+        async fn populate_historical_data(
+            &self,
+            _contract: &Contract,
+            _config: &HistoricalDataConfig,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn open_store() -> (TempDir, MutexGuard<'static, ()>, OrderStore) {
+        let guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("orders.redb");
+        unsafe {
+            std::env::set_var("ORDERS_FILE_PATH", &path);
+        }
+        let store = OrderStore::open().expect("open order store");
+        (dir, guard, store)
+    }
+
+    fn stock_diff(
+        stock: &str,
+        currency: &str,
+        qty_diff: f64,
+        current_qty: f64,
+    ) -> TargetPositionsQtyDiff {
+        TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+            strategy: "strat".to_string(),
+            primary_exchange: "NASDAQ".to_string(),
+            currency: currency.to_string(),
+            stock: stock.to_string(),
+            avg_price: 100.0,
+            qty_diff,
+            current_qty,
+        })
+    }
+
+    fn cash(currency: &str, amount: f64) -> TargetPositionsQtyDiff {
+        TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+            strategy: "strat".to_string(),
+            primary_exchange: String::new(),
+            currency: currency.to_string(),
+            stock: format!("CASH:{currency}"),
+            avg_price: 0.0,
+            qty_diff: 0.0,
+            current_qty: amount,
+        })
+    }
+
+    fn plan(diffs: &[TargetPositionsQtyDiff], store: &OrderStore) -> FxFundingPlan {
+        let price = Arc::new(FakePrice(100.0));
+        OrderEngine::get_fx_attachments(diffs, "strat", store, &Arc::downgrade(&price))
+            .expect("plan")
+    }
+
+    #[test]
+    fn no_diffs_produces_an_empty_plan() {
+        let (_dir, _guard, store) = open_store();
+        let plan = plan(&[], &store);
+        assert!(plan.order_batches.is_empty());
+        assert!(plan.root_orders.is_empty());
+        assert!(plan.parked_orders.is_empty());
+    }
+
+    #[test]
+    fn a_fully_funded_open_is_a_ready_batch() {
+        let (_dir, _guard, store) = open_store();
+        let plan = plan(
+            &[cash("USD", 2000.0), stock_diff("AAPL", "USD", 10.0, 0.0)],
+            &store,
+        );
+
+        assert_eq!(plan.order_batches.len(), 1);
+        let batch = &plan.order_batches[0];
+        assert_eq!(batch.len(), 1);
+        assert!(matches!(batch[0].order.action, Action::Buy));
+        assert_eq!(batch[0].order.total_quantity, 10.0);
+        assert_eq!(batch[0].order.order_ref, "strat:100");
+        assert!(plan.parked_orders.is_empty());
+        assert!(plan.root_orders.is_empty());
+    }
+
+    #[test]
+    fn a_zero_diff_produces_a_reconcile_only_batch() {
+        let (_dir, _guard, store) = open_store();
+        let plan = plan(&[stock_diff("AAPL", "USD", 0.0, 5.0)], &store);
+
+        assert_eq!(plan.order_batches.len(), 1);
+        assert_eq!(plan.order_batches[0].len(), 1);
+        assert_eq!(plan.order_batches[0][0].order.total_quantity, 0.0);
+        assert!(!plan.order_batches[0][0].order.transmit);
+    }
+
+    #[test]
+    fn an_unfunded_cross_currency_open_emits_a_root_and_a_parked_buy() {
+        let (_dir, _guard, store) = open_store();
+        let plan = plan(
+            &[cash("USD", 1000.0), stock_diff("SAP", "EUR", 10.0, 0.0)],
+            &store,
+        );
+
+        assert!(plan.order_batches.is_empty());
+        assert_eq!(plan.root_orders.len(), 1);
+        assert!(matches!(
+            plan.root_orders[0].contract.security_type,
+            SecurityType::ForexPair
+        ));
+        assert_eq!(plan.parked_orders.len(), 1);
+        assert_eq!(plan.parked_orders[0].order.total_quantity, 10.0);
+        assert!(matches!(plan.parked_orders[0].order.action, Action::Buy));
+    }
+
+    #[test]
+    fn an_already_parked_open_is_not_funded_again() {
+        let (_dir, _guard, store) = open_store();
+        let diff = stock_diff("AAPL", "USD", 10.0, 0.0);
+        let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(diff.clone()));
+        let mut order = market_order(Action::Buy, 10.0);
+        order.order_ref = "strat:100".to_string();
+        order.transmit = true;
+        store
+            .store_orders("strat", &[OrderIBKR::new(contract, order, -1)])
+            .unwrap();
+
+        let plan = plan(&[cash("USD", 2000.0), diff], &store);
+        assert!(plan.order_batches.is_empty());
+        assert!(plan.parked_orders.is_empty());
+    }
 }

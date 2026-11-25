@@ -651,3 +651,37 @@ impl Consolidator {
         Ok(out)
     }
 }
+
+impl<T> PriceSupplier for Arc<T>
+where
+    T: PriceSupplier,
+{
+    fn get_current_price(
+        &self,
+        contract: Contract,
+        vwap: bool,
+        generic_ticks: &[&str],
+    ) -> Result<f64, String> {
+        (**self).get_current_price(contract, vwap, generic_ticks)
+    }
+
+    fn populate_historical_data<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        contract: &'life1 Contract,
+        config: &'life2 HistoricalDataConfig,
+    ) -> ::core::pin::Pin<
+        Box<
+            dyn ::core::future::Future<Output = Result<(), String>>
+                + ::core::marker::Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        (**self).populate_historical_data(contract, config)
+    }
+}

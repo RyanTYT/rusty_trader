@@ -25,6 +25,7 @@ use crate::{
 static ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum StatusOfOrderStatus {
     ApiPending,
     PendingSubmit,
@@ -360,5 +361,34 @@ async fn on_order_update_received(
             tracing::warn!("Message from OrderEngine.order_update_stream: {message:?}");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::StatusOfOrderStatus;
+
+    #[test]
+    fn parses_every_known_status() {
+        for (input, expected) in [
+            ("ApiPending", StatusOfOrderStatus::ApiPending),
+            ("PendingSubmit", StatusOfOrderStatus::PendingSubmit),
+            ("PendingCancel", StatusOfOrderStatus::PendingCancel),
+            ("PreSubmitted", StatusOfOrderStatus::PreSubmitted),
+            ("Submitted", StatusOfOrderStatus::Submitted),
+            ("ApiCancelled", StatusOfOrderStatus::ApiCancelled),
+            ("Cancelled", StatusOfOrderStatus::Cancelled),
+            ("Filled", StatusOfOrderStatus::Filled),
+            ("Inactive", StatusOfOrderStatus::Inactive),
+            ("Unknown", StatusOfOrderStatus::Unknown),
+        ] {
+            assert_eq!(StatusOfOrderStatus::from_str(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn unknown_spelling_falls_back_to_unknown() {
+        assert_eq!(StatusOfOrderStatus::from_str("submitted"), StatusOfOrderStatus::Unknown);
+        assert_eq!(StatusOfOrderStatus::from_str("does-not-exist"), StatusOfOrderStatus::Unknown);
     }
 }

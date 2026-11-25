@@ -1,15 +1,17 @@
-use crate::database::tables::DbTables;
+use crate::{
+    database::tables::DbTables,
+    execution::traits::{order_router::OrderRouter, positions_tracker::PositionsTracker},
+    market_data::traits::contracts::ContractBroker,
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
-    time::Duration,
 };
 
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
 use async_trait::async_trait;
 use ibapi::{
-    Client,
     accounts::{PositionUpdateMulti, types::AccountId},
     contracts::{Currency, SecurityType},
     orders::{ExecutionData, ExecutionFilter, Executions, Order, OrderStatus},
@@ -96,28 +98,34 @@ impl SyncerEngine {
 
 #[async_trait]
 pub trait SyncOps {
-    fn sync_executions(
+    fn sync_executions<Broker>(
         &self,
-        client: &Arc<Client>,
+        client: &Arc<Broker>,
         execution_event_producers: Arc<
             HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
-    ) -> Result<(), String>;
-    fn sync_open_orders(
+    ) -> Result<(), String>
+    where
+        Broker: PositionsTracker + OrderRouter + Send + Sync + 'static;
+    fn sync_open_orders<Broker, MarketBroker>(
         &self,
-        client: &Client,
-        consolidator: &Arc<Consolidator>,
+        client: &Broker,
+        consolidator: &Arc<MarketBroker>,
         default_strategy: Option<String>,
-    );
-    async fn sync_positions(
+    ) where
+        Broker: PositionsTracker,
+        MarketBroker: ContractBroker;
+    async fn sync_positions<Broker, MarketBroker>(
         &self,
-        client: &Client,
-        consolidator: &Arc<Consolidator>,
+        client: &Broker,
+        consolidator: &Arc<MarketBroker>,
         default_strategy: Option<String>,
-    );
+    ) where
+        Broker: PositionsTracker + Send + Sync + 'static,
+        MarketBroker: PriceSupplier + ContractBroker + Send + Sync + 'static;
 }
 
 #[async_trait]
@@ -125,21 +133,22 @@ impl SyncOps for SyncerEngine {
     // Call before sync_positions - tries its best to sync all missed orders since last session
     // - but may miss some position updates -> Have to reconcile manually and via sync_positions
     // - luckily for this, we can simply reuse live order event handles
-    fn sync_executions(
+    fn sync_executions<Broker>(
         &self,
-        client: &Arc<Client>,
+        client: &Arc<Broker>,
         execution_event_producers: Arc<
             HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>,
         >,
         consolidator: &Weak<Consolidator>,
         default_strategy: Option<String>,
         backed_up_orders: Arc<OrderStore>,
-    ) -> Result<(), String> {
-        let subscription = client
-            .executions(ibapi::orders::ExecutionFilter {
-                ..ExecutionFilter::default()
-            })
-            .expect("Error requesting executions for sync_executions");
+    ) -> Result<(), String>
+    where
+        Broker: PositionsTracker + OrderRouter + Send + Sync + 'static,
+    {
+        let subscription = client.get_executions(ibapi::orders::ExecutionFilter {
+            ..ExecutionFilter::default()
+        });
         // Assumption: Will always receive execution 1st b4 associated commission
         let def_strat = default_strategy.unwrap_or("unknown".to_string());
         for execution in subscription.timeout_iter(std::time::Duration::from_secs(10)) {
@@ -201,18 +210,19 @@ impl SyncOps for SyncerEngine {
         Ok(())
     }
 
-    fn sync_open_orders(
+    fn sync_open_orders<Broker, MarketBroker>(
         &self,
-        client: &Client,
-        consolidator: &Arc<Consolidator>,
+        client: &Broker,
+        consolidator: &Arc<MarketBroker>,
         default_strategy: Option<String>,
-    ) {
+    ) where
+        Broker: PositionsTracker,
+        MarketBroker: ContractBroker,
+    {
         // open_orders: for syncing between OrderData && OrderStatus
         let mut open_orders: HashMap<i32, (Option<Contract>, Option<Order>, Option<OrderStatus>)> =
             HashMap::new();
-        let subscription = client
-            .all_open_orders()
-            .expect("Error requesting all_open_orders for sync_open_orders");
+        let subscription = client.get_all_open_orders();
         if let Some(e) = subscription.error() {
             tracing::warn!("Encountered Error while syncing open orders: {e:?}");
             return;
@@ -305,12 +315,15 @@ impl SyncOps for SyncerEngine {
     }
 
     /// Syncs positions with IBKR positions - Options portion currently unimplemented as it is
-    async fn sync_positions(
+    async fn sync_positions<Broker, MarketBroker>(
         &self,
-        client: &Client,
-        consolidator: &Arc<Consolidator>,
+        client: &Broker,
+        consolidator: &Arc<MarketBroker>,
         default_strategy: Option<String>,
-    ) {
+    ) where
+        Broker: PositionsTracker + Send + Sync + 'static,
+        MarketBroker: PriceSupplier + ContractBroker + Send + Sync + 'static,
+    {
         let mut db = crate::database::db::DbDirect::connect(&self.pool);
         let mut stock_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
         let mut option_map: HashMap<HashContract, (f64, f64)> = HashMap::new();
@@ -435,6 +448,7 @@ impl SyncOps for SyncerEngine {
             &fx_map,
             &mut errors,
             &default_strategy.clone().unwrap_or("unknown".to_string()),
+            &self.pool,
         )
         .await;
 
@@ -460,22 +474,24 @@ impl SyncOps for SyncerEngine {
 // ===================================== SYNC POSITIONS HELPERS ============================================
 /// fx_map: Local FX positions
 /// broker_currency: Broker "fx_map"
-async fn sync_fx_positions(
-    consolidator: &Consolidator,
-    client: &Client,
+async fn sync_fx_positions<MarketBroker, PositionsBroker>(
+    consolidator: &MarketBroker,
+    client: &PositionsBroker,
     account: String,
     fx_map: &HashMap<String, f64>,
     errors: &mut Vec<String>,
     default_strategy: &str,
-) {
-    let mut db = crate::database::db::DbDirect::connect(&consolidator.pool);
+    pool: &PgPool,
+) where
+    MarketBroker: PriceSupplier,
+    PositionsBroker: PositionsTracker,
+{
+    let mut db = crate::database::db::DbDirect::connect(&pool);
     let mut current_stock_positions_crud = db.current_positions(&AssetType::Stock);
     // =====================================
     // Compare FX broker positions
     // =====================================
-    let fx_subscription = client
-        .account_updates(&AccountId(account))
-        .expect("Error requesting account updates for client.account_updates");
+    let fx_subscription = client.get_account_updates(&AccountId(account));
     let mut broker_currency = HashMap::<String, f64>::new();
     while let Some(account_update) =
         fx_subscription.next_timeout(std::time::Duration::from_secs(10))
@@ -583,22 +599,24 @@ async fn sync_fx_positions(
 
 /// stock_map: Contract -> (current quantity, average price)
 /// option_map: Contract -> (current quantity, average price)
-async fn sync_stock_and_option_positions(
+async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
     account: String,
-    client: &Client,
-    consolidator: &Consolidator,
+    client: &PositionsBroker,
+    consolidator: &MarketBroker,
     stock_map: &HashMap<HashContract, (f64, f64)>,
     option_map: &HashMap<HashContract, (f64, f64)>,
     contract_to_strategy: &HashMap<HashContract, String>,
     default_strategy: &str,
     pool: PgPool,
     errors: &mut Vec<String>,
-) {
+) where
+    PositionsBroker: PositionsTracker,
+    MarketBroker: ContractBroker,
+{
     let mut broker_stock_positions_received = HashMap::<HashContract, (f64, f64)>::new();
     let mut broker_option_positions_received = HashMap::<HashContract, (f64, f64)>::new();
-    let subscription = client
-        .positions_multi(Some(&ibapi::accounts::types::AccountId(account)), None)
-        .expect("Error requesting positions for sync_positions");
+    let subscription =
+        client.get_positions_multi(Some(&ibapi::accounts::types::AccountId(account)), None);
     if let Some(e) = subscription.error() {
         tracing::warn!("Encountered Error while syncing positions: {e:?}");
         errors.push(format!("Encountered Error while syncing positions: {e:?}"));
@@ -611,8 +629,8 @@ async fn sync_stock_and_option_positions(
         match position_response {
             PositionUpdateMulti::Position(position) => {
                 let contract = {
-                    let validated_contract = consolidator
-                        .validate_contract(position.contract.clone(), Duration::from_secs(10));
+                    let validated_contract =
+                        consolidator.get_validated_contract(position.contract.clone());
                     validated_contract.unwrap_or(position.contract)
                 };
                 let asset_type = AssetType::from_str(&contract.security_type);
@@ -655,7 +673,7 @@ async fn sync_stock_and_option_positions(
         local_position: (f64, f64),
         broker_position: (f64, f64),
         strategy: &str,
-        _consolidator: &Consolidator,
+        // _consolidator: &Consolidator,
     ) {
         let discrepancy = broker_position.0 - local_position.0;
         if discrepancy == 0.0 {
@@ -744,7 +762,6 @@ async fn sync_stock_and_option_positions(
             *local_position,
             broker_position,
             &strategy,
-            &consolidator,
         )
     }
     // ====================
@@ -766,22 +783,23 @@ async fn sync_stock_and_option_positions(
             *local_position,
             broker_position,
             &strategy,
-            &consolidator,
         )
     }
 }
 // ===================================== SYNC POSITIONS HELPERS ============================================
 
 // ONLY called in conjunction with sync_open_orders
-fn on_full_open_order_received(
+fn on_full_open_order_received<MarketBroker>(
     contract_to_strategy: &HashMap<HashContract, String>,
     pool: PgPool,
-    consolidator: &Consolidator,
+    consolidator: &MarketBroker,
     unvalidated_contract: &Contract,
     borrowed_order: &Order,
     order_status: &OrderStatus,
     default_strategy: &Option<String>,
-) {
+) where
+    MarketBroker: ContractBroker,
+{
     // 1. Get Associated Strategy if possible, else default strategy
     let strategy = {
         if borrowed_order.order_ref == "" {
@@ -800,7 +818,7 @@ fn on_full_open_order_received(
     //    call - but low on priority list since this is performed before mkt open - non-critical
     //    path
     let contract = consolidator
-        .validate_contract(unvalidated_contract.clone(), Duration::from_secs(10))
+        .get_validated_contract(unvalidated_contract.clone())
         .unwrap_or(unvalidated_contract.clone());
 
     // 3. Begin a detached thread to update the DB accordingly

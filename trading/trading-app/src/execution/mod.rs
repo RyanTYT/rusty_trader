@@ -5,3 +5,4 @@ pub mod order_engine;
 pub mod order_update_stream;
 #[cfg(not(feature = "backtest"))]
 pub mod syncer;
+pub mod traits;

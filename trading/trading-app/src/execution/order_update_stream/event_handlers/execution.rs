@@ -1,13 +1,16 @@
-use crate::database::tables::DbTables;
+use crate::{
+    database::tables::DbTables,
+    execution::traits::order_router::OrderRouter,
+    market_data::traits::{contracts::ContractBroker, current_price::PriceSupplier},
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
-    time::Duration,
 };
 
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-use ibapi::{Client, orders::ExecutionData};
+use ibapi::orders::ExecutionData;
 use spmc_ring::ring_buffer::spmc_ring_buffer::SpmcRingBufferProducer;
 use sqlx::PgPool;
 
@@ -32,7 +35,6 @@ use crate::{
         fx_backed_up_order::OrderStore,
         order_engine::{OrderEngine, OrderIBKR},
     },
-    market_data::consolidator::Consolidator,
     strategy::strategy::StrategyDetails,
 };
 
@@ -43,22 +45,26 @@ use crate::{
 /// this is correct)
 /// - also means that matching of arms is purely for database filtering (NOTE) -> depends on
 /// correctness of on_new_order_submitted
-pub fn on_execution_update(
-    consolidator: &Weak<Consolidator>,
+pub fn on_execution_update<MarketBroker, OrderBroker>(
+    consolidator: &Weak<MarketBroker>,
     pool: PgPool,
     mut execution_data: ExecutionData,
     execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>>,
     strategy_details: &Arc<HashMap<String, StrategyDetails>>,
     default_strategy: &str,
     handle: tokio::runtime::Handle,
-    weak_client: &Weak<Client>,
+    weak_client: &Weak<OrderBroker>,
     backed_up_orders: Arc<OrderStore>,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    MarketBroker: PriceSupplier + ContractBroker,
+    OrderBroker: OrderRouter + Send + Sync + 'static,
+{
     let contract = {
         consolidator
             .upgrade()
             .ok_or("Consolidator died when received submitted order update")?
-            .validate_contract(execution_data.contract.clone(), Duration::from_secs(10))
+            .get_validated_contract(execution_data.contract.clone())
             .ok_or("No valid contract for contract for order update")?
     };
     execution_data.contract = contract;
@@ -183,15 +189,17 @@ pub fn on_execution_update(
                 forward_execution_hook(&execution_events_queue, &strategy_name, &execution_data);
             }
 
-            spawn_place_backed_up_orders(
-                cloned_handle,
-                pool,
-                weak_client,
-                asset_type,
-                placement_pk,
-                backed_up_orders,
-                strategy_name,
-            );
+            tokio::spawn(async move {
+                place_backed_up_orders(
+                    cloned_handle,
+                    pool,
+                    &weak_client,
+                    asset_type,
+                    placement_pk,
+                    backed_up_orders,
+                    strategy_name.as_str(),
+                ).await;
+            });
             return;
         }
 
@@ -347,15 +355,17 @@ pub fn on_execution_update(
             forward_execution_hook(&execution_events_queue, &strategy_name, &execution_data);
         }
 
-        spawn_place_backed_up_orders(
-            cloned_handle,
-            pool,
-            weak_client,
-            asset_type,
-            placement_pk,
-            backed_up_orders,
-            strategy_name,
-        );
+        tokio::spawn(async move {
+            place_backed_up_orders(
+                cloned_handle,
+                pool,
+                &weak_client,
+                asset_type,
+                placement_pk,
+                backed_up_orders,
+                strategy_name.as_str(),
+            ).await;
+        });
     });
     Ok(())
 }
@@ -382,39 +392,17 @@ async fn update_position(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_place_backed_up_orders(
+async fn place_backed_up_orders<OrderBroker>(
     handle: tokio::runtime::Handle,
     pool: PgPool,
-    weak_client: Weak<Client>,
-    asset_type: AssetType,
-    pk: CurrentPositionsPrimaryKeys,
-    backed_up_orders: Arc<OrderStore>,
-    strategy_name: String,
-) {
-    tokio::spawn(async move {
-        place_backed_up_orders(
-            handle,
-            pool,
-            &weak_client,
-            asset_type,
-            pk,
-            backed_up_orders,
-            &strategy_name,
-        )
-        .await;
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn place_backed_up_orders(
-    handle: tokio::runtime::Handle,
-    pool: PgPool,
-    weak_client: &Weak<Client>,
+    weak_client: &Weak<OrderBroker>,
     asset_type: AssetType,
     pk: CurrentPositionsPrimaryKeys,
     backed_up_orders: Arc<OrderStore>,
     strategy_name: &str,
-) {
+) where
+    OrderBroker: OrderRouter,
+{
     let mut db = crate::database::db::DbDirect::connect(&pool);
     let mut current_positions_crud = db.current_positions(&asset_type);
     let current_positions_currency: Option<

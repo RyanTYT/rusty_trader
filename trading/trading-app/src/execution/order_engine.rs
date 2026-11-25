@@ -17,9 +17,10 @@
 // just maybe different order types but that is fine - should be minimal impact)
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-use crate::database::tables::DbTables;
+#[cfg(not(feature = "backtest"))]
+use crate::execution::traits::order_router::OrderRouter;
+use crate::{database::tables::DbTables, market_data::traits::current_price::PriceSupplier};
 use ibapi::{
-    Client,
     orders::{Action, Order, order_builder::market_order},
     prelude::Contract,
 };
@@ -42,7 +43,6 @@ use crate::{
     },
     execution::{fx_backed_up_order::OrderStore, fx_organiser::FxFundingPlan},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
-    market_data::consolidator::Consolidator,
     strategy::strategy::{BarUpdateOutcome, StrategyDetails, StrategyEnum},
 };
 
@@ -115,48 +115,46 @@ impl OrderEngine {
 
     /// Note: it is on onus of client to pass with the correct .transmit field
     #[cfg(not(feature = "backtest"))]
-    pub fn place_order(
+    pub fn place_order<T>(
         handle: tokio::runtime::Handle,
         pool: PgPool,
-        weak_client: &Weak<Client>,
+        weak_client: &Weak<T>,
         order_ibkr: OrderIBKR,
-    ) -> i32 {
-        let client_opt = weak_client.upgrade();
-        if client_opt.is_none() {
-            tracing::error!("Client is dead when trying to place order");
-        }
-        let client = client_opt.unwrap();
-        let order_id = client.next_order_id();
+    ) -> i32
+    where
+        T: OrderRouter,
+    {
+        let client = {
+            let client_opt = weak_client.upgrade();
+            if client_opt.is_none() {
+                tracing::error!("Client is dead when trying to place order");
+                panic!("Client died when trying to place order");
+            }
+            client_opt.unwrap()
+        };
         let strategy_name = order_ibkr.order.order_ref.clone();
         #[allow(unused_variables)]
         let total_label = StrategyEnum::metric_label(&strategy_name, "order_submit_total");
         #[allow(unused_variables)]
         let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
         hotpath::measure_block!(total_label, {
+            let order_id =
+                hotpath::measure_block!(wire_label, client.place_local_order(&order_ibkr));
             tracing::info!(
                 "Order submitted to IBKR: {:?} for {:?}",
                 order_ibkr.order.action,
                 order_ibkr.contract.symbol
             );
-            let submit_result = hotpath::measure_block!(wire_label, {
-                client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
-            });
-            if let Err(e) = submit_result {
-                tracing::error!(
-                    message=%format!(
-                        "Failed to place order for {}, order: {}, Error: {}",
-                        order_ibkr.contract.symbol,
-                        order_ibkr.order.action,
-                        e
-                    )
-                );
+            if order_id == -1 {
                 return -1;
             }
+
             let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
             let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
             let uk =
                 OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
-            handle.spawn(hotpath::future!(
+            handle.spawn(
+                hotpath::future!(
                     async move {
                         let mut db = crate::database::db::DbDirect::connect(&pool);
                         let mut open_orders_crud = db.open_orders(&asset_type);
@@ -165,10 +163,11 @@ impl OrderEngine {
                         };
                     },
                     label = "order_submit_db_write"
-                ));
-        });
+                )
+            );
 
-        order_id
+            order_id
+        })
     }
 
     #[cfg(feature = "backtest")]
@@ -190,34 +189,36 @@ impl OrderEngine {
     /// - a rejected submission returns `Err` and writes **no** open-order row,
     ///   so the books never show an order the broker refused.
     #[cfg(not(feature = "backtest"))]
-    pub fn place_order_checked(
+    pub fn place_order_checked<T>(
         handle: tokio::runtime::Handle,
         pool: PgPool,
-        weak_client: &Weak<Client>,
+        weak_client: &Weak<T>,
         order_ibkr: OrderIBKR,
-    ) -> Result<i32, String> {
-        let client = weak_client
-            .upgrade()
-            .ok_or_else(|| "client is dead when trying to place order".to_string())?;
-        let order_id = client.next_order_id();
+    ) -> Result<i32, String>
+    where
+        T: OrderRouter,
+    {
+        let client = {
+            let client_opt = weak_client.upgrade();
+            if client_opt.is_none() {
+                tracing::error!("Client is dead when trying to place order");
+                panic!("Client died when trying to place order");
+            }
+            client_opt.unwrap()
+        };
+
         let strategy_name = order_ibkr.order.order_ref.clone();
         #[allow(unused_variables)]
         let wire_label = StrategyEnum::metric_label(&strategy_name, "order_submit_ibkr_wire");
-
+        let order_id = hotpath::measure_block!(wire_label, client.place_local_order(&order_ibkr));
+        if order_id == -1 {
+            return Err("Could not place order in IBKR".to_string());
+        }
         tracing::info!(
             "Order submitted to IBKR: {:?} for {:?}",
             order_ibkr.order.action,
             order_ibkr.contract.symbol
         );
-        hotpath::measure_block!(wire_label, {
-            client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order)
-        })
-        .map_err(|e| {
-            format!(
-                "submit_order failed for {} {:?}: {e}",
-                order_ibkr.contract.symbol, order_ibkr.order.action
-            )
-        })?;
 
         let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
         let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);
@@ -239,15 +240,17 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_orders(
+    pub fn place_orders<T>(
         handle: tokio::runtime::Handle,
         pool: PgPool,
 
-        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<T>,
         #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         orders: impl IntoIterator<Item = OrderIBKR>,
-    ) {
+    ) where
+        T: OrderRouter,
+    {
         let orders_iter = orders.into_iter();
         let (lower_bound, _) = orders_iter.size_hint();
         let mut order_ids = vec![-1; lower_bound];
@@ -272,19 +275,132 @@ impl OrderEngine {
         }
     }
 
-    pub fn handle_bar_update_outcome(
+    fn cancel_orders<T>(
+        &self,
+        asset_type: &AssetType,
+
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<T>,
+        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
+
+        local_open_orders: Vec<LocalOpenOrder>,
+        order_store: &OrderStore,
+    ) where
+        T: OrderRouter + Send + Sync + 'static,
+    {
+        if local_open_orders.is_empty() {
+            return;
+        }
+
+        let mut to_delete_from_order_store = HashMap::new();
+        local_open_orders.into_iter().for_each(|open_order| {
+            let (order_perm_id, order_id, strategy) = match &open_order.order {
+                OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
+                    order_perm_id,
+                    order_id,
+                    strategy,
+                    ..
+                }) => (order_perm_id, order_id, strategy.clone()),
+                OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
+                    order_perm_id,
+                    order_id,
+                    strategy,
+                    ..
+                }) => (order_perm_id, order_id, strategy.clone()),
+            };
+            // in the case that we are cancelling OrderStore items
+            let strategy = strategy.split(":").next().unwrap().to_string();
+
+            #[cfg(not(feature = "backtest"))]
+            if *order_perm_id != -1 {
+                // Cancel on IBKR side
+                let cloned_weak_client = weak_client.clone();
+                let owned_order_id = *order_id;
+                std::thread::spawn(move || {
+                    hotpath::measure_block!("cancel_order_on_ibkr", {
+                        let client_opt = cloned_weak_client.upgrade();
+                        if client_opt.is_none() {
+                            tracing::warn!("client died while cancelling order!");
+                            return;
+                        }
+                        let client = client_opt.unwrap();
+                        client.cancel_local_order(owned_order_id);
+                    });
+                });
+            }
+            #[cfg(feature = "backtest")]
+            // Parked/deferred orders in backtest mode cancel regardless (perm_id means nth thr)
+            if let Err(e) = submitter.cancel_order(*order_id) {
+                tracing::error!("Failed to cancel order ({:?}): {e:?}", *order_id)
+            }
+
+            if open_order.is_from_db {
+                // Cancel on Local Side (i.e. DB)
+                let open_order_pk =
+                    OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
+                let spawn_pool = self.pool.clone();
+                let spawn_asset_type = asset_type.clone();
+                self.tokio_handle.spawn(hotpath::future!(
+                    async move {
+                        let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
+                        let mut open_orders_crud = db.open_orders(&spawn_asset_type);
+                        if let Err(e) = open_orders_crud.delete(&open_order_pk).await {
+                            tracing::error!("Error trying to delete OpenOptionOrder entry: {e:?}")
+                        };
+                    },
+                    label = "delete_open_order"
+                ));
+            } else {
+                to_delete_from_order_store
+                    .entry(strategy)
+                    .and_modify(|v: &mut Vec<LocalOpenOrder>| v.push(open_order.clone()))
+                    .or_insert(vec![open_order]);
+            }
+        });
+
+        for (strategy_name, local_open_orders) in to_delete_from_order_store.iter() {
+            let orders_to_remove: Vec<OrderIBKR> = local_open_orders
+                .into_iter()
+                .map(|open_order| OrderIBKR {
+                    contract: get_contract_from(&LocalContractTypes::OpenOrders(
+                        open_order.order.clone(),
+                    )),
+                    order: {
+                        let qty = open_order.order.get_qty();
+                        let mut order = market_order(
+                            if qty < 0.0 { Action::Sell } else { Action::Buy },
+                            qty.abs(),
+                        );
+                        order.transmit = true;
+                        order.order_ref = strategy_name.to_string();
+                        order
+                    },
+                    references_parent_order: -1,
+                })
+                .collect();
+            if let Err(e) = order_store.remove_orders(&strategy_name, &orders_to_remove) {
+                tracing::error!(
+                    "Failed to remove cancelled orders from redb backed_up_orders for Strategy ({strategy_name}): {e:?}"
+                );
+            }
+        }
+    }
+
+    pub fn handle_bar_update_outcome<OrderBroker, MarketBroker>(
         &self,
 
-        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<OrderBroker>,
         #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
-        #[cfg(not(feature = "backtest"))] consolidator: &Weak<Consolidator>,
+        #[cfg(not(feature = "backtest"))] consolidator: &Weak<MarketBroker>,
         #[cfg(feature = "backtest")]
         price_supplier: &dyn crate::market_data::traits::current_price::PriceSupplier,
 
         bar_update_outcome: BarUpdateOutcome,
         strategy_detail: &StrategyDetails,
         order_store: &OrderStore,
-    ) {
+    ) where
+        OrderBroker: OrderRouter + Send + Sync + 'static,
+        MarketBroker: PriceSupplier,
+    {
         let strategy_name_orig = strategy_detail.name.clone();
         match bar_update_outcome {
             BarUpdateOutcome::EmitOrders {
@@ -345,6 +461,7 @@ impl OrderEngine {
                     orders_ibkr,
                 );
             }
+
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
                 for asset_type in asset_types.iter() {
                     let mut db = crate::database::db::DbDirect::connect(&self.pool);
@@ -429,6 +546,7 @@ impl OrderEngine {
                     //             .join(",\n")
                     //     )
                     // );
+
                     // Plan funding once per bar; every batch below is [head] or
                     // [closing head, fx legs..] and is reconciled against working orders.
                     let fx_plan = hotpath::measure_block!(
@@ -512,129 +630,22 @@ impl OrderEngine {
         }
     }
 
-    fn cancel_orders(
-        &self,
-        asset_type: &AssetType,
-
-        #[cfg(not(feature = "backtest"))] weak_client: &Weak<Client>,
-        #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
-
-        local_open_orders: Vec<LocalOpenOrder>,
-        order_store: &OrderStore,
-    ) {
-        if local_open_orders.is_empty() {
-            return;
-        }
-
-        let mut to_delete_from_order_store = HashMap::new();
-        local_open_orders.into_iter().for_each(|open_order| {
-            let (order_perm_id, order_id, strategy) = match &open_order.order {
-                OpenOrdersFullKeys::Stock(OpenStockOrdersFullKeys {
-                    order_perm_id,
-                    order_id,
-                    strategy,
-                    ..
-                }) => (order_perm_id, order_id, strategy.clone()),
-                OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
-                    order_perm_id,
-                    order_id,
-                    strategy,
-                    ..
-                }) => (order_perm_id, order_id, strategy.clone()),
-            };
-            // in the case that we are cancelling OrderStore items
-            let strategy = strategy.split(":").next().unwrap().to_string();
-
-            #[cfg(not(feature = "backtest"))]
-            if *order_perm_id != -1 {
-                // Cancel on IBKR side
-                let cloned_weak_client = weak_client.clone();
-                let owned_order_id = *order_id;
-                std::thread::spawn(move || {
-                    hotpath::measure_block!("cancel_order_on_ibkr", {
-                        let client_opt = cloned_weak_client.upgrade();
-                        if client_opt.is_none() {
-                            tracing::warn!("client died while cancelling order!");
-                            return;
-                        }
-                        let client = client_opt.unwrap();
-                        if let Err(e) = client.cancel_order(owned_order_id, "") {
-                            tracing::warn!("Could not cancel order: {e:?}");
-                        };
-                    });
-                });
-            }
-            #[cfg(feature = "backtest")]
-            // Parked/deferred orders in backtest mode cancel regardless (perm_id means nth thr)
-            if let Err(e) = submitter.cancel_order(*order_id) {
-                tracing::error!("Failed to cancel order ({:?}): {e:?}", *order_id)
-            }
-
-            if open_order.is_from_db {
-                // Cancel on Local Side (i.e. DB)
-                let open_order_pk =
-                    OpenOrdersPrimaryKeys::new(&asset_type, *order_perm_id, *order_id);
-                let spawn_pool = self.pool.clone();
-                let spawn_asset_type = asset_type.clone();
-                self.tokio_handle.spawn(hotpath::future!(
-                    async move {
-                        let mut db = crate::database::db::DbDirect::connect(&spawn_pool);
-                        let mut open_orders_crud = db.open_orders(&spawn_asset_type);
-                        if let Err(e) = open_orders_crud.delete(&open_order_pk).await {
-                            tracing::error!("Error trying to delete OpenOptionOrder entry: {e:?}")
-                        };
-                    },
-                    label = "delete_open_order"
-                ));
-            } else {
-                to_delete_from_order_store
-                    .entry(strategy)
-                    .and_modify(|v: &mut Vec<LocalOpenOrder>| v.push(open_order.clone()))
-                    .or_insert(vec![open_order]);
-            }
-        });
-
-        for (strategy_name, local_open_orders) in to_delete_from_order_store.iter() {
-            let orders_to_remove: Vec<OrderIBKR> = local_open_orders
-                .into_iter()
-                .map(|open_order| OrderIBKR {
-                    contract: get_contract_from(&LocalContractTypes::OpenOrders(
-                        open_order.order.clone(),
-                    )),
-                    order: {
-                        let qty = open_order.order.get_qty();
-                        let mut order = market_order(
-                            if qty < 0.0 { Action::Sell } else { Action::Buy },
-                            qty.abs(),
-                        );
-                        order.transmit = true;
-                        order.order_ref = strategy_name.to_string();
-                        order
-                    },
-                    references_parent_order: -1,
-                })
-                .collect();
-            if let Err(e) = order_store.remove_orders(&strategy_name, &orders_to_remove) {
-                tracing::error!(
-                    "Failed to remove cancelled orders from redb backed_up_orders for Strategy ({strategy_name}): {e:?}"
-                );
-            }
-        }
-    }
-
     /// Provides the logic to handle open order
     /// - i.e. cancelling and placing orders efficiently
     /// - 1st order MUST be correct strategy (i.e. order_ref == strategy)
-    fn on_new_qty_diff_for_strat(
+    fn on_new_qty_diff_for_strat<OrderBroker>(
         &self,
         pool: PgPool,
 
-        #[cfg(not(feature = "backtest"))] weak_client: Weak<Client>,
+        #[cfg(not(feature = "backtest"))] weak_client: Weak<OrderBroker>,
         #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         mut orders: VecDeque<OrderIBKR>,
         order_store: &OrderStore,
-    ) -> Result<(), String> {
+    ) -> Result<(), String>
+    where
+        OrderBroker: OrderRouter + Send + Sync + 'static,
+    {
         let order_ibkr_opt = orders.pop_front();
         if order_ibkr_opt.is_none() {
             return Err("Expected orders not to be empty!".to_string());
@@ -832,4 +843,32 @@ fn requires_reconciliation(
 
         if diff == 0.0 { false } else { true }
     })
+}
+
+#[cfg(test)]
+mod order_ibkr_equality_tests {
+    use super::OrderIBKR;
+    use ibapi::orders::Action;
+    use ibapi::orders::order_builder::market_order;
+    use ibapi::prelude::Contract;
+
+    fn order(symbol: &str, qty: f64, order_ref: &str) -> OrderIBKR {
+        let mut order = market_order(Action::Buy, qty);
+        order.order_ref = order_ref.to_string();
+        OrderIBKR::new(Contract::stock(symbol).build(), order, -1)
+    }
+
+    #[test]
+    fn ignores_the_price_suffix_in_order_ref() {
+        assert_eq!(
+            order("AAPL", 10.0, "strat:123.5"),
+            order("AAPL", 10.0, "strat")
+        );
+    }
+
+    #[test]
+    fn different_contract_or_quantity_is_not_equal() {
+        assert_ne!(order("AAPL", 10.0, "strat"), order("MSFT", 10.0, "strat"));
+        assert_ne!(order("AAPL", 10.0, "strat"), order("AAPL", 20.0, "strat"));
+    }
 }
