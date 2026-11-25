@@ -220,10 +220,10 @@ impl CurrentPositionsUpdateKeys {
             AssetType::Option => Self::Options(CurrentOptionPositionsUpdateKeys {
                 quantity: Some(
                     execution_data.execution.shares
-                        * if execution_data.execution.side == "SLD" {
-                            -1.0
-                        } else {
+                        * if execution_data.execution.side == "BOT" {
                             1.0
+                        } else {
+                            -1.0
                         },
                 ),
                 avg_price: Some(execution_data.execution.price),
@@ -233,10 +233,10 @@ impl CurrentPositionsUpdateKeys {
                 Self::Stock(CurrentStockPositionsUpdateKeys {
                     quantity: Some(
                         execution_data.execution.shares
-                            * if execution_data.execution.side == "SLD" {
-                                -1.0
-                            } else {
+                            * if execution_data.execution.side == "BOT" {
                                 1.0
+                            } else {
+                                -1.0
                             },
                     ),
                     avg_price: Some(execution_data.execution.price),
@@ -258,10 +258,10 @@ impl CurrentPositionsUpdateKeys {
             quantity: Some(
                 execution_data.execution.price
                     * execution_data.execution.shares
-                    * if execution_data.execution.side == "SLD" {
-                        1.0
-                    } else {
+                    * if execution_data.execution.side == "BOT" {
                         -1.0
+                    } else {
+                        1.0
                     },
             ),
             avg_price: Some(0.0),
