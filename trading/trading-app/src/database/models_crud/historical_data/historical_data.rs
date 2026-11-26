@@ -847,7 +847,7 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                         WHERE stock = $1
                           AND primary_exchange = $2
                           AND currency = $3
-                          AND time >= ({now_sql}) AT TIME ZONE '{}'::date
+                          AND time >= (({now_sql}) AT TIME ZONE '{}')::date
                         GROUP BY stock;
                         "#,
                     vwap_bar_value.as_str(),
@@ -975,7 +975,7 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                     FROM (
                         SELECT 1
                         FROM market_data.historical_data
-                        WHERE stock = $2 AND primary_exchange = $3 AND currency = $4 AND time > $5
+                        WHERE stock = $2 AND primary_exchange = $3 AND currency = $4 AND time >= $5
                         LIMIT $1
                     ) sub;
                     "#,
@@ -1010,7 +1010,7 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                             AND strike = $6
                             AND multiplier = $7
                             AND option_type = $8
-                            AND time > $9
+                            AND time >= $9
                         LIMIT $1
                     ) sub;
                     "#,
@@ -1039,7 +1039,7 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
                         WHERE pair = $2
                             AND bid_open IS NOT NULL
                             AND ask_open IS NOT NULL
-                            AND time > $3
+                            AND time >= $3
                         LIMIT $1
                     ) sub;
                     "#,
