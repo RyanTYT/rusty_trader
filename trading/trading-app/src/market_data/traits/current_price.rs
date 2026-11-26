@@ -291,6 +291,17 @@ impl Consolidator {
         let primary = contract.primary_exchange.as_str();
         let currency = contract.currency.as_str();
 
+        // An option's Yahoo ticker is an OCC symbol, not the underlying's ticker.
+        // Never fall back to the stock quote for an option.
+        if contract.security_type == SecurityType::Option {
+            tracing::warn!(
+                "Cannot derive a Yahoo Finance ticker for option {}: \
+                 options must be priced from their own contract.",
+                symbol
+            );
+            return None;
+        }
+
         // US exchanges: IBKR routes through SMART or names the actual venue.
         // Yahoo expects no suffix for US-listed stocks.
         const US_EXCHANGES: &[&str] = &[
@@ -397,16 +408,22 @@ impl Consolidator {
         // IBKR error 354: "Requested market data is not subscribed"
         // IBKR error 10090: "Part of requested market data is not subscribed"
         // IBKR error 200: "No security definition has been found"
-        let access_denied_patterns = [
+        let lower = err.to_lowercase();
+        let text_patterns = [
             "not subscribed",
             "market data farm",
-            "No security definition",
-            "354",
-            "10090",
+            "no security definition",
         ];
-        access_denied_patterns
-            .iter()
-            .any(|pat| err.to_lowercase().contains(&pat.to_lowercase()))
+        if text_patterns.iter().any(|pattern| lower.contains(pattern)) {
+            return true;
+        }
+
+        // Match whole numeric tokens, not substrings: "3540" and "100901" must
+        // not be mistaken for 354 / 10090.
+        err.split(|c: char| !c.is_ascii_digit())
+            .filter(|token| !token.is_empty())
+            .filter_map(|token| token.parse::<u32>().ok())
+            .any(|code| matches!(code, 200 | 354 | 10090))
     }
 
     /// Helper function to extract the price of contract from the ticker received
