@@ -461,11 +461,14 @@ impl OrderEngine {
             }
 
             BarUpdateOutcome::PendingDbQuery(asset_types) => {
-                for asset_type in asset_types.iter() {
+                // One funding pass across asset classes: the CASH: rows live in
+                // the stock table, so read both sets here and share the budget.
+                // Stock is read even when only options are requested.
+                let read_diffs = |asset_type: AssetType| -> Option<Vec<TargetPositionsQtyDiff>> {
                     let mut db = crate::database::db::DbDirect::connect(&self.pool);
                     let mut target_positions_crud = db.target_positions(&asset_type);
                     let strategy_name = strategy_name_orig.clone();
-                    let target_pos_diffs = match hotpath::measure_block!(
+                    match hotpath::measure_block!(
                         StrategyEnum::metric_label(
                             &strategy_name_orig,
                             "get_target_pos_diff_by_strat"
@@ -478,73 +481,98 @@ impl OrderEngine {
                             })
                         }
                     ) {
-                        Ok(v) => v,
+                        Ok(v) => Some(v),
                         Err(e) => {
-                            tracing::error!("target_qty_diff error: {}", e);
-                            continue;
-                        }
-                    };
-                    // Check if all orders alr open
-                    let mut open_orders_crud = db.open_orders(&asset_type);
-                    let strategy_name = strategy_name_orig.clone();
-                    let mut open_orders = match self.tokio_handle.block_on(async move {
-                        #[cfg(feature = "backtest")]
-                        let res = open_orders_crud
-                            .get_orders_for_strat(&strategy_name, BacktestMode::Db)
-                            .await;
-                        #[cfg(not(feature = "backtest"))]
-                        let res = open_orders_crud.get_orders_for_strat(&strategy_name).await;
-                        res
-                    }) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::error!("open orders crud error: {e:?}");
-                            continue;
+                            tracing::error!("target_qty_diff error ({asset_type:?}): {e}");
+                            None
                         }
                     }
-                    .into_iter()
-                    .map(|open_order| LocalOpenOrder {
-                        order: open_order,
-                        is_from_db: true,
-                    })
-                    .collect::<Vec<LocalOpenOrder>>();
-                    match order_store.load_orders(&strategy_name_orig) {
-                        Ok(v) => v.unwrap_or(vec![]),
-                        Err(e) => {
-                            tracing::error!("Failed to load_orders - panicked!: {e:?}");
-                            continue;
-                        }
-                    }
-                    .into_iter()
-                    .for_each(|order| {
-                        open_orders.push(LocalOpenOrder {
-                            order: OpenOrdersFullKeys::from_contract_and_order(
-                                &order.contract,
-                                &order.order,
-                                0.0,
-                            ),
-                            is_from_db: false,
-                        })
-                    });
-                    if !requires_reconciliation(&target_pos_diffs, open_orders, strategy_detail) {
-                        continue;
-                    }
-                    // tracing::info!(
-                    //     message = %format!("Detected pos_diffs: \n{}",
-                    //         &target_pos_diffs
-                    //             .iter()
-                    //             .map(|pos_diff| format!(
-                    //                 "    {}, {}, {} ({})",
-                    //                 pos_diff.strategy,
-                    //                 pos_diff.stock,
-                    //                 pos_diff.primary_exchange,
-                    //                 pos_diff.qty_diff
-                    //             ))
-                    //             .collect::<Vec<String>>()
-                    //             .join(",\n")
-                    //     )
-                    // );
+                };
 
+                let open_orders_for =
+                    |asset_type: AssetType| -> Result<Vec<LocalOpenOrder>, String> {
+                        let mut db = crate::database::db::DbDirect::connect(&self.pool);
+                        let mut open_orders_crud = db.open_orders(&asset_type);
+                        let strategy_name = strategy_name_orig.clone();
+                        let orders = self
+                            .tokio_handle
+                            .block_on(async move {
+                                let res = open_orders_crud
+                                    .get_orders_for_strat(
+                                        &strategy_name,
+                                        #[cfg(feature = "backtest")]
+                                        BacktestMode::Db,
+                                    )
+                                    .await;
+                                res
+                            })
+                            .map_err(|e| format!("{e:?}"))?;
+                        let mut open_orders: Vec<LocalOpenOrder> = orders
+                            .into_iter()
+                            .map(|open_order| LocalOpenOrder {
+                                order: open_order,
+                                is_from_db: true,
+                            })
+                            .collect();
+                        let parked = order_store
+                            .load_orders(&strategy_name_orig)
+                            .map_err(|e| format!("{e:?}"))?
+                            .unwrap_or_default();
+                        for order in parked {
+                            open_orders.push(LocalOpenOrder {
+                                order: OpenOrdersFullKeys::from_contract_and_order(
+                                    &order.contract,
+                                    &order.order,
+                                    0.0,
+                                ),
+                                is_from_db: false,
+                            });
+                        }
+                        Ok(open_orders)
+                    };
+
+                let wants_stock = asset_types.iter().any(|a| matches!(a, &AssetType::Stock));
+                let wants_option = asset_types.iter().any(|a| matches!(a, &AssetType::Option));
+                let stock_diffs = read_diffs(AssetType::Stock).unwrap_or_default();
+                let option_diffs = if wants_option {
+                    read_diffs(AssetType::Option).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                // CASH rows are funding capacity, never orders: always include
+                // them so option openings can draw the same cash as stocks.
+                let mut combined: Vec<TargetPositionsQtyDiff> = stock_diffs
+                    .iter()
+                    .filter(|d| is_cash_diff(d))
+                    .cloned()
+                    .collect();
+                if wants_stock {
+                    match open_orders_for(AssetType::Stock) {
+                        Ok(open_orders) => {
+                            if requires_reconciliation(&stock_diffs, open_orders, strategy_detail) {
+                                combined.extend(
+                                    stock_diffs.iter().filter(|d| !is_cash_diff(d)).cloned(),
+                                );
+                            }
+                        }
+                        Err(e) => tracing::error!("open orders crud error (Stock): {e}"),
+                    }
+                }
+                if wants_option {
+                    match open_orders_for(AssetType::Option) {
+                        Ok(open_orders) => {
+                            if requires_reconciliation(&option_diffs, open_orders, strategy_detail)
+                            {
+                                combined.extend(option_diffs.iter().cloned());
+                            }
+                        }
+                        Err(e) => tracing::error!("open orders crud error (Option): {e}"),
+                    }
+                }
+
+                // Cash only means every requested type is covered: nothing to plan.
+                if combined.iter().any(|d| !is_cash_diff(d)) {
                     // Plan funding once per bar; every batch below is [head] or
                     // [closing head, fx legs..] and is reconciled against working orders.
                     let fx_plan = hotpath::measure_block!(
@@ -554,7 +582,7 @@ impl OrderEngine {
                                 FxFundingPlan::default()
                             } else {
                                 match OrderEngine::get_fx_attachments(
-                                    &target_pos_diffs,
+                                    &combined,
                                     &strategy_name_orig,
                                     order_store,
                                     #[cfg(not(feature = "backtest"))]
@@ -809,6 +837,11 @@ impl OrderEngine {
 
         Ok(())
     }
+}
+
+/// A `CASH:<ccy>` row carries funding capacity, not an order.
+pub fn is_cash_diff(diff: &TargetPositionsQtyDiff) -> bool {
+    matches!(diff, TargetPositionsQtyDiff::Stock(v) if v.stock.starts_with("CASH:"))
 }
 
 pub fn requires_reconciliation(
