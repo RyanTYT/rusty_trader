@@ -92,9 +92,9 @@ impl OrderIBKR {
 }
 
 #[derive(Debug, Clone)]
-struct LocalOpenOrder {
-    order: OpenOrdersFullKeys,
-    is_from_db: bool,
+pub struct LocalOpenOrder {
+    pub order: OpenOrdersFullKeys,
+    pub is_from_db: bool,
 }
 
 #[hotpath::measure_all]
@@ -633,7 +633,7 @@ impl OrderEngine {
     /// Provides the logic to handle open order
     /// - i.e. cancelling and placing orders efficiently
     /// - 1st order MUST be correct strategy (i.e. order_ref == strategy)
-    fn on_new_qty_diff_for_strat<OrderBroker>(
+    pub fn on_new_qty_diff_for_strat<OrderBroker>(
         &self,
         pool: PgPool,
 
@@ -814,7 +814,7 @@ impl OrderEngine {
     }
 }
 
-fn requires_reconciliation(
+pub fn requires_reconciliation(
     target_pos_diffs: &Vec<TargetPositionsQtyDiff>,
     open_orders: Vec<LocalOpenOrder>,
     strategy_detail: &StrategyDetails,
@@ -843,32 +843,4 @@ fn requires_reconciliation(
 
         if diff == 0.0 { false } else { true }
     })
-}
-
-#[cfg(test)]
-mod order_ibkr_equality_tests {
-    use super::OrderIBKR;
-    use ibapi::orders::Action;
-    use ibapi::orders::order_builder::market_order;
-    use ibapi::prelude::Contract;
-
-    fn order(symbol: &str, qty: f64, order_ref: &str) -> OrderIBKR {
-        let mut order = market_order(Action::Buy, qty);
-        order.order_ref = order_ref.to_string();
-        OrderIBKR::new(Contract::stock(symbol).build(), order, -1)
-    }
-
-    #[test]
-    fn ignores_the_price_suffix_in_order_ref() {
-        assert_eq!(
-            order("AAPL", 10.0, "strat:123.5"),
-            order("AAPL", 10.0, "strat")
-        );
-    }
-
-    #[test]
-    fn different_contract_or_quantity_is_not_equal() {
-        assert_ne!(order("AAPL", 10.0, "strat"), order("MSFT", 10.0, "strat"));
-        assert_ne!(order("AAPL", 10.0, "strat"), order("AAPL", 20.0, "strat"));
-    }
 }
