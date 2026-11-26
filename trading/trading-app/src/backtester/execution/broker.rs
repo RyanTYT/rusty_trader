@@ -64,7 +64,7 @@ pub struct BacktestBroker {
     /// strategy acts (cleared each slot by [`begin_slot`]).
     /// - for broker purposes - fill price, etc
     latest_bars:
-        std::sync::Mutex<std::collections::HashMap<HashContract, Arc<HistoricalDataFullKeys>>>,
+        std::sync::Mutex<std::collections::HashMap<HashContract<'static>, Arc<HistoricalDataFullKeys>>>,
     /// Parked fill intents (`fill_lag_bars > 0`), drained by [`advance_slot`].
     pending_fills: std::sync::Mutex<Vec<PendingFill>>,
     /// Running cash balance (SGD), updated on each fill
@@ -133,9 +133,7 @@ impl BacktestBroker {
             .lock()
             .expect("backtest latest_bars poisoned")
             .insert(
-                HashContract {
-                    contract: contract.clone(),
-                },
+                HashContract::new(contract.clone()),
                 Arc::new(bar),
             );
     }
@@ -154,9 +152,7 @@ impl BacktestBroker {
                 .expect("backtest latest_bars poisoned");
             pending.retain_mut(|pf| {
                 let Some(bar) = latest
-                    .get(&HashContract {
-                        contract: pf.contract.clone(),
-                    })
+                    .get(&HashContract::borrowed(&pf.contract))
                     .cloned()
                 else {
                     return true; // no own bar this slot — doesn't count
@@ -235,9 +231,7 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
                 .lock()
                 .expect("backtest latest_bars poisoned");
             latest
-                .get(&HashContract {
-                    contract: contract.clone(),
-                })
+                .get(&HashContract::borrowed(&contract))
                 .cloned()
         };
         let Some(bar) = bar else {

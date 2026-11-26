@@ -62,13 +62,9 @@ fn resolve_own_bar<'a>(
     contracts: &'a [Option<HistoricalDataFullKeys>],
     target_contract: &Contract,
 ) -> Option<&'a HistoricalDataFullKeys> {
-    let target_hash = crate::helpers::contract::HashContract {
-        contract: target_contract.clone(),
-    };
+    let target_hash = crate::helpers::contract::HashContract::borrowed(&target_contract);
     for (i, c) in config.subscribed_contracts.iter().enumerate() {
-        let hash = crate::helpers::contract::HashContract {
-            contract: c.clone(),
-        };
+        let hash = crate::helpers::contract::HashContract::borrowed(&c);
         if hash == target_hash {
             if let Some(Some(bar)) = contracts.get(i) {
                 return Some(bar);

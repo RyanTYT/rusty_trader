@@ -17,9 +17,9 @@
 // just maybe different order types but that is fine - should be minimal impact)
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-#[cfg(not(feature = "backtest"))]
 use crate::execution::traits::order_router::OrderRouter;
 use crate::{database::tables::DbTables, market_data::traits::current_price::PriceSupplier};
+use ibapi::Client;
 use ibapi::{
     orders::{Action, Order, order_builder::market_order},
     prelude::Contract,
@@ -240,7 +240,7 @@ impl OrderEngine {
     }
 
     /// Note: it is on onus of client to pass with the correct .transmit field
-    pub fn place_orders<T>(
+    pub fn place_orders<#[cfg(not(feature = "backtest"))] T: OrderRouter>(
         handle: tokio::runtime::Handle,
         pool: PgPool,
 
@@ -248,9 +248,7 @@ impl OrderEngine {
         #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         orders: impl IntoIterator<Item = OrderIBKR>,
-    ) where
-        T: OrderRouter,
-    {
+    ) {
         let orders_iter = orders.into_iter();
         let (lower_bound, _) = orders_iter.size_hint();
         let mut order_ids = vec![-1; lower_bound];
@@ -275,7 +273,9 @@ impl OrderEngine {
         }
     }
 
-    fn cancel_orders<T>(
+    fn cancel_orders<
+        #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
+    >(
         &self,
         asset_type: &AssetType,
 
@@ -284,9 +284,7 @@ impl OrderEngine {
 
         local_open_orders: Vec<LocalOpenOrder>,
         order_store: &OrderStore,
-    ) where
-        T: OrderRouter + Send + Sync + 'static,
-    {
+    ) {
         if local_open_orders.is_empty() {
             return;
         }
@@ -385,7 +383,10 @@ impl OrderEngine {
         }
     }
 
-    pub fn handle_bar_update_outcome<OrderBroker, MarketBroker>(
+    pub fn handle_bar_update_outcome<
+        #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
+        #[cfg(not(feature = "backtest"))] MarketBroker: PriceSupplier,
+    >(
         &self,
 
         #[cfg(not(feature = "backtest"))] weak_client: &Weak<OrderBroker>,
@@ -397,10 +398,7 @@ impl OrderEngine {
         bar_update_outcome: BarUpdateOutcome,
         strategy_detail: &StrategyDetails,
         order_store: &OrderStore,
-    ) where
-        OrderBroker: OrderRouter + Send + Sync + 'static,
-        MarketBroker: PriceSupplier,
-    {
+    ) {
         let strategy_name_orig = strategy_detail.name.clone();
         match bar_update_outcome {
             BarUpdateOutcome::EmitOrders {
@@ -633,7 +631,9 @@ impl OrderEngine {
     /// Provides the logic to handle open order
     /// - i.e. cancelling and placing orders efficiently
     /// - 1st order MUST be correct strategy (i.e. order_ref == strategy)
-    pub fn on_new_qty_diff_for_strat<OrderBroker>(
+    pub fn on_new_qty_diff_for_strat<
+        #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
+    >(
         &self,
         pool: PgPool,
 
@@ -642,10 +642,7 @@ impl OrderEngine {
 
         mut orders: VecDeque<OrderIBKR>,
         order_store: &OrderStore,
-    ) -> Result<(), String>
-    where
-        OrderBroker: OrderRouter + Send + Sync + 'static,
-    {
+    ) -> Result<(), String> {
         let order_ibkr_opt = orders.pop_front();
         if order_ibkr_opt.is_none() {
             return Err("Expected orders not to be empty!".to_string());
@@ -819,15 +816,17 @@ pub fn requires_reconciliation(
     open_orders: Vec<LocalOpenOrder>,
     strategy_detail: &StrategyDetails,
 ) -> bool {
-    let mut orders_map = HashMap::new();
+    let mut orders_map: HashMap<HashContract<'static>, f64> = HashMap::new();
     for order in open_orders.into_iter() {
         let qty = order.order.get_qty();
         let contract = get_contract_from(&LocalContractTypes::OpenOrders(order.order));
-        let hash_contract = HashContract { contract };
-        match orders_map.get(&hash_contract) {
-            Some(v) => orders_map.insert(hash_contract, v + qty),
-            None => orders_map.insert(hash_contract, qty),
-        };
+        let hash_contract = HashContract::new(contract);
+        orders_map
+            .entry(hash_contract)
+            .and_modify(|v| {
+                *v += qty;
+            })
+            .or_insert(qty);
     }
 
     target_pos_diffs.into_iter().any(|pos_diff| {
@@ -837,7 +836,7 @@ pub fn requires_reconciliation(
         }
 
         let contract = get_contract_from(&LocalContractTypes::TargetPosQtyDiff(pos_diff.clone()));
-        let hash_contract = HashContract { contract };
+        let hash_contract = HashContract::borrowed(&contract);
         let open_orders_qty = orders_map.get(&hash_contract).unwrap_or(&0.0);
         let diff = pos_diff.get_qty_diff() - *open_orders_qty;
 

@@ -28,7 +28,7 @@ const BASE_CURRENCY: &str = "SGD";
 pub struct FxAttachments {
     // Contract to be sold -> FX orders:
     // - FX to be attached as child orders directly to Contract
-    pub contracts_sold_to_fx_orders: HashMap<HashContract, Vec<OrderIBKR>>,
+    pub contracts_sold_to_fx_orders: HashMap<HashContract<'static>, Vec<OrderIBKR>>,
     // Backed up orders that are blocked by the FX shortfall
     pub backed_up_orders: Vec<OrderIBKR>,
 }
@@ -57,8 +57,8 @@ impl OrderEngine {
     /// by consuming sell proceeds until the shortfall is covered or no more sells remain.
     pub fn get_required_fx_attachments<MarketBroker>(
         funds: HashMap<String, f64>,
-        funds_from_selling: HashMap<HashContract, Vec<f64>>,
-        insufficient_funds: HashMap<HashContract, ((f64, f64), f64)>,
+        funds_from_selling: HashMap<HashContract<'static>, Vec<f64>>,
+        insufficient_funds: HashMap<HashContract<'static>, ((f64, f64), f64)>,
         strategy: &str,
         #[cfg(not(feature = "backtest"))] consolidator: &Weak<MarketBroker>,
         #[cfg(feature = "backtest")]
@@ -102,9 +102,7 @@ impl OrderEngine {
                     currency: ibapi::prelude::Currency(buy_currency.clone()),
                     ..Default::default()
                 };
-                let fx_contract = HashContract {
-                    contract: ib_fx_contract.clone(),
-                };
+                let fx_contract = HashContract::borrowed(&ib_fx_contract);
                 let is_same_currency =
                     ib_fx_contract.symbol.as_str() == ib_fx_contract.currency.as_str();
 
@@ -112,11 +110,11 @@ impl OrderEngine {
                 let conversion_price = consolidator
                     .upgrade()
                     .expect("Expected consolidator to still be alive when in fx_organiser")
-                    .get_current_price(ib_fx_contract, false, &[])
+                    .get_current_price(ib_fx_contract.clone(), false, &[])
                     .expect("Expected to be able to get FX conversion rate from consolidator in fx_organiser");
                 #[cfg(feature = "backtest")]
                 let conversion_price = price_supplier
-                    .get_current_price(ib_fx_contract, false, &[])
+                    .get_current_price(ib_fx_contract.clone(), false, &[])
                     .expect("Expected to be able to get FX conversion rate from consolidator in fx_organiser");
                 let consumed = proceeds.min(remaining_shortfall / conversion_price);
                 *proceeds -= consumed;
@@ -137,7 +135,11 @@ impl OrderEngine {
                     sell_to_fx
                         .entry(sell_contract.clone())
                         .or_insert_with(Vec::new)
-                        .push(OrderIBKR::new(fx_contract.contract.clone(), fx_order, -1));
+                        .push(OrderIBKR::new(
+                            fx_contract.contract.into_owned(),
+                            fx_order,
+                            -1,
+                        ));
                 }
             }
 
@@ -157,7 +159,11 @@ impl OrderEngine {
             // buy_order.order_ref = strategy.clone();
             buy_order.order_ref = format!("{}:{}", strategy, current_price.to_string());
             buy_order.transmit = true;
-            backed_up_orders.push(OrderIBKR::new(buy_contract.contract.clone(), buy_order, -1));
+            backed_up_orders.push(OrderIBKR::new(
+                buy_contract.contract.as_ref().to_owned(),
+                buy_order,
+                -1,
+            ));
         }
 
         FxAttachments {
@@ -197,16 +203,13 @@ impl OrderEngine {
     ///   places both.
     /// - Prices fall back to `avg_price`; a zero price defers the opening.
     #[allow(dead_code)]
-    pub fn get_fx_attachments<F>(
+    pub fn get_fx_attachments<#[cfg(not(feature = "backtest"))] MarketBroker: PriceSupplier>(
         target_pos_diffs: &[TargetPositionsQtyDiff],
         strategy_name: &str,
         order_store: &OrderStore,
-        #[cfg(not(feature = "backtest"))] consolidator: &Weak<F>,
+        #[cfg(not(feature = "backtest"))] consolidator: &Weak<MarketBroker>,
         #[cfg(feature = "backtest")] price_supplier: &dyn PriceSupplier,
-    ) -> Result<FxFundingPlan, String>
-    where
-        F: PriceSupplier,
-    {
+    ) -> Result<FxFundingPlan, String> {
         #[cfg(not(feature = "backtest"))]
         let fetch_price = |contract: Contract| -> Result<f64, String> {
             consolidator

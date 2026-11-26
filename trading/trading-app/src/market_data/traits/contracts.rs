@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-#[cfg(not(feature = "backtest"))]
 use ibapi::contracts::ContractDetails;
 use ibapi::{Client, contracts::Contract};
 use moka::sync::Cache;
@@ -20,6 +19,7 @@ where
     }
 }
 
+#[cfg(not(feature = "backtest"))]
 impl ContractBroker for Consolidator {
     fn get_validated_contract(&self, contract: Contract) -> Option<Contract> {
         self.validate_contract(contract, Duration::from_secs(10))

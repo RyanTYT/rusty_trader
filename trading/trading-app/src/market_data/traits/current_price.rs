@@ -682,6 +682,7 @@ where
         (**self).get_current_price(contract, vwap, generic_ticks)
     }
 
+    #[cfg(not(feature = "backtest"))]
     fn populate_historical_data<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         contract: &'life1 Contract,

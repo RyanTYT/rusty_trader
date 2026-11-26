@@ -33,7 +33,7 @@ pub struct BacktestPriceSupplier {
     cache: Box<[AtomicU64]>,
     /// `HashContract` → slot index. Immutable after `new` — concurrent reads
     /// are safe (no mutation, so `&HashMap` from multiple threads is sound).
-    slot_map: HashMap<HashContract, usize>,
+    slot_map: HashMap<HashContract<'static>, usize>,
     /// Fixed FX rates for pairs not in the bar stream. Keyed by
     /// `(base_symbol, quote_currency)` — e.g. `("USD", "SGD")` -> 1.35 means
     /// 1 USD = 1.35 SGD. The reverse pair is resolved by inverting.
@@ -57,14 +57,7 @@ impl BacktestPriceSupplier {
         let slot_map = contracts
             .iter()
             .enumerate()
-            .map(|(i, c)| {
-                (
-                    HashContract {
-                        contract: c.clone(),
-                    },
-                    i,
-                )
-            })
+            .map(|(i, c)| (HashContract::new(c.clone()), i))
             .collect();
 
         // Default fixed rates (strategies that ignore FX just use these).
@@ -84,9 +77,7 @@ impl BacktestPriceSupplier {
     /// slot. If the contract isn't in the fixed set, it's logged + ignored
     /// (the strategy shouldn't publish closes for contracts it doesn't track).
     pub fn publish_close(&self, contract: &Contract, close: f64) {
-        let key = HashContract {
-            contract: contract.clone(),
-        };
+        let key = HashContract::borrowed(&contract);
         match self.slot_map.get(&key) {
             Some(&slot) => {
                 self.cache[slot].store(close.to_bits(), Ordering::Release);
@@ -132,9 +123,7 @@ impl PriceSupplier for BacktestPriceSupplier {
         _generic_ticks: &[&str],
     ) -> Result<f64, String> {
         // 1. Lock-free cache: atomic read from the contract's slot.
-        let key = HashContract {
-            contract: contract.clone(),
-        };
+        let key = HashContract::borrowed(&contract);
         if let Some(&slot) = self.slot_map.get(&key) {
             let bits = self.cache[slot].load(Ordering::Acquire);
             if bits != 0 {

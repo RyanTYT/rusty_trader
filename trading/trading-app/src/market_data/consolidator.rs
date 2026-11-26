@@ -103,9 +103,7 @@ impl Consolidator {
             |input: &(Arc<Client>, Contract, bool, Vec<String>, bool)| {
                 let (_, contract, vwap, generic_ticks, is_second_try) = input;
                 (
-                    HashContract {
-                        contract: contract.clone(),
-                    },
+                    HashContract::new(contract.clone()),
                     *vwap,
                     generic_ticks.clone(),
                     *is_second_try,
@@ -423,7 +421,7 @@ pub(crate) fn last_bar_available(
         .and_hms_opt(close.0, close.1, 0)
         .and_then(|t| New_York.from_local_datetime(&t).single())
         .expect("Invalid NY datetime");
-    if last_bar > close_time {
+    if last_bar >= close_time {
         last_bar = close_time - Duration::from_mins(granularity_minutes as u64);
     }
 

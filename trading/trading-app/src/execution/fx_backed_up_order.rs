@@ -93,11 +93,8 @@ impl OrderStore {
 
             existing.retain(|parked| {
                 !orders.iter().any(|new_order| {
-                    HashContract {
-                        contract: new_order.contract.clone(),
-                    } == HashContract {
-                        contract: parked.contract.clone(),
-                    }
+                    HashContract::borrowed(&new_order.contract)
+                        == HashContract::borrowed(&parked.contract)
                 })
             });
             existing.extend(orders.iter().cloned());

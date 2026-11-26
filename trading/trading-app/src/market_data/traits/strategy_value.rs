@@ -123,9 +123,7 @@ impl Consolidator {
             let contract = get_contract_from(&LocalContractTypes::CurrentPosFk(position));
 
             if contract.security_type == SecurityType::ForexPair {
-                let hash_contract = HashContract {
-                    contract: contract.clone(),
-                };
+                let hash_contract = HashContract::new(contract.clone());
                 if !exchange_rates.contains_key(&hash_contract) {
                     let rate = if stock == "CASH:SGD" {
                         1.0
@@ -146,9 +144,7 @@ impl Consolidator {
                     currency: "SGD".into(),
                     ..Default::default()
                 };
-                let hash_contract = HashContract {
-                    contract: fx_contract.clone(),
-                };
+                let hash_contract = HashContract::new(fx_contract.clone());
                 if !exchange_rates.contains_key(&hash_contract) {
                     let rate = call_price(fx_contract, false, vec![], false)?;
                     exchange_rates.insert(hash_contract.clone(), rate);
@@ -205,7 +201,7 @@ impl Consolidator {
         let positions = futures::executor::block_on(join_handle).map_err(|e| e.to_string())??;
 
         let mut sgd_value = 0.0;
-        let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
+        let mut exchange_rates: HashMap<HashContract<'static>, f64> = HashMap::new();
 
         // The price supplier's get_current_price takes (Contract, bool, &[&str]).
         let call_price = |contract: Contract,
@@ -233,16 +229,14 @@ impl Consolidator {
             let contract = get_contract_from(&LocalContractTypes::CurrentPosFk(position));
 
             if contract.security_type == SecurityType::ForexPair {
-                let hash_contract = HashContract {
-                    contract: contract.clone(),
-                };
+                let hash_contract = HashContract::borrowed(&contract);
                 if !exchange_rates.contains_key(&hash_contract) {
                     let rate = if stock == "CASH:SGD" {
                         1.0
                     } else {
                         call_price(contract.clone(), false, vec![], false)?
                     };
-                    exchange_rates.insert(hash_contract.clone(), rate);
+                    exchange_rates.insert(hash_contract.static_clone(), rate);
                 }
                 sgd_value += exchange_rates.get(&hash_contract).unwrap() * quantity;
                 continue;
@@ -256,12 +250,10 @@ impl Consolidator {
                     currency: "SGD".into(),
                     ..Default::default()
                 };
-                let hash_contract = HashContract {
-                    contract: fx_contract.clone(),
-                };
+                let hash_contract = HashContract::borrowed(&fx_contract);
                 if !exchange_rates.contains_key(&hash_contract) {
-                    let rate = call_price(fx_contract, false, vec![], false)?;
-                    exchange_rates.insert(hash_contract.clone(), rate);
+                    let rate = call_price(fx_contract.clone(), false, vec![], false)?;
+                    exchange_rates.insert(hash_contract.static_clone(), rate);
                 }
 
                 let mkt_value = call_price(contract, false, vec![], false)? * quantity;
@@ -299,7 +291,7 @@ impl Consolidator {
             price_supplier.get_current_price(contract, false, &[])
         };
         let mut sgd_value = 0.0;
-        let mut exchange_rates: HashMap<HashContract, f64> = HashMap::new();
+        let mut exchange_rates: HashMap<HashContract<'static>, f64> = HashMap::new();
 
         for (key, pos) in positions {
             use crate::helpers::contract::build_contract_from_stock;
@@ -341,14 +333,12 @@ impl Consolidator {
                     currency: "SGD".into(),
                     ..Default::default()
                 };
-                let hash_contract = HashContract {
-                    contract: fx_contract.clone(),
-                };
+                let hash_contract = HashContract::borrowed(&fx_contract);
                 let rate = if let Some(&r) = exchange_rates.get(&hash_contract) {
                     r
                 } else {
-                    let r = call_price(fx_contract)?;
-                    exchange_rates.insert(hash_contract, r);
+                    let r = call_price(fx_contract.clone())?;
+                    exchange_rates.insert(hash_contract.into_owned(), r);
                     r
                 };
                 // println!("Currency Rate: {rate}");

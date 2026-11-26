@@ -38,7 +38,7 @@ use crate::{
     execution::{fx_backed_up_order::OrderStore, order_update_stream},
     helpers::contract::{HashContract, LocalContractTypes, get_contract_from},
     init_app::StrategyParameters,
-    market_data::{consolidator::Consolidator, traits::current_price::PriceSupplier},
+    market_data::traits::current_price::PriceSupplier,
     strategy::strategy::{StrategyDetails, StrategyExecutor},
 };
 
@@ -50,7 +50,7 @@ pub struct SyncerEngine {
     strategy_details: Arc<HashMap<String, StrategyDetails>>,
     // Contract -> Strategy
     // - Prioritisation of Strategy happens here
-    contract_to_strategy: HashMap<HashContract, String>,
+    contract_to_strategy: HashMap<HashContract<'static>, String>,
     handle: tokio::runtime::Handle,
 }
 
@@ -68,9 +68,7 @@ impl SyncerEngine {
             strategy_details.insert(strategy_detail.name.clone(), strategy_detail.clone());
 
             for contract_sub in &strategy.subscribed_contracts {
-                let hashed_contract = HashContract {
-                    contract: contract_sub.contract.clone(),
-                };
+                let hashed_contract = HashContract::new(contract_sub.contract.clone());
                 contract_to_full_strategy
                     .entry(hashed_contract)
                     .and_modify(|current_strategy| {
@@ -361,12 +359,8 @@ impl SyncOps for SyncerEngine {
                     if built_contract.security_type == SecurityType::ForexPair {
                         fx_map.insert(built_contract.symbol.to_string(), *quantity);
                     } else {
-                        stock_map.insert(
-                            HashContract {
-                                contract: built_contract,
-                            },
-                            (*quantity, *avg_price),
-                        );
+                        stock_map
+                            .insert(HashContract::new(built_contract), (*quantity, *avg_price));
                     }
                 }
             }
@@ -427,9 +421,7 @@ impl SyncOps for SyncerEngine {
                     built_contract.primary_exchange = ibapi::contracts::Exchange(primary_exchange);
                     built_contract.currency = Currency::from(currency);
                     built_contract.multiplier = multiplier.clone();
-                    let hashed_contract = HashContract {
-                        contract: built_contract,
-                    };
+                    let hashed_contract = HashContract::new(built_contract);
                     option_map.insert(hashed_contract, (quantity, avg_price));
                 }
             }
@@ -612,9 +604,9 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
     account: String,
     client: &PositionsBroker,
     consolidator: &MarketBroker,
-    stock_map: &HashMap<HashContract, (f64, f64)>,
-    option_map: &HashMap<HashContract, (f64, f64)>,
-    contract_to_strategy: &HashMap<HashContract, String>,
+    stock_map: &HashMap<HashContract<'static>, (f64, f64)>,
+    option_map: &HashMap<HashContract<'static>, (f64, f64)>,
+    contract_to_strategy: &HashMap<HashContract<'static>, String>,
     default_strategy: &str,
     pool: PgPool,
     errors: &mut Vec<String>,
@@ -635,7 +627,7 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
                     validated_contract.unwrap_or(position.contract)
                 };
                 let asset_type = AssetType::from_str(&contract.security_type);
-                let hashed_contract = HashContract { contract: contract };
+                let hashed_contract = HashContract::new(contract);
                 match asset_type {
                     AssetType::Stock
                     | AssetType::CFD
@@ -809,9 +801,7 @@ fn on_full_open_order_received<MarketBroker>(
     let strategy = {
         if borrowed_order.order_ref == "" {
             contract_to_strategy
-                .get(&HashContract {
-                    contract: unvalidated_contract.clone(),
-                })
+                .get(&HashContract::borrowed(unvalidated_contract))
                 .unwrap_or(&default_strategy.clone().unwrap_or("unknown".to_string()))
                 .to_string()
         } else {

@@ -2,7 +2,7 @@ use ibapi::{
     contracts::{Currency, Exchange},
     prelude::{Contract, ContractMonth, SecurityType, Symbol},
 };
-use std::hash::Hash;
+use std::{borrow::Cow, hash::Hash};
 
 use crate::database::{
     models::{
@@ -20,9 +20,42 @@ use crate::database::{
     },
 };
 
+// #[derive(Debug, Clone)]
+// pub struct HashContract {
+//     pub contract: Contract,
+// }
+
 #[derive(Debug, Clone)]
-pub struct HashContract {
-    pub contract: Contract,
+pub struct HashContract<'a> {
+    pub contract: Cow<'a, Contract>,
+}
+
+impl<'a> HashContract<'a> {
+    pub fn new(contract: Contract) -> Self {
+        Self {
+            contract: Cow::Owned(contract),
+        }
+    }
+
+    pub fn borrowed(contract: &'a Contract) -> Self {
+        Self {
+            contract: Cow::Borrowed(contract),
+        }
+    }
+
+    /// consuming
+    pub fn into_owned(self) -> HashContract<'static> {
+        HashContract {
+            contract: Cow::Owned(self.contract.into_owned()),
+        }
+    }
+
+    /// Non-consuming: always one clone of Contract.
+    pub fn static_clone(&self) -> HashContract<'static> {
+        HashContract {
+            contract: Cow::Owned(Contract::clone(&self.contract)),
+        }
+    }
 }
 
 /// The fields a [`HashContract`]/[`HashContractRef`] is hashed + eq'd on
@@ -62,65 +95,65 @@ fn hash_contract<H: std::hash::Hasher>(contract: &Contract, state: &mut H) {
     }
 }
 
-impl PartialEq for HashContract {
+impl<'a> PartialEq for HashContract<'a> {
     fn eq(&self, other: &Self) -> bool {
         contracts_eq(&self.contract, &other.contract)
     }
 }
 
-impl Eq for HashContract {}
+impl<'a> Eq for HashContract<'a> {}
 
-impl Hash for HashContract {
+impl<'a> Hash for HashContract<'a> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         hash_contract(&self.contract, state)
     }
 }
 
-/// A borrowed [`HashContract`] — wraps a `&Contract` (no clone). Hash + Eq on
-/// the SAME fields as `HashContract`. Use to look up a `HashMap<HashContract, _>`
-/// without cloning the `Contract` into a `HashContract`: build a
-/// `HashContractRef` from the `&Contract` + scan the map (the std `Borrow`
-/// path doesn't work because `Contract` isn't `Hash+Eq` + the borrowed form
-/// has a lifetime). Cross-`PartialEq` with `HashContract` so
-/// `slot_map.iter().find(|(hc, _)| ref_key == *hc)` works.
-#[derive(Debug, Clone, Copy)]
-pub struct HashContractRef<'a> {
-    pub contract: &'a Contract,
-}
-
-impl<'a> HashContractRef<'a> {
-    pub fn new(contract: &'a Contract) -> Self {
-        Self { contract }
-    }
-}
-
-impl<'a> PartialEq for HashContractRef<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        contracts_eq(self.contract, other.contract)
-    }
-}
-
-impl<'a> Eq for HashContractRef<'a> {}
-
-impl<'a> Hash for HashContractRef<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        hash_contract(self.contract, state)
-    }
-}
-
-/// `HashContractRef == HashContract` (cross-comparison — same fields).
-impl<'a> PartialEq<HashContract> for HashContractRef<'a> {
-    fn eq(&self, other: &HashContract) -> bool {
-        contracts_eq(self.contract, &other.contract)
-    }
-}
-
-/// `HashContract == HashContractRef` (cross-comparison — same fields).
-impl<'a> PartialEq<HashContractRef<'a>> for HashContract {
-    fn eq(&self, other: &HashContractRef<'a>) -> bool {
-        contracts_eq(&self.contract, other.contract)
-    }
-}
+// /// A borrowed [`HashContract`] — wraps a `&Contract` (no clone). Hash + Eq on
+// /// the SAME fields as `HashContract`. Use to look up a `HashMap<HashContract, _>`
+// /// without cloning the `Contract` into a `HashContract`: build a
+// /// `HashContractRef` from the `&Contract` + scan the map (the std `Borrow`
+// /// path doesn't work because `Contract` isn't `Hash+Eq` + the borrowed form
+// /// has a lifetime). Cross-`PartialEq` with `HashContract` so
+// /// `slot_map.iter().find(|(hc, _)| ref_key == *hc)` works.
+// #[derive(Debug, Clone, Copy)]
+// pub struct HashContractRef<'a> {
+//     pub contract: &'a Contract,
+// }
+//
+// impl<'a> HashContractRef<'a> {
+//     pub fn new(contract: &'a Contract) -> Self {
+//         Self { contract }
+//     }
+// }
+//
+// impl<'a> PartialEq for HashContractRef<'a> {
+//     fn eq(&self, other: &Self) -> bool {
+//         contracts_eq(self.contract, other.contract)
+//     }
+// }
+//
+// impl<'a> Eq for HashContractRef<'a> {}
+//
+// impl<'a> Hash for HashContractRef<'a> {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         hash_contract(self.contract, state)
+//     }
+// }
+//
+// /// `HashContractRef == HashContract` (cross-comparison — same fields).
+// impl<'a> PartialEq<HashContract<'a>> for HashContractRef<'a> {
+//     fn eq(&self, other: &HashContract) -> bool {
+//         contracts_eq(self.contract, &other.contract)
+//     }
+// }
+//
+// /// `HashContract == HashContractRef` (cross-comparison — same fields).
+// impl<'a> PartialEq<HashContractRef<'a>> for HashContract<'a> {
+//     fn eq(&self, other: &HashContractRef<'a>) -> bool {
+//         contracts_eq(&self.contract, other.contract)
+//     }
+// }
 
 pub fn get_local_symbol(contract: &Contract) -> String {
     match AssetType::from_str(&contract.security_type) {
