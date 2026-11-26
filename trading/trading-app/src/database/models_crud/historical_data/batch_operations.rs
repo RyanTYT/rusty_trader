@@ -323,7 +323,8 @@ where
 {
     sender: Arc<Sender<T>>,
     shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
-    // shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
+    join: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    joined: bool,
 }
 
 impl<T> BatchDbCreator<T>
@@ -333,13 +334,40 @@ where
     fn new(
         sender: Arc<Sender<T>>,
         shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
-        // shutdown_success_rcx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>>,
+        join: tokio::task::JoinHandle<()>,
     ) -> Self {
         Self {
             sender,
             shutdown_sender,
-            // shutdown_success_rcx,
+            join: Arc::new(Mutex::new(Some(join))),
+            joined: false,
         }
+    }
+
+    /// Signals the worker to flush everything and waits for it to finish.
+    pub async fn flush(mut self) -> Result<(), String> {
+        if let Some(sender) = self
+            .shutdown_sender
+            .lock()
+            .expect("Failed to acquire lock shutdown_sender")
+            .take()
+        {
+            let _ = sender.send(true);
+        }
+
+        if let Some(handle) = self
+            .join
+            .lock()
+            .expect("Failed to acquire lock join")
+            .take()
+        {
+            handle
+                .await
+                .map_err(|e| format!("batch worker failed: {e}"))?;
+        }
+
+        self.joined = true;
+        Ok(())
     }
 
     pub async fn batch_create_or_update(&self, fk: &T) -> Result<(), String> {
@@ -392,6 +420,9 @@ where
     T: BulkInsertable + Clone,
 {
     fn drop(&mut self) {
+        if self.joined {
+            return;
+        }
         let sender = {
             if Arc::strong_count(&self.shutdown_sender) > 1 {
                 // there is still another one out there still not done
@@ -450,7 +481,7 @@ where
     let (shutdown_sender, mut shutdown_rx) = tokio::sync::oneshot::channel::<bool>();
     let (shutdown_resp_sender, _shutdown_resp_rx) = tokio::sync::oneshot::channel::<bool>();
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let mut buffer = Vec::with_capacity(BATCH_SIZE);
         let mut last_flush = Instant::now();
         tracing::info!("Entered loop to receive goods");
@@ -495,6 +526,13 @@ where
                         tracing::error!("Sender of shutdown_sender for batch_operations dropped before sending: {e:?}");
                     }
 
+                    // A shutdown signal can overtake rows that were already sent but
+                    // not yet received; drain the channel so `flush()` cannot lose
+                    // queued rows.
+                    while let Ok(row) = rx.try_recv() {
+                        buffer.push(row);
+                    }
+
                     if !buffer.is_empty() {
                         if let Err(e) = flush_batch_generic(&mut client, &buffer)
                             .await
@@ -529,6 +567,7 @@ where
     BatchDbCreator::new(
         Arc::new(sender),
         Arc::new(Mutex::new(Some(shutdown_sender))),
+        task,
         // Arc::new(Mutex::new(Some(shutdown_resp_rx))),
     )
 }
