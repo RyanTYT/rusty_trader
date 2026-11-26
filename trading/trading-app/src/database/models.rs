@@ -171,14 +171,35 @@ pub struct MismatchedPosition {
     Clone,
     Serialize,
     Deserialize,
-    ExtractFullKeys,
-    ExtractPrimaryKeys,
-    ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
 )]
 pub struct Notification {
     pub title: String,
+    pub body: Option<String>,
+    pub alert_type: Option<String>,
+}
+
+/// Hand-written (not derived) because `trading.notifications.id` is a
+/// `GENERATED ALWAYS AS IDENTITY` column: the insert must omit it, so the
+/// full key carries `Option<i64>` (`None` on insert, `Some` on read).
+/// `body`/`alert_type` are NOT NULL in the table, so they are required here.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct NotificationFullKeys {
+    pub id: Option<i64>,
+    pub title: String,
+    pub body: String,
+    pub alert_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct NotificationPrimaryKeys {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct NotificationUpdateKeys {
+    pub title: Option<String>,
     pub body: Option<String>,
     pub alert_type: Option<String>,
 }
@@ -555,9 +576,6 @@ pub struct HistoricalOptionsData {
     Clone,
     Serialize,
     Deserialize,
-    ExtractFullKeys,
-    ExtractPrimaryKeys,
-    ExtractUpdateKeys,
     DeriveInsertable,
     FromRow,
 )]
@@ -565,6 +583,32 @@ pub struct Logs {
     pub time: DateTime<Utc>,
     pub level: String,
     pub name: String,
+    pub message: Option<String>,
+}
+
+/// Hand-written (not derived) because `logs.logs.id` is a
+/// `GENERATED ALWAYS AS IDENTITY` column: the insert must omit it, so the
+/// full key carries `Option<i64>` (`None` on insert, `Some` on read).
+/// `id` is the only addressing key; the table's PK is `(time, id)`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct LogsFullKeys {
+    pub id: Option<i64>,
+    pub time: DateTime<Utc>,
+    pub level: String,
+    pub name: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct LogsPrimaryKeys {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable)]
+pub struct LogsUpdateKeys {
+    pub time: Option<DateTime<Utc>>,
+    pub level: Option<String>,
+    pub name: Option<String>,
     pub message: Option<String>,
 }
 
