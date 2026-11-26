@@ -279,7 +279,7 @@ impl OrderEngine {
         &self,
         asset_type: &AssetType,
 
-        #[cfg(not(feature = "backtest"))] weak_client: &Weak<T>,
+        #[cfg(not(feature = "backtest"))] weak_client: &Weak<OrderBroker>,
         #[cfg(feature = "backtest")] submitter: &dyn crate::backtester::execution::OrderSubmitter,
 
         local_open_orders: Vec<LocalOpenOrder>,
