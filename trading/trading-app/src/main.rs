@@ -18,6 +18,8 @@ use tracing_subscriber::{
 };
 use tracing_subscriber::{layer::Layer, util::SubscriberInitExt};
 
+#[cfg(feature = "backtest")]
+pub mod backtester;
 pub mod database;
 pub mod execution;
 pub mod helpers;

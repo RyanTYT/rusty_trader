@@ -169,8 +169,8 @@ pub fn log_counters(tag: &str) {
 // exist for static sharing, not for cross-thread synchronisation.
 // ═══════════════════════════════════════════════════════════════════════
 
-use std::cell::UnsafeCell;
-use std::sync::{Arc, OnceLock};
+use std::cell::{RefCell, UnsafeCell};
+use std::sync::{Arc, RwLock};
 
 pub const FUND_RING: usize = 128;
 /// Minutes per flush position: one ring position = one 5-min bar flush
@@ -246,6 +246,11 @@ pub struct PoolState {
     /// unready pools fail CLOSED at the gate (emit nothing). Atomic because
     /// the four sleeves' warm-ups run as separate tasks.
     pub(crate) ready: AtomicBool,
+    /// Fund ledger for THIS run. The per-run replacement for the old
+    /// `FUND_LEDGER` thread-local: the run owns it, every sleeve thread
+    /// reads/writes the same instance through the `Arc<PoolState>` the
+    /// gates capture, and it is armed once at warm-up.
+    ledger: RwLock<Option<FundLedger>>,
     /// The lane this pool runs in (backtest builds only). The cfg'd CRUD
     /// seams (the sleeve's working-state reads, the realloc's CASH write)
     /// pass it through instead of assuming the in-memory lane — the
@@ -263,13 +268,46 @@ pub struct PoolState {
 // shared `&PoolState` crosses a thread boundary in this engine.
 unsafe impl Sync for PoolState {}
 
-static POOL: OnceLock<PoolState> = OnceLock::new();
+thread_local! {
+    /// Construction-time lookup ONLY: `FundGate::new` resolves (or creates)
+    /// the run on the thread that builds the chain, and the gate captures
+    /// the `Arc`. Flush paths never read TLS — they use the captured Arc.
+    static CURRENT_POOL: RefCell<Option<Arc<PoolState>>> = const { RefCell::new(None) };
+}
 
 impl PoolState {
-    /// The pool singleton accessor (`None` only before the first
-    /// `FundGate::new` / `init`).
-    pub fn current() -> Option<&'static PoolState> {
-        POOL.get()
+    /// The run created by the latest construction on THIS thread.
+    pub fn current() -> Option<Arc<PoolState>> {
+        CURRENT_POOL.with(|c| c.borrow().clone())
+    }
+
+    /// Construction-time accessor: create this thread's run on first mint.
+    pub fn current_or_init() -> Arc<PoolState> {
+        CURRENT_POOL.with(|c| {
+            let mut slot = c.borrow_mut();
+            slot.get_or_insert_with(|| Arc::new(PoolState::new()))
+                .clone()
+        })
+    }
+
+    /// Drop the thread's construction handle (run end / tests).
+    pub fn clear_current() {
+        CURRENT_POOL.with(|c| *c.borrow_mut() = None);
+    }
+
+    /// Participant count (names == producers in mint order).
+    pub fn names_len(&self) -> usize {
+        unsafe { (&*self.names.get()).len() }
+    }
+
+    /// Snapshot of the minted participant names.
+    pub fn names_snapshot(&self) -> Vec<String> {
+        unsafe { (&*self.names.get()).clone() }
+    }
+
+    /// Narrow the ring to the minted participants (all of them).
+    pub fn set_active_producers(&self, n: usize) {
+        unsafe { &*self.ring.get() }.set_active_producers(&(0..n).collect::<Vec<_>>());
     }
 
     fn new() -> Self {
@@ -285,6 +323,7 @@ impl PoolState {
             fund_scales: UnsafeCell::new(Vec::new()),
             fund_subs: UnsafeCell::new(Vec::new()),
             ready: AtomicBool::new(false),
+            ledger: RwLock::new(None),
             #[cfg(feature = "backtest")]
             mode: UnsafeCell::new(BacktestMode::InMemory),
         }
@@ -307,6 +346,7 @@ impl PoolState {
             *self.residual.get() = 0.0;
             *self.capital.get() = 0.0;
             *self.realloc_month.get() = None;
+            *self.ledger.write().unwrap() = None;
             #[cfg(feature = "backtest")]
             {
                 *self.mode.get() = BacktestMode::InMemory;
@@ -323,6 +363,41 @@ impl PoolState {
     #[cfg(feature = "backtest")]
     pub fn mode(&self) -> BacktestMode {
         unsafe { *self.mode.get() }
+    }
+
+    /// Arm the pool for a run: record the fund capital and unallocated
+    /// residual, set the lane, wire the fund ledger, and READY the gate.
+    /// MUST be called on the thread that owns the fund ledger (the replay
+    /// thread) — `install_ledger` writes a thread-local, so arming from the
+    /// main thread would leave the replay's ledger unset. The fund layer
+    /// owns *when* a run starts; the bin calls this from its replay
+    /// closure, and `init_app` calls the same method for the live wiring.
+    pub fn init(
+        &self,
+        capital: f64,
+        residual: f64,
+        #[cfg(feature = "backtest")] mode: BacktestMode,
+    ) {
+        // Idempotent: all four sleeves armour the same run at warm-up; only
+        // the first call installs the ledger and flips ready.
+        if self.ready.load(Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            *self.capital.get() = capital;
+            *self.residual.get() = residual;
+            #[cfg(feature = "backtest")]
+            {
+                *self.mode.get() = mode;
+            }
+        }
+        let names = unsafe { &*self.names.get() }.clone();
+        let sub = unsafe { &*self.fund_subs.get() }
+            .first()
+            .copied()
+            .unwrap_or(0.0);
+        self.install_ledger(&names, capital, sub);
+        self.ready.store(true, Ordering::Relaxed);
     }
 
     /// Live unallocated-residual report (the realloc rewrites it through
@@ -383,7 +458,7 @@ impl PoolState {
 
     /// `true` once `init` ran — the gate's participant check (unready pools
     /// fail CLOSED at the gate).
-    fn ready(&self) -> bool {
+    pub fn ready(&self) -> bool {
         self.ready.load(Ordering::Relaxed)
     }
 
@@ -579,13 +654,13 @@ impl PoolState {
     /// Wire the ledger from the pool init (names + fund capital +
     /// subscription). Called by `init`/`init_live` — the binaries make NO
     /// separate ledger call.
-    fn install_ledger(names: &[String], capital: f64, sub: f64) {
+    fn install_ledger(&self, names: &[String], capital: f64, sub: f64) {
         let mut led = FundLedger::new(names, capital);
         if sub > 0.0 {
             led.set_subscription(sub);
             tracing::info!("fund ledger: monthly subscription {sub:.2} SGD enabled");
         }
-        FUND_LEDGER.with(|l| *l.borrow_mut() = Some(led));
+        *self.ledger.write().unwrap() = Some(led);
         tracing::info!(
             "fund ledger installed: {} sleeves, e_i = {:.2} SGD each (capital {capital:.2})",
             names.len(),
@@ -761,20 +836,19 @@ impl PoolState {
     /// corrupt every later reconcile by +SE_SLEEVE per sleeve.
     pub fn reconcile_day(&self, et_date: chrono::NaiveDate) {
         let residual = unsafe { *self.residual.get() };
-        FUND_LEDGER.with(|l| {
-            if let Some(l) = l.borrow_mut().as_mut() {
-                let seen = unsafe { &*self.seen.get() };
-                if seen.iter().any(|&s| !s) {
-                    return;
-                }
-                let names = unsafe { &*self.names.get() };
-                if names.is_empty() {
-                    return;
-                }
-                let eqs = unsafe { &*self.last_eqs.get() }.clone();
-                l.on_slot(residual, &eqs, et_date);
+        let mut guard = self.ledger.write().unwrap();
+        if let Some(l) = guard.as_mut() {
+            let seen = unsafe { &*self.seen.get() };
+            if seen.iter().any(|&s| !s) {
+                return;
             }
-        });
+            let names = unsafe { &*self.names.get() };
+            if names.is_empty() {
+                return;
+            }
+            let eqs = unsafe { &*self.last_eqs.get() }.clone();
+            l.on_slot(residual, &eqs, et_date);
+        }
     }
 }
 
@@ -784,7 +858,7 @@ impl PoolState {
 /// second call in the test binary is a silent OnceLock no-op (same names).
 #[cfg(test)]
 pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
-    let p = POOL.get_or_init(PoolState::new);
+    let p = PoolState::current_or_init();
     unsafe {
         *p.names.get() = names.to_vec();
         // Default fund-level params (m_scale 2.0 / subscription 0.0 — the
@@ -794,7 +868,7 @@ pub fn pool_test_init(names: &[String], residual: f64, ledger_capital: f64) {
         *p.residual.get() = residual;
         p.ready.store(true, Ordering::Relaxed);
     }
-    PoolState::install_ledger(names, ledger_capital, 0.0);
+    p.install_ledger(names, ledger_capital, 0.0);
 }
 
 /// Uniform global scale over the concatenated slot books (legacy single-book
@@ -919,6 +993,9 @@ pub struct FundGate {
     /// printed closes extend the map; unprinted syms price at the last
     /// seen close; never-priced syms contribute 0 = `fixed`).
     last_px: HashMap<String, f64>,
+    /// The per-run fund state this gate belongs to (captured at
+    /// construction; every flush reads this Arc, never TLS).
+    pool: Arc<PoolState>,
     /// Participant identity: the producer handle minted from the pool at
     /// construction — `get_producer_idx()` is the pool index keying the
     /// pool-owned books (mint order == names order == sleeve-name order,
@@ -954,14 +1031,19 @@ impl FundGate {
         // construction; minting beyond FUND_PRODUCERS panics — loud, never
         // silent). The FIRST gate construction creates the pool;
         // `pool_init` readies it before any flush.
-        let producer = POOL
-            .get_or_init(PoolState::new)
-            .mint(&own, m_scale, subscription);
+        let pool = PoolState::current_or_init();
+        let producer = pool.mint(&own, m_scale, subscription);
         Self {
             own,
             last_px: HashMap::new(),
+            pool,
             producer,
         }
+    }
+
+    /// The per-run fund state captured by this gate.
+    pub fn pool(&self) -> Arc<PoolState> {
+        self.pool.clone()
     }
 
     /// Fresh close for `sym` (extending `last_px`, legacy gross_pv idiom).
@@ -1125,9 +1207,7 @@ impl FundGate {
         frame: &BarFrame,
         close_window: bool,
     ) -> Option<Vec<ShareOut>> {
-        let Some(p) = PoolState::current() else {
-            return None;
-        };
+        let p = self.pool.clone();
         let mut book: BTreeMap<String, i64> = BTreeMap::new();
         let mut priced = 0.0f64;
         let mut fixed = 0.0f64;
@@ -1200,8 +1280,8 @@ impl GateLogic for FundGate {
         // the participant index is the handle's producer idx, and the book
         // itself lives in the POOL (keyed by that idx).
         let idx = self.producer.get_producer_idx();
-        match PoolState::current() {
-            Some(p) if p.ready() => {
+        let p = self.pool.clone();
+        if p.ready() {
                 // ── 1) fresh emissions overwrite the pool-owned book
                 //       (absolute, legacy `sub_cur[si][sym] = q`); unnamed
                 //       syms retain. ──
@@ -1228,12 +1308,12 @@ impl GateLogic for FundGate {
                 // completer; the engine accounts true up from the sheet's
                 // explicit zeros when the strategy had held positions).
                 let (priced, fixed) = self.fund_gross(p.book(idx), bars);
-                self.participate_and_trim(p, idx, ctx, priced, fixed)
+                self.participate_and_trim(&p, idx, ctx, priced, fixed)
             }
             // Unready pool (bare constructions, pool_init not yet called)
             // fails CLOSED: emit nothing — the legacy non-pooled fail-open
             // pass-through arm was deleted with its kernels.
-            _ => {
+            else {
                 if !WARNED_NO_REGISTRY.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
                         owner = %self.own,
@@ -1242,7 +1322,6 @@ impl GateLogic for FundGate {
                 }
                 Ok(Payload::Intents(Vec::new()))
             }
-        }
     }
 }
 
@@ -1270,12 +1349,6 @@ impl GateLogic for FundGate {
 // `2000·w·(e_i/10k)·s` — at m3.2 (s=4.0, e_i init 12.5k) = `10,000·w`,
 // identical to py MEW m3.20 (`8000·w·1.25`).
 // ═══════════════════════════════════════════════════════════════════════
-
-use std::cell::RefCell;
-
-thread_local! {
-    static FUND_LEDGER: RefCell<Option<FundLedger>> = const { RefCell::new(None) };
-}
 
 /// Ledger state machine (the py SleeveEqLedger book).
 pub struct FundLedger {
@@ -1381,17 +1454,21 @@ impl FundLedger {
     }
 }
 
-/// Clear the thread-local ledger (run end / tests).
+/// Clear this run's ledger (run end / tests).
 #[allow(dead_code)]
-pub fn ledger_clear() {
-    FUND_LEDGER.with(|l| *l.borrow_mut() = None);
+pub fn ledger_clear(pool: &PoolState) {
+    *pool.ledger.write().unwrap() = None;
 }
 
 /// Sleeve's sizing base: the fund-share book `e_i` when the ledger covers
 /// the sleeve, else `None` (caller falls back to own-account equity —
 /// uncovered-name robustness, not a sizing mode).
-pub fn sizing_base(name: &str) -> Option<f64> {
-    FUND_LEDGER.with(|l| l.borrow().as_ref().and_then(|l| l.eq_for(name)))
+pub fn sizing_base(pool: &PoolState, name: &str) -> Option<f64> {
+    pool.ledger
+        .read()
+        .unwrap()
+        .as_ref()
+        .and_then(|l| l.eq_for(name))
 }
 
 #[cfg(test)]
