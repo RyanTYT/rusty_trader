@@ -218,7 +218,17 @@ impl TransactionsOps for TransactionsCRUD<'_> {
             }) => sqlx::query_as!(
                 StockTransactionsFullKeys,
                 r#"
-                    SELECT * 
+                    SELECT
+                        execution_id as "execution_id!",
+                        strategy as "strategy!",
+                        stock as "stock!",
+                        primary_exchange as "primary_exchange!",
+                        currency as "currency!",
+                        order_perm_id as "order_perm_id!",
+                        time as "time!",
+                        price as "price!",
+                        quantity as "quantity!",
+                        fees as "fees!"
                     FROM trading.stock_transactions
                     WHERE stock = $1
                         AND primary_exchange = $2
@@ -303,7 +313,17 @@ impl TransactionsOps for TransactionsCRUD<'_> {
                 TransactionsCRUD::Stock(stk) => sqlx::query_as!(
                     StockTransactionsFullKeys,
                     r#"
-                    SELECT * 
+                    SELECT
+                        execution_id as "execution_id!",
+                        strategy as "strategy!",
+                        stock as "stock!",
+                        primary_exchange as "primary_exchange!",
+                        currency as "currency!",
+                        order_perm_id as "order_perm_id!",
+                        time as "time!",
+                        price as "price!",
+                        quantity as "quantity!",
+                        fees as "fees!"
                     FROM trading.stock_transactions
                     WHERE strategy = $1
                         AND time >= $2
@@ -359,7 +379,17 @@ impl TransactionsOps for TransactionsCRUD<'_> {
                 TransactionsCRUD::Stock(stk) => sqlx::query_as!(
                     StockTransactionsFullKeys,
                     r#"
-                SELECT * 
+                SELECT
+                    execution_id as "execution_id!",
+                    strategy as "strategy!",
+                    stock as "stock!",
+                    primary_exchange as "primary_exchange!",
+                    currency as "currency!",
+                    order_perm_id as "order_perm_id!",
+                    time as "time!",
+                    price as "price!",
+                    quantity as "quantity!",
+                    fees as "fees!"
                 FROM trading.stock_transactions
                 WHERE strategy = $1
                 ORDER BY time ASC;
