@@ -151,7 +151,7 @@ impl<T, const CAPACITY: usize, const NUM_PRODUCERS: usize>
                 }
                 last_producer_idx = new_last_producer_idx;
             }
-            last_producer_idx as usize + 1
+            (last_producer_idx + 1) as usize
         };
 
         MpscRingBufferProducer {
