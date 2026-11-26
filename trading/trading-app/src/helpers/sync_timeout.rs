@@ -45,7 +45,9 @@ where
             Err(_) => Err(TimeoutError::WorkerPanic),
         },
         Err(mpsc::RecvTimeoutError::Timeout) => Err(TimeoutError::Timeout),
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(TimeoutError::Timeout),
+        // A panicking worker drops the completion sender without sending, so the
+        // channel closes while the caller is still waiting.
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(TimeoutError::WorkerPanic),
     }
 }
 
@@ -68,7 +70,7 @@ where
             Ok(inner) => inner.map_err(|e| TimeoutError::Function(e)),
             Err(_) => Err(TimeoutError::WorkerPanic),
         },
-        None => Err(TimeoutError::Timeout),
+        None => Err(TimeoutError::WorkerPanic),
     }
 }
 
