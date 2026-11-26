@@ -72,7 +72,7 @@ impl SyncerEngine {
                 contract_to_full_strategy
                     .entry(hashed_contract)
                     .and_modify(|current_strategy| {
-                        if strategy_detail > *current_strategy {
+                        if strategy_detail < *current_strategy {
                             *current_strategy = strategy_detail.clone();
                         }
                     })
