@@ -263,28 +263,48 @@ fn sharpe_sortino(snapshots: &[EquitySnapshot]) -> (f64, f64) {
 /// fees)` so both the DB (`TransactionsFullKeys`) + the in-memory
 /// (`InMemoryTransaction`) paths can adapt to it.
 fn realized_per_trade_pnl(transactions: &[(&str, &str, &str, f64, f64, f64)]) -> Vec<f64> {
+    // (signed quantity, average cost) per instrument.
     let mut state: HashMap<String, (f64, f64)> = HashMap::new();
+    // Sell-side fees are charged when the sell realizes. A sell that OPENS a
+    // short has nothing to realize yet, so its fee is carried until the buy
+    // that closes the position. Buy-side fees remain ignored (the avg-cost
+    // pairing has always charged only the sell leg).
+    let mut pending_sell_fees: HashMap<String, f64> = HashMap::new();
     let mut pnls = Vec::new();
     for (stock, pe, currency, quantity, price, fees) in transactions {
         let key = format!("{}:{}:{}", stock, pe, currency);
-        let (qty, cost) = state.entry(key).or_insert((0.0, 0.0));
-        if *quantity >= 0.0 {
-            // buy — blend avg cost
-            let new_qty = *qty + *quantity;
+        let (qty, cost) = state.entry(key.clone()).or_insert((0.0, 0.0));
+        let signed = *quantity;
+        let closes = *qty != 0.0 && signed != 0.0 && signed.signum() != qty.signum();
+        if closes {
+            let closed_qty = signed.abs().min(qty.abs());
+            let realized = if *qty > 0.0 {
+                // Closing a long: sell proceeds above average cost.
+                (*price - *cost) * closed_qty
+            } else {
+                // Closing a short: buy back below average cost.
+                (*cost - *price) * closed_qty
+            };
+            let carry = pending_sell_fees.remove(&key).unwrap_or(0.0);
+            let sell_fee = if signed < 0.0 { *fees } else { 0.0 };
+            pnls.push(realized - sell_fee - carry);
+            *qty += signed;
+            if qty.abs() < 1e-9 {
+                *qty = 0.0;
+                *cost = 0.0;
+            } else if signed.abs() > closed_qty + 1e-9 {
+                // Flipped through flat: the excess opens at this trade's price.
+                *cost = *price;
+            }
+        } else {
+            if signed < 0.0 {
+                *pending_sell_fees.entry(key).or_insert(0.0) += *fees;
+            }
+            let new_qty = *qty + signed;
             if new_qty.abs() > 1e-9 {
-                *cost = (*qty * *cost + *quantity * *price) / new_qty;
+                *cost = (*qty * *cost + signed * *price) / new_qty;
             }
             *qty = new_qty;
-        } else {
-            // sell — realize
-            let sell_qty = quantity.abs();
-            let realized_qty = sell_qty.min(qty.abs());
-            let realized = (*price - *cost) * realized_qty - *fees;
-            pnls.push(realized);
-            *qty -= sell_qty;
-            if qty.abs() < 1e-9 {
-                *cost = 0.0;
-            }
         }
     }
     pnls
