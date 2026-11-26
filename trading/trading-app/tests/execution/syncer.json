@@ -1,0 +1,1095 @@
+{
+  "module": "syncer",
+  "cases": [
+    {
+      "name": "positions_insert_broker_only",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 5,
+            "price": 50
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 5,
+            "avg_price": 50
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_zero_local_missing_at_broker",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 5,
+            "price": 50
+          }
+        ]
+      },
+      "streams": {
+        "positions": []
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 0,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_matching_local_is_unchanged",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 5,
+            "price": 50
+          }
+        ]
+      },
+      "streams": {
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 5,
+            "price": 50
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 5,
+            "avg_price": 50
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_cash_and_stock_together",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 2,
+            "price": 40
+          }
+        ]
+      },
+      "streams": {
+        "account": [
+          {
+            "currency": "USD",
+            "cash": 5000
+          }
+        ],
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 5,
+            "price": 50
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 5,
+            "avg_price": 46
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 5000,
+            "avg_price": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_multiple_stocks_options_and_currencies",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 2,
+            "price": 50
+          },
+          {
+            "stock": "MSFT",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 10,
+            "price": 100
+          }
+        ],
+        "option_positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "qty": 5,
+            "price": 3,
+            "expiry": "20261218",
+            "strike": 150.0,
+            "multiplier": "100",
+            "option_type": "call"
+          }
+        ]
+      },
+      "streams": {
+        "account": [
+          {
+            "currency": "USD",
+            "cash": 3000
+          },
+          {
+            "currency": "EUR",
+            "cash": 2500
+          }
+        ],
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 4,
+            "price": 50
+          },
+          {
+            "symbol": "MSFT",
+            "qty": 10,
+            "price": 100
+          },
+          {
+            "symbol": "AAPL",
+            "qty": 7,
+            "price": 3,
+            "option": {
+              "expiry": "20261218",
+              "strike": 150.0,
+              "multiplier": "100",
+              "option_type": "call"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "option",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "expiry": "20261218",
+            "strike": 150,
+            "multiplier": "100",
+            "option_type": "C",
+            "quantity": 7,
+            "avg_price": 3
+          },
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 4,
+            "avg_price": 50
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:EUR",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 2500,
+            "avg_price": 1
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 3000,
+            "avg_price": 1
+          },
+          {
+            "asset": "stock",
+            "stock": "MSFT",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "open_orders_complete_pair_writes_one_row",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 2,
+            "perm_id": 1,
+            "symbol": "AAPL",
+            "qty": 10,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 1,
+            "order_id": 2,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "open_orders_incomplete_pair_writes_nothing",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 4,
+            "perm_id": 3,
+            "symbol": "MSFT",
+            "qty": 5,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual",
+            "emit": "order"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": []
+      }
+    },
+    {
+      "name": "executions_record_a_fill",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "exec-1",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "exec-1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": -1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_are_idempotent_for_a_duplicate_id",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "repeat": 2,
+      "streams": {
+        "executions": [
+          {
+            "id": "exec-2",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "exec-2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": -1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_use_the_default_strategy",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "exec-5",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "",
+            "side": "BOT"
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "exec-5",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_without_a_side_flag_follow_the_transaction_sign",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "exec-6",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": ""
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "exec-6",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": -10,
+            "fees": 0
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_cash_repeat_does_not_duplicate",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "repeat": 2,
+      "streams": {
+        "account": [
+          {
+            "currency": "USD",
+            "cash": 5000
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 5000,
+            "avg_price": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "positions_broker_only_option",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 7,
+            "price": 3,
+            "option": {
+              "expiry": "20261218",
+              "strike": 150.0,
+              "multiplier": "100",
+              "option_type": "call"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "positions": [
+          {
+            "asset": "option",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "expiry": "20261218",
+            "strike": 150,
+            "multiplier": "100",
+            "option_type": "C",
+            "quantity": 7,
+            "avg_price": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "open_orders_multiple_pairs_write_each_row",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 31,
+            "perm_id": 30,
+            "symbol": "NVDA",
+            "qty": 1,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          },
+          {
+            "order_id": 32,
+            "perm_id": 31,
+            "symbol": "NVDA",
+            "qty": 1,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          },
+          {
+            "order_id": 33,
+            "perm_id": 32,
+            "symbol": "NVDA",
+            "qty": 1,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 30,
+            "order_id": 31,
+            "strategy": "manual",
+            "stock": "NVDA",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 1,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          },
+          {
+            "asset": "stock",
+            "order_perm_id": 31,
+            "order_id": 32,
+            "strategy": "manual",
+            "stock": "NVDA",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 1,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          },
+          {
+            "asset": "stock",
+            "order_perm_id": 32,
+            "order_id": 33,
+            "strategy": "manual",
+            "stock": "NVDA",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 1,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "open_orders_repeat_is_idempotent",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "repeat": 2,
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 41,
+            "perm_id": 40,
+            "symbol": "AMD",
+            "qty": 7,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 40,
+            "order_id": 41,
+            "strategy": "manual",
+            "stock": "AMD",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 7,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "open_orders_stream_error_stops_before_writing",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 21,
+            "perm_id": 20,
+            "symbol": "TSLA",
+            "qty": 3,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual",
+            "emit": "order"
+          },
+          {
+            "error": "stream failed"
+          },
+          {
+            "order_id": 21,
+            "perm_id": 20,
+            "symbol": "TSLA",
+            "qty": 3,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual",
+            "emit": "status"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": []
+      }
+    },
+    {
+      "name": "open_orders_use_the_default_strategy",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "open_orders": [
+          {
+            "order_id": 51,
+            "perm_id": 50,
+            "symbol": "AAPL",
+            "qty": 2,
+            "filled": 0,
+            "status": "Submitted"
+          }
+        ]
+      },
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 50,
+            "order_id": 51,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 2,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_stop_on_stream_error",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "E1",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          },
+          {
+            "error": "stream failed"
+          },
+          {
+            "id": "E2",
+            "order_id": 2,
+            "symbol": "AAPL",
+            "shares": 5,
+            "cumulative": 5,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": -1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_without_events_write_nothing",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": []
+      },
+      "expect": {
+        "transactions": [],
+        "positions": []
+      }
+    },
+    {
+      "name": "executions_and_positions_do_not_interfere",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "E1",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          }
+        ],
+        "account": [
+          {
+            "currency": "USD",
+            "cash": -1000
+          }
+        ],
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 10,
+            "price": 100
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": -1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "executions_open_orders_and_positions_do_not_interfere",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "streams": {
+        "executions": [
+          {
+            "id": "E1",
+            "order_id": 1,
+            "symbol": "AAPL",
+            "shares": 10,
+            "cumulative": 10,
+            "price": 100,
+            "reference": "manual",
+            "side": "BOT"
+          }
+        ],
+        "open_orders": [
+          {
+            "order_id": 41,
+            "perm_id": 40,
+            "symbol": "AAPL",
+            "qty": 10,
+            "filled": 0,
+            "status": "Submitted",
+            "reference": "manual"
+          }
+        ],
+        "account": [
+          {
+            "currency": "USD",
+            "cash": -1000
+          }
+        ],
+        "positions": [
+          {
+            "symbol": "AAPL",
+            "qty": 10,
+            "price": 100
+          }
+        ]
+      },
+      "expect": {
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 0,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100,
+            "quantity": 10,
+            "fees": 0
+          }
+        ],
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 40,
+            "order_id": 41,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": 10,
+            "avg_price": 100
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": -1000,
+            "avg_price": 0
+          }
+        ]
+      }
+    }
+  ]
+}

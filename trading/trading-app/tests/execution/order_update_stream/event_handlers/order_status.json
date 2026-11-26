@@ -1,0 +1,128 @@
+{
+  "module": "order_status",
+  "cases": [
+    {
+      "name": "submitted_is_read_only",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        { "type": "status", "action": "submitted", "order_id": 88, "perm_id": 55, "filled": 4, "remaining": 6 }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancelled_deletes_stock_row",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          },
+          {
+            "perm_id": 66,
+            "order_id": 99,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        { "type": "status", "action": "cancelled", "order_id": 88, "perm_id": 55, "filled": 0, "remaining": 10 }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 66,
+            "order_id": 99,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancelled_deletes_option_row",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "asset": "option",
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "expiry": "20261218",
+            "strike": 150,
+            "multiplier": "100",
+            "option_type": "Call",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        { "type": "status", "action": "cancelled", "order_id": 88, "perm_id": 55, "filled": 0, "remaining": 10 }
+      ],
+      "expect": {
+        "open_orders": []
+      }
+    },
+    {
+      "name": "cancelled_missing_rows_noop",
+      "db": {
+        "strategies": ["strat"]
+      },
+      "events": [
+        { "type": "status", "action": "cancelled", "order_id": 2, "perm_id": 1, "filled": 0, "remaining": 0 }
+      ],
+      "expect": {
+        "open_orders": []
+      }
+    }
+  ]
+}

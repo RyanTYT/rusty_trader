@@ -1,0 +1,225 @@
+{
+  "module": "open_order",
+  "cases": [
+    {
+      "name": "submitted_replaces_the_optimistic_row",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": -1,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "submitted",
+          "order_id": 88,
+          "perm_id": 55,
+          "action": "Buy",
+          "quantity": 10,
+          "symbol": "AAPL",
+          "security_type": "Stock",
+          "primary_exchange": "NASDAQ",
+          "order_ref": "strat"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submitted_rejects_an_unvalidated_contract",
+      "market": { "validates": false },
+      "db": { "strategies": ["strat"] },
+      "events": [
+        {
+          "type": "submitted",
+          "order_id": 88,
+          "perm_id": 55,
+          "action": "Buy",
+          "quantity": 10,
+          "symbol": "AAPL",
+          "security_type": "Stock",
+          "primary_exchange": "NASDAQ",
+          "order_ref": "strat"
+        }
+      ],
+      "expect": { "open_orders": [] }
+    },
+    {
+      "name": "submitted_rejects_a_dead_consolidator",
+      "market": { "dead": true },
+      "db": { "strategies": ["strat"] },
+      "events": [
+        {
+          "type": "submitted",
+          "order_id": 88,
+          "perm_id": 55,
+          "action": "Buy",
+          "quantity": 10,
+          "symbol": "AAPL",
+          "security_type": "Stock",
+          "primary_exchange": "NASDAQ",
+          "order_ref": "strat"
+        }
+      ],
+      "expect": { "open_orders": [] }
+    },
+    {
+      "name": "submitted_is_idempotent_for_an_acknowledged_order",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "submitted",
+          "order_id": 88,
+          "perm_id": 55,
+          "action": "Buy",
+          "quantity": 10,
+          "symbol": "AAPL",
+          "security_type": "Stock",
+          "primary_exchange": "NASDAQ",
+          "order_ref": "strat"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancelled_removes_acknowledged_and_optimistic_rows",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          },
+          {
+            "perm_id": -1,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "cancelled",
+          "order_id": 88,
+          "perm_id": 55,
+          "symbol": "AAPL",
+          "security_type": "Stock"
+        }
+      ],
+      "expect": { "open_orders": [] }
+    },
+    {
+      "name": "cancelled_keeps_other_orders",
+      "db": {
+        "strategies": ["strat"],
+        "open_orders": [
+          {
+            "perm_id": 55,
+            "order_id": 88,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          },
+          {
+            "perm_id": 66,
+            "order_id": 99,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "qty": 10,
+            "filled": 0
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "cancelled",
+          "order_id": 88,
+          "perm_id": 55,
+          "symbol": "AAPL",
+          "security_type": "Stock"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 66,
+            "order_id": 99,
+            "strategy": "strat",
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "currency": "USD",
+            "quantity": 10,
+            "parent_order_id": 0,
+            "filled": 0,
+            "executions": []
+          }
+        ]
+      }
+    }
+  ]
+}

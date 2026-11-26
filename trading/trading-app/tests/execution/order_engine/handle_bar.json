@@ -1,0 +1,1391 @@
+{
+  "module": "handle_bar",
+  "cases": [
+    {
+      "name": "no_action",
+      "db": {},
+      "outcome": {
+        "type": "no_action"
+      },
+      "expect": {
+        "tables": {
+          "targets": [],
+          "positions": [],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "emit_cancels_then_places",
+      "db": {
+        "strategies": [
+          "strat"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat",
+            "qty": 10,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "emit",
+        "place": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5,
+            "order_ref": "strat",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "cancel": [
+          {
+            "stock": "AAPL",
+            "perm_id": 77,
+            "order_id": 88,
+            "qty": 10
+          }
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [],
+          "positions": [],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat",
+              "stock": "MSFT",
+              "primary_exchange": "",
+              "currency": "USD",
+              "quantity": 5.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "MSFT",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 5.0,
+              "order_ref": "strat",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": [
+            88
+          ]
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "residual_after_partial_fill",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 100000
+          }
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat:1",
+            "qty": 4,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 100000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 6.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            },
+            {
+              "asset": "stock",
+              "order_perm_id": 77,
+              "order_id": 88,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 4.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 6.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "replace_oversized_open_order",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 100000
+          }
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat:1",
+            "qty": 15,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 100000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": [
+            88
+          ]
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "opposite_position_with_margin",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": -10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 100
+          }
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat:1",
+            "qty": 5,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": -10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 100.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": -10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Sell",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": [
+            88
+          ]
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "sell_without_margin_places_nothing",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": -10
+          }
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat:1",
+            "qty": 5,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": -10.0
+            }
+          ],
+          "positions": [],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": 77,
+              "order_id": 88,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 5.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "park_underfunded_order",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 5
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 5.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {
+          "strat": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "foreign_currency_root_fx",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "SAP",
+            "exchange": "IBIS",
+            "currency": "EUR",
+            "price": 100,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 100000
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "IBIS",
+              "currency": "EUR",
+              "stock": "SAP",
+              "avg_price": 100.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 100000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat",
+              "stock": "FX:USD/EUR",
+              "primary_exchange": "",
+              "currency": "EUR",
+              "quantity": -10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "USD",
+              "security_type": "ForexPair",
+              "action": "Sell",
+              "quantity": 10.0,
+              "order_ref": "strat",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {
+          "strat": [
+            {
+              "symbol": "SAP",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "multi_stocks_and_fx",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10
+          },
+          {
+            "asset": "stock",
+            "stock": "MSFT",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 1,
+            "qty": 5
+          },
+          {
+            "asset": "stock",
+            "stock": "SAP",
+            "exchange": "IBIS",
+            "currency": "EUR",
+            "price": 1,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 1000
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 1.0,
+              "quantity": 10.0
+            },
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "MSFT",
+              "avg_price": 1.0,
+              "quantity": 5.0
+            },
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "IBIS",
+              "currency": "EUR",
+              "stock": "SAP",
+              "avg_price": 1.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 1000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat",
+              "stock": "FX:USD/EUR",
+              "primary_exchange": "",
+              "currency": "EUR",
+              "quantity": -10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            },
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1001,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            },
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1002,
+              "strategy": "strat:1",
+              "stock": "MSFT",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 5.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            },
+            {
+              "symbol": "MSFT",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 5.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            },
+            {
+              "symbol": "USD",
+              "security_type": "ForexPair",
+              "action": "Sell",
+              "quantity": 10.0,
+              "order_ref": "strat",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {
+          "strat": [
+            {
+              "symbol": "SAP",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "option_opening_is_funded_from_stock_cash",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "option",
+            "stock": "AAPL",
+            "exchange": "",
+            "currency": "USD",
+            "expiry": "20261218",
+            "strike": 150,
+            "multiplier": "100",
+            "option_type": "Call",
+            "price": 1,
+            "qty": 2
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 100000
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "option"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "option",
+              "strategy": "strat",
+              "primary_exchange": "",
+              "currency": "USD",
+              "stock": "AAPL",
+              "expiry": "20261218",
+              "strike": 150.0,
+              "multiplier": "100",
+              "option_type": "C",
+              "avg_price": 1.0,
+              "quantity": 2.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 100000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "option",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "",
+              "currency": "USD",
+              "expiry": "20261218",
+              "strike": 150.0,
+              "multiplier": "100",
+              "option_type": "C",
+              "quantity": 2.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Option",
+              "action": "Buy",
+              "quantity": 2.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "pending_without_targets_places_nothing",
+      "db": {},
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [],
+          "positions": [],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "matching_position_places_nothing",
+      "db": {
+        "strategies": [
+          "strat"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 100,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 100,
+            "qty": 10
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 100.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 10.0,
+              "avg_price": 100.0
+            }
+          ],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "covered_by_open_orders_places_nothing",
+      "db": {
+        "strategies": [
+          "strat"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 100,
+            "qty": 10
+          }
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat",
+            "qty": 10,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 100.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": 77,
+              "order_id": 88,
+              "strategy": "strat",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "uncovered_target_places_full_quantity",
+      "db": {
+        "strategies": [
+          "strat",
+          "strat:1"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 100,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10000
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 100.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 10000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat:1",
+              "stock": "AAPL",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "quantity": 10.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 10.0,
+              "order_ref": "strat:1",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "emit_only_places",
+      "db": {
+        "strategies": [
+          "strat"
+        ]
+      },
+      "outcome": {
+        "type": "emit",
+        "place": [
+          {
+            "symbol": "AAPL",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "strat",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "cancel": []
+      },
+      "expect": {
+        "tables": {
+          "targets": [],
+          "positions": [],
+          "open_orders": [
+            {
+              "asset": "stock",
+              "order_perm_id": -1,
+              "order_id": 1000,
+              "strategy": "strat",
+              "stock": "AAPL",
+              "primary_exchange": "",
+              "currency": "USD",
+              "quantity": 5.0,
+              "parent_order_id": 0,
+              "filled": 0.0,
+              "executions": []
+            }
+          ]
+        },
+        "router": {
+          "placed": [
+            {
+              "symbol": "AAPL",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 5.0,
+              "order_ref": "strat",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "cancel_only_cancels",
+      "db": {
+        "strategies": [
+          "strat"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "strat",
+            "qty": 10,
+            "filled": 0,
+            "primary_exchange": "NASDAQ"
+          }
+        ]
+      },
+      "outcome": {
+        "type": "emit",
+        "place": [],
+        "cancel": [
+          {
+            "stock": "AAPL",
+            "primary_exchange": "NASDAQ",
+            "perm_id": 77,
+            "order_id": 88,
+            "qty": 10
+          }
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [],
+          "positions": [],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": [
+            88
+          ]
+        },
+        "store": {}
+      }
+    },
+    {
+      "name": "fx_strategy_defers_to_its_own_path",
+      "is_fx_strategy": true,
+      "db": {
+        "strategies": [
+          "strat"
+        ],
+        "targets": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "price": 100,
+            "qty": 10
+          }
+        ],
+        "positions": [
+          {
+            "stock": "CASH:USD",
+            "currency": "USD",
+            "price": 1,
+            "qty": 10000
+          }
+        ]
+      },
+      "outcome": {
+        "type": "pending",
+        "asset_types": [
+          "stock"
+        ]
+      },
+      "expect": {
+        "tables": {
+          "targets": [
+            {
+              "asset": "stock",
+              "strategy": "strat",
+              "primary_exchange": "NASDAQ",
+              "currency": "USD",
+              "stock": "AAPL",
+              "avg_price": 100.0,
+              "quantity": 10.0
+            }
+          ],
+          "positions": [
+            {
+              "asset": "stock",
+              "stock": "CASH:USD",
+              "primary_exchange": "",
+              "currency": "USD",
+              "strategy": "strat",
+              "quantity": 10000.0,
+              "avg_price": 1.0
+            }
+          ],
+          "open_orders": []
+        },
+        "router": {
+          "placed": [],
+          "cancelled": []
+        },
+        "store": {}
+      }
+    }
+  ]
+}

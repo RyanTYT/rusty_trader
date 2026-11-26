@@ -1,0 +1,1765 @@
+{
+  "module": "events",
+  "cases": [
+    {
+      "name": "commission_before_execution",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 1.25
+        },
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 1.25
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "commission_after_execution",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 1.25
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 1.25
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "duplicate_commission_upserts",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 1.25
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 2.5
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [],
+        "transactions": [],
+        "staged_commissions": [
+          {
+            "execution_id": "E1",
+            "fees": 2.5
+          }
+        ]
+      }
+    },
+    {
+      "name": "commission_for_unknown_execution_stages_only",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "UNKNOWN",
+          "fees": 0.99
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": [
+          {
+            "execution_id": "UNKNOWN",
+            "fees": 0.99
+          }
+        ]
+      }
+    },
+    {
+      "name": "two_executions_interleaved_with_commissions",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "execution",
+          "id": "E2",
+          "order_id": 89,
+          "perm_id": 78,
+          "shares": 5.0,
+          "cumulative": 5.0,
+          "price": 101.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E2",
+          "fees": 0.5
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.25
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -15.0,
+            "avg_price": 100.333333
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1505.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.25
+          },
+          {
+            "asset": "stock",
+            "execution_id": "E2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 78,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 101.0,
+            "quantity": -5.0,
+            "fees": 0.5
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "execution_replay_after_commission_is_idempotent",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.75
+        },
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.75
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "partial_then_full_fill_with_commission",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 0.0,
+            "stock": "AAPL",
+            "currency": "USD"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 4.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.4
+        },
+        {
+          "type": "execution",
+          "id": "E2",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 6.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E2",
+          "fees": 0.6
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -4.0,
+            "fees": 0.4
+          },
+          {
+            "asset": "stock",
+            "execution_id": "E2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -6.0,
+            "fees": 0.6
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "commissions_staged_before_two_executions",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.1
+        },
+        {
+          "type": "commission",
+          "execution_id": "E2",
+          "fees": 0.2
+        },
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 3.0,
+          "cumulative": 3.0,
+          "price": 50.0,
+          "reference": "manual"
+        },
+        {
+          "type": "execution",
+          "id": "E2",
+          "order_id": 89,
+          "perm_id": 78,
+          "shares": 2.0,
+          "cumulative": 2.0,
+          "price": 50.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -5.0,
+            "avg_price": 50.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 250.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 50.0,
+            "quantity": -3.0,
+            "fees": 0.1
+          },
+          {
+            "asset": "stock",
+            "execution_id": "E2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 78,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 50.0,
+            "quantity": -2.0,
+            "fees": 0.2
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "amended_commission_after_apply_overwrites",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.5
+        },
+        {
+          "type": "commission",
+          "execution_id": "E1",
+          "fees": 0.9
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.9
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "fill_without_open_order_records_transaction",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "duplicate_execution_is_ignored",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "partial_fill_uses_cumulative_quantity",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 0.0,
+            "stock": "AAPL",
+            "currency": "USD"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 8.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 10.0,
+            "parent_order_id": 0,
+            "filled": 8.0,
+            "executions": [
+              "E1"
+            ]
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -4.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 400.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -4.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "full_fill_deletes_open_order",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 0.0,
+            "stock": "AAPL",
+            "currency": "USD"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "execution_already_on_open_order_is_ignored",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 3.0,
+            "stock": "AAPL",
+            "currency": "USD",
+            "executions": [
+              "E1"
+            ]
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 4.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 10.0,
+            "parent_order_id": 0,
+            "filled": 3.0,
+            "executions": [
+              "E1"
+            ]
+          }
+        ],
+        "positions": [],
+        "transactions": [],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "unvalidated_contract_is_rejected",
+      "market": {
+        "validates": false
+      },
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [],
+        "transactions": [],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "late_earlier_execution_after_full_fill",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 0.0,
+            "stock": "AAPL",
+            "currency": "USD"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E_final",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 6.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "execution",
+          "id": "E_early",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 4.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E_early",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -4.0,
+            "fees": 0.0
+          },
+          {
+            "asset": "stock",
+            "execution_id": "E_final",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -6.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "fills_for_one_open_order_accumulate",
+      "db": {
+        "strategies": [
+          "manual"
+        ],
+        "open_orders": [
+          {
+            "perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "quantity": 10.0,
+            "filled": 0.0,
+            "stock": "AAPL",
+            "currency": "USD"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "E1",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 4.0,
+          "price": 100.0,
+          "reference": "manual"
+        },
+        {
+          "type": "execution",
+          "id": "E2",
+          "order_id": 88,
+          "perm_id": 77,
+          "shares": 4.0,
+          "cumulative": 8.0,
+          "price": 100.0,
+          "reference": "manual"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": 77,
+            "order_id": 88,
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 10.0,
+            "parent_order_id": 0,
+            "filled": 8.0,
+            "executions": [
+              "E1",
+              "E2"
+            ]
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -8.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 800.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "E1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -4.0,
+            "fees": 0.0
+          },
+          {
+            "asset": "stock",
+            "execution_id": "E2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 77,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -4.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": []
+      }
+    },
+    {
+      "name": "parked_order_is_placed_after_the_fill",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "store": {
+        "manual": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual:50"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "PARK1",
+          "order_id": 91,
+          "perm_id": 81,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual",
+          "side": "SLD"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": -1,
+            "order_id": 1000,
+            "strategy": "manual",
+            "stock": "MSFT",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 5.0,
+            "parent_order_id": 0,
+            "filled": 0.0,
+            "executions": []
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "PARK1",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 81,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": [],
+        "router": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "store": {}
+      }
+    },
+    {
+      "name": "failed_parked_placement_is_re_parked",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "store": {
+        "manual": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual:50"
+          }
+        ]
+      },
+      "router_failures": [
+        0
+      ],
+      "events": [
+        {
+          "type": "execution",
+          "id": "PARK2",
+          "order_id": 92,
+          "perm_id": 82,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual",
+          "side": "SLD"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "PARK2",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 82,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": [],
+        "router": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "store": {
+          "manual": [
+            {
+              "symbol": "MSFT",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 5.0,
+              "order_ref": "manual:50",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "partially_failed_parked_batch_re_parks_only_failures",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "store": {
+        "manual": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual:50"
+          },
+          {
+            "symbol": "NVDA",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 4.0,
+            "order_ref": "manual:25"
+          }
+        ]
+      },
+      "router_failures": [
+        0
+      ],
+      "events": [
+        {
+          "type": "execution",
+          "id": "PARK3",
+          "order_id": 93,
+          "perm_id": 83,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual",
+          "side": "SLD"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": -1,
+            "order_id": 1001,
+            "strategy": "manual",
+            "stock": "NVDA",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 4.0,
+            "parent_order_id": 0,
+            "filled": 0.0,
+            "executions": []
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "PARK3",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 83,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": [],
+        "router": [
+          {
+            "symbol": "NVDA",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 4.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          },
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "store": {
+          "manual": [
+            {
+              "symbol": "MSFT",
+              "security_type": "Stock",
+              "action": "Buy",
+              "quantity": 5.0,
+              "order_ref": "manual:50",
+              "parent_id": 0,
+              "transmit": true,
+              "order_type": "Market",
+              "limit_price": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "multiple_parked_orders_are_all_placed",
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "store": {
+        "manual": [
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual:50"
+          },
+          {
+            "symbol": "NVDA",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 4.0,
+            "order_ref": "manual:25"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "PARK4",
+          "order_id": 94,
+          "perm_id": 84,
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual",
+          "side": "SLD"
+        }
+      ],
+      "expect": {
+        "open_orders": [
+          {
+            "asset": "stock",
+            "order_perm_id": -1,
+            "order_id": 1000,
+            "strategy": "manual",
+            "stock": "MSFT",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 5.0,
+            "parent_order_id": 0,
+            "filled": 0.0,
+            "executions": []
+          },
+          {
+            "asset": "stock",
+            "order_perm_id": -1,
+            "order_id": 1001,
+            "strategy": "manual",
+            "stock": "NVDA",
+            "primary_exchange": "",
+            "currency": "USD",
+            "quantity": 4.0,
+            "parent_order_id": 0,
+            "filled": 0.0,
+            "executions": []
+          }
+        ],
+        "positions": [
+          {
+            "asset": "stock",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "strategy": "manual",
+            "quantity": -10.0,
+            "avg_price": 100.0
+          },
+          {
+            "asset": "stock",
+            "stock": "CASH:USD",
+            "primary_exchange": "",
+            "currency": "SGD",
+            "strategy": "manual",
+            "quantity": 1000.0,
+            "avg_price": 0.0
+          }
+        ],
+        "transactions": [
+          {
+            "asset": "stock",
+            "execution_id": "PARK4",
+            "strategy": "manual",
+            "stock": "AAPL",
+            "primary_exchange": "",
+            "currency": "USD",
+            "order_perm_id": 84,
+            "time": "2026-11-25T15:00:00+00:00",
+            "price": 100.0,
+            "quantity": -10.0,
+            "fees": 0.0
+          }
+        ],
+        "staged_commissions": [],
+        "router": [
+          {
+            "symbol": "NVDA",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 4.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          },
+          {
+            "symbol": "MSFT",
+            "security_type": "Stock",
+            "action": "Buy",
+            "quantity": 5.0,
+            "order_ref": "manual",
+            "parent_id": 0,
+            "transmit": true,
+            "order_type": "Market",
+            "limit_price": null
+          }
+        ],
+        "store": {}
+      }
+    },
+    {
+      "name": "cash_execution_is_rejected",
+      "note": "SecurityType has no Cash variant; `Cash` decodes to Other(\"CASH\") (see tests/common/scenario/contract.rs), which AssetType::from_str maps to Unknown. The CASH arm in src/execution/order_update_stream/event_handlers/execution.rs:73 is therefore unreachable from a Contract, but the execution is still rejected before any write.",
+      "expects_error": true,
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "CASH1",
+          "order_id": 95,
+          "perm_id": 85,
+          "symbol": "CASH",
+          "security_type": "Cash",
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 1.0,
+          "reference": "manual",
+          "side": "BOT"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [],
+        "transactions": [],
+        "staged_commissions": [],
+        "router": [],
+        "store": {}
+      }
+    },
+    {
+      "name": "unknown_asset_execution_is_rejected",
+      "expects_error": true,
+      "db": {
+        "strategies": [
+          "manual"
+        ]
+      },
+      "events": [
+        {
+          "type": "execution",
+          "id": "IDX1",
+          "order_id": 96,
+          "perm_id": 86,
+          "symbol": "SPX",
+          "security_type": "Index",
+          "shares": 10.0,
+          "cumulative": 10.0,
+          "price": 100.0,
+          "reference": "manual",
+          "side": "BOT"
+        }
+      ],
+      "expect": {
+        "open_orders": [],
+        "positions": [],
+        "transactions": [],
+        "staged_commissions": [],
+        "router": [],
+        "store": {}
+      }
+    }
+  ]
+}
