@@ -94,7 +94,7 @@ where
     let strategy_name = if execution_data.execution.order_reference != "" {
         execution_data.execution.order_reference.clone()
     } else {
-        "unknown".to_string()
+        default_strategy.to_string()
     };
 
     let strategy_detail = strategy_details
@@ -273,7 +273,7 @@ where
                     quantity: Some(*quantity),
                     parent_order_id: None,
                     executions: Some(executions),
-                    filled: Some(filled + execution_data.execution.shares),
+                    filled: Some(filled.max(execution_data.execution.cumulative_quantity)),
                 }),
                 OpenOrdersFullKeys::Options(OpenOptionOrdersFullKeys {
                     time,
@@ -293,7 +293,7 @@ where
                     quantity: Some(*quantity),
                     parent_order_id: None,
                     executions: Some(executions),
-                    filled: Some(filled + execution_data.execution.shares),
+                    filled: Some(filled.max(execution_data.execution.cumulative_quantity)),
                 }),
             })
         };
