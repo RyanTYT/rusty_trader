@@ -776,6 +776,14 @@ impl CurrentPositionsOps for CurrentPositionsCRUD<'_> {
                     avg_price = CASE 
                         -- Avoid division by zero if total quantity becomes 0
                         WHEN (current_stock_positions.quantity + EXCLUDED.quantity) = 0 THEN 0
+                        -- Opposite order LARGER than the position: the direction
+                        -- flips, so the residual position is carried at the new
+                        -- order's price, not the old average.
+                        WHEN SIGN(current_stock_positions.quantity) != SIGN(EXCLUDED.quantity)
+                             AND ABS(EXCLUDED.quantity) > ABS(current_stock_positions.quantity)
+                        THEN EXCLUDED.avg_price
+                        -- Opposite order smaller (or exactly equal): a partial
+                        -- close leaves the surviving position at its average.
                         WHEN SIGN(current_stock_positions.quantity) != SIGN(EXCLUDED.quantity) THEN current_stock_positions.avg_price
                         ELSE (
                             (current_stock_positions.quantity * current_stock_positions.avg_price) + 
@@ -838,6 +846,15 @@ impl CurrentPositionsOps for CurrentPositionsCRUD<'_> {
                     avg_price = CASE 
                         -- Avoid division by zero if total quantity becomes 0
                         WHEN (current_option_positions.quantity + EXCLUDED.quantity) = 0 THEN 0
+                        -- Opposite order LARGER than the position: the direction
+                        -- flips, so the residual position is carried at the new
+                        -- order's price, not the old average.
+                        WHEN SIGN(current_option_positions.quantity) != SIGN(EXCLUDED.quantity)
+                             AND ABS(EXCLUDED.quantity) > ABS(current_option_positions.quantity)
+                        THEN EXCLUDED.avg_price
+                        -- Opposite order smaller (or exactly equal): a partial
+                        -- close leaves the surviving position at its average.
+                        WHEN SIGN(current_option_positions.quantity) != SIGN(EXCLUDED.quantity) THEN current_option_positions.avg_price
                         ELSE (
                             (current_option_positions.quantity * current_option_positions.avg_price) + 
                             (EXCLUDED.quantity * EXCLUDED.avg_price)
