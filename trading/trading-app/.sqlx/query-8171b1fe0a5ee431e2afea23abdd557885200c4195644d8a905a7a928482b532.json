@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT COUNT(*)\n                    FROM (\n                        SELECT 1\n                        FROM market_data.historical_forex_data\n                        WHERE pair = $2\n                            AND bid_open IS NOT NULL\n                            AND ask_open IS NOT NULL\n                            AND time >= $3\n                        LIMIT $1\n                    ) sub;\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8171b1fe0a5ee431e2afea23abdd557885200c4195644d8a905a7a928482b532"
+}
