@@ -543,7 +543,7 @@ async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), 
         // close-aware cap basis never engages and de-gross orders fire at the
         // next session's first slot instead of at the close (the pins-parity
         // divergence). Env-gated: a no-op unless BLENDED5_CLOSE_AWARE=1.
-        crate::strategy::blended5_fund::session_calendar::install_from_slots(&bars_arc[split..]);
+        crate::schedule::session_calendar::install_from_slots(&bars_arc[split..]);
         crate::backtester::methods::HistoricalReplay.run_multi(
             crate::backtester::methods::historical::DbMultiContext {
                 config: config_clone,

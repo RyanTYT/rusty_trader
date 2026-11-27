@@ -10,5 +10,6 @@
 
 pub mod broker_scheduler;
 pub mod contract_scheduler;
+pub mod session_calendar;
 #[cfg(not(feature = "backtest"))]
 pub mod program_scheduler;

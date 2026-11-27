@@ -84,11 +84,20 @@ use super::mpsc::{MpscRingBuffer, MpscRingBufferProducer};
 use crate::backtester::methods::in_memory::diag;
 #[cfg(feature = "backtest")]
 use crate::backtester::setup::config::BacktestMode;
-use crate::strategy::blended5_fund::fund::{EOD_CAP, INTRA_CAP, USD_FX};
 use crate::strategy_wrappers::gate::GateLogic;
 use crate::strategy_wrappers::intent::Intent;
 use crate::strategy_wrappers::payload::{BarFrame, Payload, ShareOut};
 use crate::strategy_wrappers::strategy::ClockCtx;
+
+/// SGD per USD — the fixed FX table shared by both engines (fx parity).
+///
+/// The gate uses it only in its cap arithmetic (`fund_eq_sgd / USD_FX`); the
+/// per-sleeve scale is the raw SGD equity over `SE_SLEEVE`.
+pub const USD_FX: f64 = 1.2713;
+/// Battery-exact end-of-day cap multiple (fund.py: EOD 1.95).
+pub const EOD_CAP: f64 = 1.95;
+/// Battery-exact intraday cap multiple (fund.py: intra 4.0).
+pub const INTRA_CAP: f64 = 4.0;
 
 /// DIAG seam (backtest-only; live = off).
 #[cfg(feature = "backtest")]
