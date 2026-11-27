@@ -1,0 +1,220 @@
+{
+  "config": {
+    "start": "2021-01-01T00:00:00Z",
+    "end": "2026-07-01T00:00:00Z",
+    "oos_fraction": 0.3,
+    "optimizer": "tpe",
+    "n_evaluations": 100,
+    "batch_size": 8,
+    "top_k": 10,
+    "grid_steps": 5,
+    "starting_capital_sgd": 100000.0,
+    "validation": "holdout",
+    "seed": 42,
+    "walk_forward": {
+      "in_sample_days": 365,
+      "out_sample_days": 180
+    }
+  },
+  "relative": {
+    "activated": true,
+    "contracts": [
+      { "stock": "NVDA", "primary_exchange": "NASDAQ", "currency": "USD", "asset_type": "stock"},
+      { "stock": "AMD",  "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "AVGO", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "MU",   "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "QCOM", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "TXN",  "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "TSLA", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "META", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "AMZN", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "GOOGL","primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "MSFT", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "AAPL", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "NFLX", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "CRM",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "ADBE", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "XOM",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "CVX",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "COP",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "SLB",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "MPC",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "CAT",  "primary_exchange": "ARCA",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "DE",   "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "GE",   "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "LIN",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "FCX",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "JPM",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "BAC",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "GS",   "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "SCHW", "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "HD",   "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "LOW",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "NKE",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "SBUX", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "UNH",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "LLY",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "PFE",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "DIS",  "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "T",    "primary_exchange": "NYSE",   "currency": "USD",  "asset_type": "stock"},
+      { "stock": "COIN", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "PYPL", "primary_exchange": "NASDAQ", "currency": "USD",  "asset_type": "stock"},
+      { "stock": "QQQ", "primary_exchange": "NASDAQ", "currency": "USD" , "asset_type": "stock"}
+    ],
+    "params":[
+      { "name": "outperformance_threshold", "value_type": "F64", "distribution": { "Continuous": { "min": 0.5, "max": 3.0, "modes": [{ "mean": 1.5, "std": 0.5, "weight": 1.0 }] } } },
+      { "name": "entry_time_minutes", "value_type": "F64", "distribution": { "Discrete": [15.0, 30.0, 45.0, 60.0] } },
+      { "name": "exit_time_minutes", "value_type": "F64", "distribution": { "Discrete": [330.0, 345.0, 360.0, 375.0] } },
+      { "name": "allow_shorting", "value_type": "Bool", "distribution": { "Discrete": [0.0, 1.0] } },
+      { "name": "risk_pct_per_trade", "value_type": "F64", "distribution": { "Continuous": { "min": 0.0025, "max": 0.02, "modes": [{ "mean": 0.01, "std": 0.004, "weight": 1.0 }] } } },
+      { "name": "avg_move_lookback", "value_type": "F64", "distribution": { "Discrete": [10.0, 15.0, 20.0, 30.0] } },
+      { "name": "max_risk_multiplier", "value_type": "F64", "distribution": { "Continuous": { "min": 1.0, "max": 5.0, "modes": [{ "mean": 3.0, "std": 1.0, "weight": 1.0 }] } } },
+      { "name": "max_alloc_pct_per_instrument", "value_type": "F64", "distribution": { "Continuous": { "min": 0.1, "max": 0.4, "modes": [{ "mean": 0.25, "std": 0.075, "weight": 1.0 }] } } },
+      { "name": "z_reversal_threshold", "value_type": "F64", "distribution": { "Continuous": { "min": 2.0, "max": 5.0, "modes": [{ "mean": 3.0, "std": 0.5, "weight": 1.0 }] } } },
+      { "name": "reversal_exit_enabled", "value_type": "Bool", "distribution": { "Discrete": [0.0, 1.0] } }
+    ] 
+  },
+  "orb": {
+    "activated": false,
+    "contracts": [
+      {
+        "stock": "QQQ",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+        "asset_type": "stock"
+      }
+    ],
+    "params": [
+      {
+        "name": "risk_pct",
+        "value_type": "F64",
+        "comment": "",
+        "distribution": {
+          "Continuous": {
+            "min": 0.01,
+            "max": 1.0,
+            "modes": [{ "mean": 0.2, "std": 10, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "profit_target_r",
+        "value_type": "F64",
+        "comment": "Multiplier of the stop loss that is the profit target to aim for",
+        "distribution": {
+          "Continuous": {
+            "min": 2.0,
+            "max": 20.0,
+            "modes": [{ "mean": 12, "std": 1000, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "stop_buffer_r",
+        "value_type": "F64",
+        "comment": "Multiplier of the stop loss that is the stop buffer to stop at",
+        "distribution": {
+          "Continuous": {
+            "min": 0.0,
+            "max": 1.0,
+            "modes": [{ "mean": 0.3, "std": 0.5, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "volume_confirmation_multiple",
+        "value_type": "F64",
+        "comment": "Multiplier of the stop loss that is the profit target to aim for",
+        "distribution": {
+          "Continuous": {
+            "min": 0.0,
+            "max": 2.5,
+            "modes": [{ "mean": 1.0, "std": 100000, "weight": 1.0 }]
+          }
+        }
+      }
+    ]
+  },
+  "noise": {
+    "activated": false,
+    "contracts": [
+      {
+        "stock": "QQQ",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+        "asset_type": "stock"
+      }
+    ],
+    "params": [
+      {
+        "name": "daily_vol_threshold",
+        "value_type": "F64",
+        "comment": "Threshold separating high-vol vs low-vol regimes (if daily_vol >= threshold → high_vol qty). Continuous around the default 0.04.",
+        "distribution": {
+          "Continuous": {
+            "min": 0.02,
+            "max": 0.08,
+            "modes": [{ "mean": 0.04, "std": 0.015, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "ideal_qty_high_vol",
+        "value_type": "I32",
+        "comment": "Ideal position size (shares) when daily vol is HIGH — smaller position. Continuous around the default 70.",
+        "distribution": {
+          "Continuous": {
+            "min": 40.0,
+            "max": 100.0,
+            "modes": [{ "mean": 70.0, "std": 15.0, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "ideal_qty_low_vol",
+        "value_type": "I32",
+        "comment": "Ideal position size (shares) when daily vol is LOW — must be > high_vol. build_upon on ideal_qty_high_vol: final = sampled_extra + high_vol. Sampled extra [20,40] (mean 30) → low_vol = high_vol + 30 = 70+30 = 100 (default). Ensures low_vol > high_vol always.",
+        "distribution": {
+          "Continuous": {
+            "min": 20.0,
+            "max": 40.0,
+            "modes": [{ "mean": 30.0, "std": 5.0, "weight": 1.0 }]
+          }
+        },
+        "build_upon": "ideal_qty_high_vol"
+      },
+      {
+        "name": "act_interval_minutes",
+        "value_type": "U32",
+        "comment": "Act-on-bar interval (minutes). Must divide 60 (bar.minute is 0..59). Discrete divisors of 60 — the natural intraday act intervals. Default 30.",
+        "distribution": { "Discrete": [5.0, 10.0, 15.0, 20.0, 30.0, 60.0] }
+      },
+      {
+        "name": "noise_multiplier",
+        "value_type": "F64",
+        "comment": "Noise-band sensitivity: upper_noise = (1 + multiplier * avg_move) * open. Higher → wider band → less sensitive (fewer trades). Continuous around the default 1.0.",
+        "distribution": {
+          "Continuous": {
+            "min": 0.5,
+            "max": 2.0,
+            "modes": [{ "mean": 1.0, "std": 0.375, "weight": 1.0 }]
+          }
+        }
+      },
+      {
+        "name": "avg_move_lookback",
+        "value_type": "U32",
+        "comment": "Lookback (day count) for the avg-move-since-open RollingMean window. Discrete round day counts. Default 15.",
+        "distribution": {
+          "Discrete": [5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0]
+        }
+      },
+      {
+        "name": "vol_lookback",
+        "value_type": "U32",
+        "comment": "Lookback (day count) for the daily-volatility RollingStd window. Discrete weekly multiples. Default 14.",
+        "distribution": { "Discrete": [7.0, 14.0, 21.0, 28.0, 42.0, 63.0] }
+      }
+    ]
+  }
+}
