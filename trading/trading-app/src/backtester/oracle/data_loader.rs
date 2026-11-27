@@ -465,7 +465,7 @@ async fn try_alpaca_range(
 
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, time);
 
-            if crud.read(&pk).await.is_ok() {
+            if matches!(crud.read(&pk).await, Ok(Some(_))) {
                 continue;
             }
 
@@ -506,24 +506,9 @@ async fn try_alpaca_range(
 // ─── Continuous aggregate refresh ─────────────────────────────────────────
 
 pub async fn refresh_continuous_aggregate(
-    pool: &PgPool,
-    start: chrono::DateTime<chrono::Utc>,
-    end: chrono::DateTime<chrono::Utc>,
+    _pool: &PgPool,
+    _start: chrono::DateTime<chrono::Utc>,
+    _end: chrono::DateTime<chrono::Utc>,
 ) {
-    tracing::info!("Refreshing daily_ohlcv continuous aggregate for [{start}, {end}]...");
-    if let Err(e) = sqlx::query(
-        r#"CALL refresh_continuous_aggregate(
-            'market_data.daily_ohlcv',
-            $1,
-            $2
-        );"#,
-    )
-    .bind(start)
-    .bind(end)
-    .execute(pool)
-    .await
-    {
-        tracing::error!("Failed to refresh daily_ohlcv: {e:?}");
-    }
-    tracing::info!("Continuous aggregate refresh done.");
+    tracing::debug!("refresh_continuous_aggregate: no aggregate is configured; skipping");
 }

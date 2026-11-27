@@ -159,6 +159,7 @@ pub async fn load_bars(
     Ok(data)
 }
 
+#[must_use]
 pub fn transpose(
     matrix: Vec<Vec<HistoricalDataFullKeys>>,
 ) -> Vec<Vec<Option<HistoricalDataFullKeys>>> {

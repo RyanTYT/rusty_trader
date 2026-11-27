@@ -202,7 +202,7 @@ impl OrderEngine {
             let client_opt = weak_client.upgrade();
             if client_opt.is_none() {
                 tracing::error!("Client is dead when trying to place order");
-                panic!("Client died when trying to place order");
+                return Err("Client is dead when trying to place order".to_string());
             }
             client_opt.unwrap()
         };

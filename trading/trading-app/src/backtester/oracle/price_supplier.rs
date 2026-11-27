@@ -43,7 +43,7 @@ pub struct BacktestPriceSupplier {
 }
 
 impl BacktestPriceSupplier {
-    /// Btargetsuild the supplier with a FIXED set of contracts (one cache slot each).
+    /// Build the supplier with a FIXED set of contracts (one cache slot each).
     /// The replayer passes `config.subscribed_contracts` here — the strategy
     /// tracks a known, fixed set, so the cache size is fixed + the slot map is
     /// immutable after init.
@@ -141,19 +141,6 @@ impl PriceSupplier for BacktestPriceSupplier {
             return Ok(rate);
         }
 
-        let own_contract = self.slot_map.keys().find(|_| true).unwrap();
-        println!("============");
-        println!(
-            "({}, {}, {})",
-            contract.symbol, contract.primary_exchange, contract.currency
-        );
-        println!(
-            "({}, {}, {})",
-            own_contract.contract.symbol,
-            own_contract.contract.primary_exchange,
-            own_contract.contract.currency
-        );
-        println!("============");
         // 3. Slow path: point-in-time DB lookup at the backtest clock.
         // TODO: per-asset-type as-of close from historical_data /
         // historical_forex_data (covers arbitrary contracts not in the cache
