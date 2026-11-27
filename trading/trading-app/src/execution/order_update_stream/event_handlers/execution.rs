@@ -1,3 +1,37 @@
+//! Application of a fill.
+//!
+//! One `ExecutionData` event becomes one database transaction that
+//! 1. rejects duplicates,
+//! 2. locks and updates (or deletes) the matching open order,
+//! 3. inserts the transaction row,
+//! 4. applies the signed quantity to the instrument position,
+//! 5. applies the signed cash to the `CASH:<currency>` position.
+//!
+//! # Semantics
+//!
+//! - `filled` records IBKR's `cumulative_quantity` (not the local sum of
+//!   shares), so a reconnect that skipped intermediate fills still converges.
+//!   The position moves by the execution's `shares` only.
+//! - Quantity signs come from the execution side (`"BOT"` = positive,
+//!   everything else negative) and match
+//!   [`TransactionsFullKeys`].
+//! - Cash uses the opposite sign: a buy consumes cash.
+//! - A full fill (`cumulative_quantity == |quantity|`) deletes the open order;
+//!   a partial fill updates it and appends the execution id.
+//! - For non-FX strategies, a position whose stock is `FX:<from>:<to>` is
+//!   rewritten to `CASH:<from>` so FX conversions land in the cash book.
+//! - Strategy hooks are forwarded **after** the commit, so a hook can never
+//!   observe uncommitted rows.
+//! - Parked orders are released **after** the commit, in a separate task; a
+//!   failure there re-parks the order and cannot roll back the fill.
+//!
+//! # Duplicate handling
+//!
+//! The duplicate check reads by transaction primary key before the insert. That
+//! is safe because the open-order row is locked with `read_for_update`, which
+//! serialises two handlers racing on the same order; a duplicate that slips
+//! past the read fails the primary key on insert and rolls the transaction back.
+
 use crate::{
     database::tables::DbTables,
     execution::traits::order_router::OrderRouter,
@@ -38,13 +72,65 @@ use crate::{
     strategy::strategy::StrategyDetails,
 };
 
-/// Should be triggered by ExecutionUpdate(ExecutionData) events
-/// - calls the relevant on_execution events in on_execution_update: see there for what the
-/// function actally does
-/// - reads data from open_orders -> to transafer symbol (i.e. if open_order symbol is correct,
-/// this is correct)
-/// - also means that matching of arms is purely for database filtering (NOTE) -> depends on
-/// correctness of on_new_order_submitted
+/// Applies one fill to the database.
+///
+/// This is the sink for every execution event produced by the order-update
+/// stream and by the startup syncer. Validation runs synchronously; all
+/// database work runs in a task spawned on `handle`, so the function returns
+/// before any row is written.
+///
+/// # Arguments
+///
+/// - `consolidator` — market-data broker used only to canonicalise the
+///   contract via [`ContractBroker::get_validated_contract`]. The validated
+///   contract replaces `execution_data.contract`, so every key built later uses
+///   the canonical security type. A dropped weak reference is an error, never a
+///   silent skip.
+/// - `pool` — database pool moved into the spawned task. The task begins one
+///   `DbTxn` per fill, so the duplicate check, open-order write, transaction
+///   insert and both position upserts commit or roll back together.
+/// - `execution_data` — the fill as IBKR reported it. `execution.order_reference`
+///   names the strategy; the other execution fields drive the transaction row,
+///   the position deltas and the open order's fill counter.
+/// - `execution_events_queue` — per-strategy ring buffers. When the resolved
+///   strategy has a producer and `hooks_execution` is set, the fill is pushed
+///   there *after* the commit, so hooks only ever observe applied fills. A
+///   missing producer is not an error.
+/// - `strategy_details` — the configured strategies. The resolved strategy's
+///   entry decides whether the execution hook fires; an unknown strategy falls
+///   back to the `default_strategy` entry.
+/// - `default_strategy` — used as the strategy name when the execution carries
+///   no `order_reference` (manual orders), and as the configuration fallback.
+/// - `handle` — runtime used to spawn the database task. The caller does not
+///   await it.
+/// - `weak_client` — order router (the IB client) used after the commit to
+///   release parked orders. It is weak because the task may outlive the client;
+///   a dead client only disables that release.
+/// - `backed_up_orders` — the redb park store. After the commit the positions
+///   touched by the fill are re-checked and any parked order the new balance
+///   affords is placed and removed.
+///
+/// # Transaction
+///
+/// The task first exits silently when a transaction with the same
+/// `execution_id` already exists. It then locks the matching open order with
+/// `read_for_update` so concurrent fills for the same order serialise. With no
+/// open order it records the fill and the additive position deltas; with one it
+/// updates or deletes the order (a full fill deletes it) and records the same
+/// rows. Any write failure is logged and rolls the transaction back.
+///
+/// # Errors
+///
+/// - The consolidator has been dropped.
+/// - The contract is not recognised.
+/// - The contract maps to `AssetType::CASH` or `AssetType::Unknown` (neither
+///   can be held).
+///
+/// # Panics
+///
+/// Panics if `default_strategy` is absent from `strategy_details` and the
+/// resolved strategy name is unknown, because there is then no fallback
+/// configuration to apply the fill with.
 pub fn on_execution_update<MarketBroker, OrderBroker>(
     consolidator: &Weak<MarketBroker>,
     pool: PgPool,
@@ -370,6 +456,13 @@ where
     Ok(())
 }
 
+/// Applies an additive position change inside an open transaction.
+///
+/// Delegates to
+/// [`CurrentPositionsOps::update_positions_additive`](crate::database::models_crud::current_positions::current_positions::CurrentPositionsOps),
+/// passing [`BacktestMode::Db`](crate::backtester::setup::config::BacktestMode)
+/// when the `backtest` feature is on so the SQL path (rather than the in-memory
+/// book) is used.
 async fn update_position(
     db: &mut crate::database::db::DbTxn,
     asset_type: &AssetType,
@@ -391,6 +484,19 @@ async fn update_position(
     }
 }
 
+/// Releases parked orders that the currency balance now covers.
+///
+/// Runs after the fill commits. Reads the `CASH:<currency>` position, does
+/// nothing when it is non-positive, asks the [`OrderStore`] for as many parked
+/// orders as the balance affords, and submits each with the bare strategy as
+/// `order_ref`. Parked copies keep their `{strategy}:{price}` key, so a failed
+/// placement is re-parked unchanged and retried on a later fill.
+///
+/// # Panics
+///
+/// Panics if the currency row disappears between the fill commit and this read,
+/// or if the primary key's stock lacks the `CASH:` prefix — both indicate the
+/// caller passed a position key that is not a currency row.
 #[allow(clippy::too_many_arguments)]
 async fn place_backed_up_orders<OrderBroker>(
     handle: tokio::runtime::Handle,
@@ -463,6 +569,11 @@ async fn place_backed_up_orders<OrderBroker>(
     }
 }
 
+/// Pushes the fill into the strategy's execution ring.
+///
+/// Non-blocking: `try_push` never waits for the consumer, so a full or missing
+/// ring only logs. An unknown strategy name (no ring registered) is warned and
+/// dropped — the database write is already committed at this point.
 fn forward_execution_hook(
     execution_events_queue: &Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>>,
     strategy_name: &str,

@@ -1,3 +1,26 @@
+//! Per-strategy consumer thread: turns 5-second bars into strategy callbacks.
+//!
+//! [`StrategyDataBundler`] spawns **one OS thread per strategy**. Each cycle is
+//! driven by an epoch-aligned 5-second clock:
+//!
+//! 1. drain the execution-event ring (only for strategies with
+//!    `hooks_execution`) and call `on_fill`;
+//! 2. sleep until the cycle deadline, then spin for up to `HOT_WINDOW` while
+//!    popping bars from every active consumer;
+//! 3. aggregate the popped 5-second bars into 5-minute bars (FX pairs are
+//!    paired bid+ask first) and call `StrategyExecutor::on_bar_update`;
+//! 4. after all bars, call `on_bar_update` once with the sentinel contract/bar
+//!    so the strategy can emit a [`BarUpdateOutcome`] for the cycle.
+//!
+//! Consumers are sorted once at hook time: FX pairs first (so a bid consumer is
+//! always immediately followed by its ask partner), then symbol/currency/
+//! exchange, with `Bid` before `Ask` as the final tie-break. FX pairing depends
+//! on that adjacency.
+//!
+//! Losing a bar is reported, not fatal. Missed deadlines are warned because the
+//! strategy thread is too slow to keep the 5-second cadence. Execution rings
+//! are best-effort: `try_pop` only, no blocking.
+
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -55,19 +78,35 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     }
 }
 
+/// Which leg of an FX pair a consumer carries.
+///
+/// Non-FX subscriptions are [`IbkrBarType::Normal`]; FX pairs are split into a
+/// bid and an ask consumer that must be paired bucket-by-bucket before a bar can
+/// be handed to a strategy.
 #[derive(Debug, Clone)]
 pub enum IbkrBarType {
+    /// Non-FX bar (or an FX bar with a non-bid/ask stream, which panics elsewhere).
     Normal,
+    /// Bid leg of an FX pair.
     ForexBid,
+    /// Ask leg of an FX pair.
     ForexAsk,
 }
 
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
+    /// Pops the next buffered bar, or `None` when the producer has not pushed one.
     pub fn try_pop(&self) -> Option<Bar> {
         self.consumer.try_pop()
     }
+
+    /// Classifies this consumer for FX pairing.
+    ///
+    /// # Panics
+    ///
+    /// Panics when an FX pair is subscribed with a stream other than bid or ask;
+    /// such a bar cannot be paired into a bid/ask bucket.
     pub fn get_bar_type(&self) -> IbkrBarType {
         match self.contract.security_type {
             ibapi::contracts::SecurityType::ForexPair => match self.what_to_show {
@@ -80,6 +119,10 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     }
 }
 
+/// Owns the strategy thread(s) and the lifecycle flag.
+///
+/// A bundler is created once per strategy with the contract scheduler; the
+/// thread itself starts on the first [`StrategyDataBundler::hook_strategy`].
 pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> {
     contract_scheduler: Arc<IbkrContractScheduler>,
     is_alive: Arc<AtomicBool>,
@@ -89,6 +132,11 @@ pub struct StrategyDataBundler<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
+    /// Signals the strategy thread to stop and joins it on a blocking pool.
+    ///
+    /// Safe to await from async code; per-thread join failures are logged, not
+    /// returned. Use this instead of dropping when shutdown must be complete
+    /// before the process exits.
     pub async fn async_drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
 
@@ -110,6 +158,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
     for StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
+    /// Best-effort stop: clears the alive flag without joining the thread.
     fn drop(&mut self) {
         // best effort drop but doesn't guarantee threads are dropped
         self.is_alive.store(false, Ordering::Release);
@@ -120,6 +169,7 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> Drop
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     StrategyDataBundler<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
+    /// Creates a stopped bundler; no thread is spawned until `hook_strategy`.
     pub fn new(contract_scheduler: Arc<IbkrContractScheduler>) -> Self {
         Self {
             contract_scheduler,
@@ -128,6 +178,14 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
         }
     }
 
+    /// Sorts consumers so FX bid/ask partners are adjacent and processing order
+    /// is deterministic.
+    ///
+    /// Order: FX pairs first, then symbol, currency and primary exchange
+    /// (alphabetical), then `Bid` (0) before `Ask` (1) before any other stream
+    /// (2). `dispatch_bar` relies on the bid consumer sitting immediately before
+    /// its ask partner.
+    ///
     /// pub visibility ONLY for testing purposes
     pub fn sort_consumers(consumers: &mut Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>) {
         consumers.sort_by(|a, b| {
@@ -164,6 +222,26 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     }
 
     // Will only ever spawn thread once
+    /// Starts the strategy thread. The first call wins; later calls are no-ops.
+    ///
+    /// The thread loops until the bundler is dropped or [`async_drop`] runs:
+    /// drain execution events (hooks-enabled strategies), sleep to the cycle
+    /// deadline, spin up to `HOT_WINDOW` collecting bars from active
+    /// consumers, dispatch 5-minute bars, then send a sentinel bar to let the
+    /// strategy emit its [`BarUpdateOutcome`]. Parked FX bars older than 15
+    /// minutes are dropped every 720 cycles, and bars that miss their window are
+    /// warned per contract.
+    ///
+    /// [`async_drop`]: StrategyDataBundler::async_drop
+    ///
+    /// # Panics
+    ///
+    /// - the OS thread cannot be spawned;
+    /// - the consolidator `Weak` is dead when `on_bar_update`/`on_fill` runs;
+    /// - the contract scheduler has not been populated for a consumer.
+    ///
+    /// A deliberately slow strategy only logs missed deadlines; it does not
+    /// stop the thread.
     pub fn hook_strategy(
         &mut self,
         mut consumers: Vec<IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>>,
@@ -403,6 +481,24 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
         self.thread_handles.push(thread_handle);
     }
 
+    /// Aggregates one consumer's 5-second bars into 5-minute bars and calls the
+    /// strategy.
+    ///
+    /// FX pairs are special: each leg is aggregated separately and the first leg
+    /// to arrive is parked in `buffer_bars` until its partner lands, then
+    /// [`HistoricalDataFullKeys::from_inter_repr`] merges bid+ask into one bar.
+    /// A bucket with the wrong leg parked is logged and skipped. Non-FX bars are
+    /// dispatched directly.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the strategy's `on_bar_update` error; the caller logs it and
+    /// continues with the next consumer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an FX consumer reports a stream that is neither bid nor ask
+    /// inside the pairing match.
     fn dispatch_bar<HandleBarUpdate>(
         // strategy: &str,
         strategy: &mut StrategyEnum,

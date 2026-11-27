@@ -9,15 +9,19 @@ use ibapi::orders::{Action, Order};
 
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 
+/// The result of one fill decision.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FillOutcome {
+    /// Whether the order fills on this bar at all.
     pub filled: bool,
+    /// Price the fill would print at (meaningless when `filled` is false).
     pub fill_price: f64,
     /// Signed quantity: +ve for buys, -ve for sells (matches `Action`).
     pub fill_qty: f64,
 }
 
 impl FillOutcome {
+    /// The canonical "did not fill on this bar" result.
     pub const NO_FILL: FillOutcome = FillOutcome {
         filled: false,
         fill_price: 0.0,
@@ -89,17 +93,23 @@ pub fn decide_fill(order: &Order, bar: &HistoricalDataFullKeys, slippage_bps: f6
 /// IBKR footnote 7 — binds for sub-dollar stocks).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommissionModel {
+    /// $0.005/share (min $1.00) plus SEC/TAF/CAT; exchange and clearing are
+    /// already included.
     Fixed,
+    /// $0.0035/share (min $0.35) plus regulatory, clearing (NSCC/DTC) and
+    /// pass-through fees.
     Tiered,
 }
 
 impl CommissionModel {
+    /// Base per-share commission before minimums, caps and fees.
     pub fn per_share(&self) -> f64 {
         match self {
             Self::Fixed => 0.005,
             Self::Tiered => 0.0035,
         }
     }
+    /// Minimum base commission per order.
     pub fn min_per_order(&self) -> f64 {
         match self {
             Self::Fixed => 1.00,
@@ -107,6 +117,9 @@ impl CommissionModel {
         }
     }
     /// Parse from a string ("fixed" / "tiered"), case-insensitive.
+    ///
+    /// # Errors
+    /// Returns an error naming the accepted values for anything else.
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "fixed" => Ok(Self::Fixed),
@@ -211,7 +224,12 @@ pub fn commission(qty: f64, price: f64, model: CommissionModel) -> f64 {
 /// Result of advancing a fill model one bar.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FillEval {
-    Fill { price: f64 },
+    /// The order fills now at `price`.
+    Fill {
+        /// Fill price chosen by the model.
+        price: f64,
+    },
+    /// The order stays resting; evaluate again on the next bar.
     Rest,
 }
 
@@ -239,7 +257,9 @@ impl Clone for Box<dyn FillModel> {
 /// real cost of crossing the spread with a market order).
 #[derive(Clone)]
 pub struct MarketFillModel {
+    /// Adverse price move in basis points applied to the close.
     pub slippage_bps: f64,
+    /// Buy pays the close plus slippage; sell receives the close minus it.
     pub is_buy: bool,
 }
 impl FillModel for MarketFillModel {
@@ -278,7 +298,9 @@ impl FillModel for MidPriceFillModel {
 /// the limit price (no slippage).
 #[derive(Clone)]
 pub struct LimitFillModel {
+    /// The resting limit price.
     pub limit: f64,
+    /// Buy fills when the low touches the limit; sell when the high does.
     pub is_buy: bool,
 }
 impl FillModel for LimitFillModel {
@@ -302,7 +324,9 @@ impl FillModel for LimitFillModel {
 /// OptimisticLimitFillModel — on cross, fills at open if open is at better price
 #[derive(Clone)]
 pub struct OptimisticLimitFillModel {
+    /// The resting limit price.
     pub limit: f64,
+    /// Buy fills at the better of the open and the limit; sell likewise.
     pub is_buy: bool,
 }
 impl FillModel for OptimisticLimitFillModel {
@@ -347,7 +371,20 @@ impl FillModel for OptimisticLimitFillModel {
 /// the open, py `thorough.py::_process_pending_limits` port). Strategies
 /// are untouched: they always emit LMT as normal; only the fill model
 /// that decides how the order is filled changes.
+/// Engine-level LMT fill semantics, chosen ONCE at initialisation (first
+/// `fill_model_for` use reads the seam and caches it). Default = classic
+/// at-limit cap (`LimitFillModel`). `LIMIT_FILL=optimistic` selects
+/// [`OptimisticLimitFillModel`] for ALL LMT orders run-wide — the
+/// tape-set pricing form (an open that gaps through the limit fills at
+/// the open, py `thorough.py::_process_pending_limits` port). Strategies
+/// are untouched: they always emit LMT as normal; only the fill model
+/// that decides how the order is filled changes.
 static LIMIT_FILL_OPTIMISTIC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Whether LMT orders use the optimistic (gap-aware) fill model.
+///
+/// Read once from `LIMIT_FILL` (case-insensitive `optimistic`) and cached for
+/// the process, so changing the environment mid-run has no effect.
 pub(crate) fn optimistic_limits() -> bool {
     *LIMIT_FILL_OPTIMISTIC.get_or_init(|| {
         std::env::var("LIMIT_FILL")
@@ -360,8 +397,11 @@ pub(crate) fn optimistic_limits() -> bool {
 /// the pre-existing orb_general model (used when STOP has no limit_price).
 #[derive(Clone)]
 pub struct StopMarketFillModel {
+    /// Trigger level: buy stops trigger on the high, sell stops on the low.
     pub stop: f64,
+    /// Adverse slippage as a fraction of the bar's range.
     pub pct_of_bar: f64,
+    /// Buy stops are above the market; sell stops below it.
     pub is_buy: bool,
 }
 impl FillModel for StopMarketFillModel {
@@ -396,10 +436,16 @@ impl FillModel for StopMarketFillModel {
 /// it. Fills at the exact limit price (no slippage); gap-through flows to EOD.
 #[derive(Clone)]
 pub struct StopLimitFillModel {
+    /// Trigger level (strict breach: high > stop for buys, low < stop for
+    /// sells).
     pub stop: f64,
+    /// Price the order fills at once triggered and crossed.
     pub limit: f64,
+    /// Direction of the order being filled.
     pub is_buy: bool,
+    /// Whether the stop has already been breached.
     pub triggered: bool,
+    /// Bars that must still pass after the trigger before a fill may occur.
     pub rest_bars: u8,
 }
 impl FillModel for StopLimitFillModel {
@@ -440,6 +486,11 @@ impl FillModel for StopLimitFillModel {
 /// Build a price-gated fill model from an emitted order's fields. Returns None
 /// for orders that are NOT price-gated (the time-gated close), handled by the
 /// caller via `good_after_time`/order_type.
+///
+/// `order_type` is matched as `"LMT"` or `"STP"`; an `LMT` without a positive
+/// limit price and anything else (market, MIDPRICE, MIDCLOSE) yields `None`.
+/// A `STP` with a positive limit is a stop-limit; without one it is a market
+/// stop using `stop_pct_of_bar` as adverse slippage.
 pub fn fill_model_for(
     order: &Order,
     slippage_bps: f64,

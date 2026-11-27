@@ -42,6 +42,9 @@ use crate::{
 };
 
 /// The unallocated bucket: never in the roster, accepts any currency.
+///
+/// It is the funding hub — every funding FX order carries this as its
+/// `order_ref`, and it absorbs whatever the roster does not claim.
 pub const UNALLOCATED: &str = "__unallocated__";
 
 const EPS: f64 = 1e-9;
@@ -54,26 +57,39 @@ macro_rules! on_rt {
     };
 }
 
+/// What a funding pass did, for logging/telemetry.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FundingSummary {
+    /// Total fund value in SGD at the start of the pass.
     fund_value: f64,
+    /// Target allocation per participating strategy, in SGD.
     allocations: Vec<(String, f64)>,
+    /// Capital left in the unallocated hub.
     unallocated: f64,
 }
 
+/// Per-strategy working set for the allocation solve.
 struct Book {
+    /// Roster name.
     name: String,
+    /// Funding preferences (weight, minimum, cash preferences, reallocate).
     fund: StrategyFund,
+    /// Current equity in SGD.
     equity: f64,
+    /// Current cash per currency, in units of that currency.
     cash: BTreeMap<String, f64>,
+    /// Whether the strategy already has position rows in the DB.
     #[allow(dead_code)]
     exists: bool,
+    /// Whether this pass may move money for it (reallocate requested or new).
     participating: bool,
+    /// Solved target equity in SGD (0 when knocked out).
     target: f64,
 }
 
 impl Book {
+    /// SGD the book should receive (positive) or pay (negative).
     fn delta(&self) -> f64 {
         self.target - self.equity
     }
@@ -86,6 +102,40 @@ struct Move {
     quantity: f64,
 }
 
+/// Rebalance the roster to absolute weights, routing cash through the hub.
+///
+/// # Arguments
+///
+/// - `handle` — runtime used to hop DB work onto Tokio from this sync function;
+/// - `client` — IBKR client, used for funding FX orders;
+/// - `consolidator` — fund/strategy valuation and FX prices;
+/// - `strategies` — the roster as `(name, StrategyFund)`;
+/// - `pool` — DB pool for CASH rows.
+///
+/// # Behaviour
+///
+/// 1. Snapshot: fund value, per-strategy equity and CASH balances; append the
+///    hub book and reject duplicate names.
+/// 2. Validate: weights finite and non-negative, sum ≤ 1.
+/// 3. Solve: scale absolute weights down when over-subscribed (warn), then
+///    knock out, lowest rank first, any strategy whose rationed target is
+///    below `min_capital`. Non-participating strategies stay at actual equity.
+/// 4. Convert each cash currency to an SGD rate.
+/// 5. Leg 1: payers drain into the hub, cheapest currency first; a payer whose
+///    cash is all in positions is pushed negative in its last preferred
+///    currency (real leverage, cleared on the next sale).
+/// 6. Convert where the projected hub balance cannot cover a receiver in kind:
+///    sell the hub's largest surplus, buy the receiver's top preference, place
+///    a checked funding order and wait up to 60 s for the bought leg to land.
+/// 7. Leg 2: pay receivers from actual hub balances, crediting only currencies
+///    they accept. Anything left short is logged and counted as pending.
+///
+/// # Errors
+///
+/// Duplicate strategy names, weights summing above 1, a negative/non-finite
+/// weight, a non-positive fund value or available capital, a failed FX price
+/// lookup or DB write, a rejected funding order, a 60-second FX fill timeout,
+/// or (under the `backtest` feature) any conversion at all.
 pub fn fund_strategies(
     handle: &Handle,
     client: &Arc<Client>,

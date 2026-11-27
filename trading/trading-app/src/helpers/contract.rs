@@ -1,3 +1,18 @@
+//! Contract vocabulary and row ⇄ IBKR contract conversions.
+//!
+//! Local symbols encode the instrument in the `stock` column:
+//! `FUT:<sym>`, `FX:<base>/<quote>`, `CFD:<sym>`, `CASH:<ccy>`; a bare symbol
+//! is a stock (or the underlying of an option, whose identity lives in the
+//! separate option columns).
+//!
+//! [`HashContract`](crate::helpers::contract::HashContract) is the map key used
+//! across the crate. Its equality and hash deliberately ignore most of
+//! `Contract`: they compare trimmed `primary_exchange`, `symbol`, `currency`,
+//! `security_type` and — only for options — right, expiry/month, strike
+//! (ordered float) and multiplier. Two contracts built from different sources
+//! therefore match when they denote the same instrument, and the key hits a
+//! map without a fallback scan.
+
 use ibapi::{
     contracts::{Currency, Exchange},
     prelude::{Contract, ContractMonth, SecurityType, Symbol},
@@ -25,32 +40,39 @@ use crate::database::{
 //     pub contract: Contract,
 // }
 
+/// Borrowed-or-owned contract used as a `HashMap` key.
+///
+/// Hash/equality use the instrument identity described in the module docs, so
+/// keys built from DB rows match keys built from IBKR contracts.
 #[derive(Debug, Clone)]
 pub struct HashContract<'a> {
+    /// The contract, borrowed when possible to avoid a clone on lookups.
     pub contract: Cow<'a, Contract>,
 }
 
 impl<'a> HashContract<'a> {
+    /// Own an already-built contract.
     pub fn new(contract: Contract) -> Self {
         Self {
             contract: Cow::Owned(contract),
         }
     }
 
+    /// Borrow a contract for a short-lived key (no clone).
     pub fn borrowed(contract: &'a Contract) -> Self {
         Self {
             contract: Cow::Borrowed(contract),
         }
     }
 
-    /// consuming
+    /// Detach from the borrowed lifetime, cloning only if needed.
     pub fn into_owned(self) -> HashContract<'static> {
         HashContract {
             contract: Cow::Owned(self.contract.into_owned()),
         }
     }
 
-    /// Non-consuming: always one clone of Contract.
+    /// Clone the underlying contract into a `'static` key.
     pub fn static_clone(&self) -> HashContract<'static> {
         HashContract {
             contract: Cow::Owned(Contract::clone(&self.contract)),
@@ -155,6 +177,11 @@ impl<'a> Hash for HashContract<'a> {
 //     }
 // }
 
+/// The local-symbol form of a contract's instrument identity.
+///
+/// Mirrors the prefixes accepted by [`build_contract_from_stock`]; options and
+/// unknown security types return the bare symbol (the option identity is stored
+/// separately). A `CASH` security type is not expected here and is logged.
 pub fn get_local_symbol(contract: &Contract) -> String {
     match AssetType::from_str(&contract.security_type) {
         AssetType::Stock => contract.symbol.as_str().to_string(),
@@ -175,12 +202,22 @@ pub fn get_local_symbol(contract: &Contract) -> String {
     }
 }
 
+/// A DB row or strategy diff that a contract can be built from.
 pub enum LocalContractTypes {
+    /// A target-vs-current diff row.
     TargetPosQtyDiff(TargetPositionsQtyDiff),
+    /// A current-position row.
     CurrentPosFk(CurrentPositionsFullKeys),
+    /// An open-order row.
     OpenOrders(OpenOrdersFullKeys),
 }
 
+/// Build the IBKR contract for a local symbol plus its row columns.
+///
+/// Prefix dispatch: `CFD:` → CFD on SMART; `FX:<a>/<b>` → IDEALPRO pair;
+/// `FUT:` → next-quarter future on SMART in the row currency; `CASH:<ccy>` →
+/// the `<ccy>/SGD` IDEALPRO pair (cash rows are always SGD-valued); anything
+/// else → stock on SMART with the row exchange/currency.
 pub fn build_contract_from_stock(
     stock: &String,
     primary_exchange: &String,
@@ -229,7 +266,11 @@ pub fn build_contract_from_stock(
     }
 }
 
-/// Function to get contract from symbol - but NOT for option contracts!
+/// Build the contract for a target diff, position row or open-order row.
+///
+/// Option variants are matched first and rebuilt from the option columns
+/// (right, expiry, strike, multiplier, exchange, currency); the stock variants
+/// go through [`build_contract_from_stock`] and its local-symbol prefixes.
 pub(crate) fn get_contract_from(pos_diff: &LocalContractTypes) -> Contract {
     match pos_diff {
         LocalContractTypes::TargetPosQtyDiff(v) => match v {

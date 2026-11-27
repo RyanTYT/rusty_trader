@@ -3,6 +3,19 @@
 //! in-memory current positions, "fills" via `decide_fill` (the same pure fill
 //! logic the broker uses), + updates `InMemoryState` (current positions,
 //! transactions, CASH:SGD) entirely in-memory. No DB, no `block_on`, no broker.
+//!
+//! Invariants:
+//!
+//! - an order fills only against its OWN symbol's bar at the slot; a missing
+//!   own bar defers it to that symbol's next bar (never an ambient bar);
+//! - the cancel sweep precedes placement so a cancel + same-key re-place in
+//!   one emission keeps the fresh order;
+//! - exit orders of a bracket stay inactive until the entry fills, and one
+//!   exit filling cancels its siblings;
+//! - pooled fills settle into the owning account via the fill router, and the
+//!   owning sleeve receives the fill through its mailbox (no hook call);
+//! - fees are signed (sell-side regulatory fees key off the sign) and booked
+//!   in the contract currency, converted to SGD with the FX rate.
 
 use std::collections::HashMap;
 
@@ -143,13 +156,45 @@ fn action_signum(action: &ibapi::orders::Action) -> f64 {
 /// `EmitOrders` + `PendingDbQuery` arms but operates on `InMemoryState` with
 /// no DB I/O.
 ///
-/// - `EmitOrders { place_orders, cancel_orders }` — the strategy pre-built the
-///   orders to place AND the open-order keys to cancel; place each one
-///   directly via [`fill_order_in_memory`].
-/// - `PendingDbQuery(asset_types)` — read the mocked targets, compute the
-///   delta vs current, build an order per delta, fill via
-///   [`fill_order_in_memory`].
-/// - `NoAction` — no-op.
+/// # Arguments
+///
+/// - `config` — backtest config (fill models, slippage, commission, the
+///   subscribed-contract order that aligns with `contracts`);
+/// - `strategy` — the strategy when `hooks_execution` is set, so fills can be
+///   delivered to `on_fill`; `None` when hooks are disabled;
+/// - `prices` — FX source for settling non-SGD fills into `CASH:SGD`;
+/// - `state` — the account being reconciled (positions/targets/transactions/
+///   resting book);
+/// - `outcome` — what the strategy decided for this bar;
+/// - `contract` / `bar` — the instrument and bar currently being processed;
+/// - `contracts` — the whole timestamp row, aligned with
+///   `config.subscribed_contracts`, used to resolve each order's OWN bar;
+/// - `order_id` — monotonic fill counter, incremented once per fill.
+///
+/// # Behaviour
+///
+/// 1. Resting brackets are evaluated against this bar first (stop,
+///    take-profit, stop-limit, mid/close at `mso` minutes after 09:30 NY).
+/// 2. `EmitOrders`: the cancel sweep runs first (symbol + `order_ref` + side,
+///    resting only; option keys are unsupported), the bracket book is built
+///    from the emitted orders, `ogcancel-`-prefixed orders cancel working
+///    entries for their own symbol/`order_ref`, immediate entries fill against
+///    **their own** bar, and exits arm only after their entry fills.
+/// 3. `PendingDbQuery`: stock only; targets are snapshotted, positions without
+///    a target act as zero, and each non-zero delta becomes a market order.
+/// 4. `NoAction`: nothing.
+///
+/// Orders whose own symbol has no bar at this slot are **deferred** (parked as
+/// a market-class resting entry) and fill at that symbol's next own bar —
+/// never at another symbol's ambient bar.
+///
+/// # Errors
+///
+/// Propagates a failure from a fill step.
+///
+/// # Panics
+///
+/// Any `InMemoryState` lock is poisoned.
 pub fn handle_bar_update_outcome_in_memory(
     config: &BacktestConfig,
     strategy: Option<&mut StrategyEnum>,
@@ -617,9 +662,6 @@ fn fill_order_in_memory<'a>(
 /// Check all resting brackets against the current bar. If any child
 /// (stop / TP / midpoint-close) triggers, fill the close order, cancel
 /// the OCA siblings, and remove the bracket.
-///
-/// At EOD (mso >= 385), force-close any still-open brackets at the bar's
-/// close.
 fn process_resting_orders<'a>(
     config: &BacktestConfig,
     strategy_opt: Option<&'a mut StrategyEnum>,
@@ -789,10 +831,28 @@ fn process_resting_orders<'a>(
 /// bar exists in THIS slot, in book (creation) order — the mirror of the Db
 /// lane's Phase 1 `advance_slot`, which drains all parked intents BEFORE any
 /// strategy reacts so their `on_fill` appends precede the slot's immediate
-/// fills. Evaluation math is verbatim [`process_resting_orders`] (same bars,
+/// fills. Evaluation math is verbatim `process_resting_orders` (same bars,
 /// same fill models — only the dispatch ORDER changes). Rests created
 /// mid-slot are first evaluated at the NEXT slot's drain, matching the Db
 /// intent lifecycle; the per-pair STEP 1 stays as a safety net for them.
+///
+/// # Arguments
+///
+/// - `config` — fill/commission configuration;
+/// - `strategy` — hooks target (`None` when hooks are disabled);
+/// - `prices` — FX source for non-SGD settlements;
+/// - `state` — the account whose resting book is drained;
+/// - `slot` — this timestamp row (aligned with `contracts`);
+/// - `contracts` — subscribed contracts, used to find each rest's own bar;
+/// - `order_id` — fill counter, incremented per fill.
+///
+/// # Errors
+///
+/// Propagates a failure from a fill step.
+///
+/// # Panics
+///
+/// Any `InMemoryState` lock is poisoned.
 pub fn drain_resting_orders_fill_first(
     config: &BacktestConfig,
     strategy: Option<&mut StrategyEnum>,

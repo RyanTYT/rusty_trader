@@ -41,6 +41,22 @@ use crate::backtester::setup::context::BacktestContext;
 pub struct HistoricalReplay;
 
 impl BacktestMethod for HistoricalReplay {
+    /// Replay the DB lane end to end: ensure the strategy row, load bars,
+    /// warm up, trim to the post-warm-up window, then for each timestamp feed
+    /// the brokers and run every subscribed contract's bar through the real
+    /// strategy + order engine before snapshotting equity.
+    ///
+    /// # Errors
+    ///
+    /// - the bar load fails (see [`load_bars`]);
+    /// - the period is [`BacktestPeriod::NumBars`] (warm-up needs a concrete
+    ///   window start);
+    /// - `warm_up_data` fails.
+    ///
+    /// # Panics
+    ///
+    /// - `transpose` hits one of its documented limitations;
+    /// - a bar row contains no bars at all (`this_time.unwrap()`).
     fn run(&self, ctx: BacktestContext) -> Result<EquityCurve, String> {
         // 1. Ensure the strategy row exists (FK target for transactions/positions).
         let pool = ctx.pool.clone();
@@ -202,19 +218,32 @@ impl BacktestMethod for HistoricalReplay {
 /// fills attribute to the owning strategy by construction (`order_ref` =
 /// strategy name keys every broker write).
 pub struct DbMultiContext {
+    /// Shared configuration (capital, contracts, period).
     pub config: BacktestConfig,
+    /// Database used for fills and equity snapshots.
     pub pool: PgPool,
+    /// Runtime used for the blocking DB calls in the replay loop.
     pub handle: tokio::runtime::Handle,
+    /// Clock read by the strategies and brokers.
     pub clock: Arc<BacktestClock>,
+    /// Per-contract close cache shared by all strategies.
     pub prices: Arc<BacktestPriceSupplier>,
+    /// Read facade used by the strategies.
     pub consolidator: Arc<Consolidator>,
+    /// Warmed strategies, one broker and one curve each.
     pub strategies: Vec<StrategyEnum>,
 }
 
+/// Result of [`HistoricalReplay::run_multi`].
 pub struct DbMultiOutput {
+    /// Strategy names in `ctx.strategies` order.
     pub names: Vec<String>,
+    /// One curve per strategy, same order as `names`.
     pub curves: Vec<EquityCurve>,
+    /// Fund-level residual cash reported by the run's `PoolState`, or the
+    /// equal-split remainder when no fund pool exists.
     pub residual: f64,
+    /// Sum of all per-strategy curves (the residual is NOT included).
     pub rollup: EquityCurve,
 }
 
@@ -223,6 +252,27 @@ impl HistoricalReplay {
     /// `run_multi_with_bars`' slot semantics (clock + close publish happen
     /// ONCE per bar before any strategy sees it) with the single-route
     /// execution machinery (real `BacktestBroker` fills + fill hooks).
+    ///
+    /// Per timestamp:
+    ///
+    /// 1. every broker begins a slot and receives every available bar; parked
+    ///    limit intents are drained immediately;
+    /// 2. each bar is published to the clock/prices once, then every strategy
+    ///    sees it in turn and its outcome goes through `OrderEngine`;
+    /// 3. a bucket-end sentinel bar runs the same path, so pending
+    ///    reconciliation work flushes at the close;
+    /// 4. each strategy's equity is snapshotted from the DB and the rollup
+    ///    sums the curves.
+    ///
+    /// Fill hooks are routed by `execution.order_reference` (the owning
+    /// strategy's name), not positionally; an unknown reference logs a warning
+    /// and falls back to the strategy that produced the fill.
+    ///
+    /// # Panics
+    ///
+    /// - the equal-split seed over-commits the configured capital;
+    /// - `OrderStore::open` fails (`ORDERS_FILE_PATH`);
+    /// - a timestamp row contains no bars.
     pub fn run_multi(
         &self,
         mut ctx: DbMultiContext,

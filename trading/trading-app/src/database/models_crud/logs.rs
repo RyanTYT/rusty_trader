@@ -1,3 +1,37 @@
+//! `logs.logs` — append-only application logging.
+//!
+//! The table's `id` is `GENERATED ALWAYS`; this wrapper deliberately exposes
+//! only [`LogsCRUD::create`](crate::database::models_crud::logs::LogsCRUD::create) and [`LogsCRUD::read_all`](crate::database::models_crud::logs::LogsCRUD::read_all), so addressing or
+//! upserting a log row is a compile error. `LogsFullKeys.id` is `None` on
+//! insert and `Some(id)` on read. Rows may share `(time, level, name)`, so
+//! there is no natural upsert key.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use chrono::Utc;
+//! use trading_app::database::db::DbDirect;
+//! use trading_app::database::models::LogsFullKeys;
+//! use trading_app::database::tables::DbTables;
+//!
+//! # async fn example(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut db = DbDirect::connect(pool);
+//! db.logs()
+//!     .create(&LogsFullKeys {
+//!         id: None,
+//!         time: Utc::now(),
+//!         level: "INFO".into(),
+//!         name: "example".into(),
+//!         message: "hello".into(),
+//!     })
+//!     .await?;
+//!
+//! let recent = db.logs().read_all().await?;
+//! # let _ = recent;
+//! # Ok(())
+//! # }
+//! ```
+
 use crate::database::{
     crud::{CRUD, CRUDTrait},
     db::{DbError, Exec},

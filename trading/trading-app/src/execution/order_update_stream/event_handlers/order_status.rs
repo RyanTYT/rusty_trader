@@ -1,3 +1,17 @@
+//! Order-status bookkeeping.
+//!
+//! `orderStatus` callbacks are the lightest source of truth: they arrive often
+//! and may precede or follow the corresponding `openOrder` event. The handlers
+//! therefore never assert the order exists.
+//!
+//! | Function | Trigger | Effect |
+//! |---|---|---|
+//! | [`submitted`] | `Submitted` | read-only comparison of the recorded fill and quantity; logs discrepancies |
+//! | [`cancelled`] | `PendingCancel`, `Inactive`, `ApiCancelled`, `Cancelled` | deletes the row from the stock and option tables |
+//!
+//! Neither handler opens a transaction: the reads are independent and each
+//! delete is a single atomic statement with no cross-row invariant.
+
 use crate::database::tables::DbTables;
 use ibapi::orders::OrderStatus;
 use sqlx::PgPool;
@@ -8,8 +22,18 @@ use crate::database::{
     models_crud::open_orders::open_orders::{OpenOrdersFullKeys, OpenOrdersPrimaryKeys},
 };
 
-/// Should be triggered by Submitted and PreSubmitted Order Events to update the local OpenOrders
-/// table
+/// Compares the broker's fill/quantity with the recorded open order.
+///
+/// Read-only and fire-and-forget: each asset-class table is read by
+/// `(perm_id, order_id)` and any difference between the broker's
+/// `filled`/`filled + remaining` and the stored `filled`/`|quantity|` is logged.
+/// A missing row is not an error — the status event may arrive before the
+/// open-order row.
+///
+/// # Panics
+///
+/// Panics if a stock lookup returns an option row or vice versa. That would mean
+/// the primary key matched the wrong variant, which the constructors prevent.
 pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
     let order_perm_id = order_status.perm_id;
     let order_id = order_status.order_id;
@@ -77,8 +101,17 @@ pub fn submitted(pool: PgPool, order_status: &OrderStatus) {
     });
 }
 
-/// Should be triggered on "Cancelled" or "ApiCancelled"
-/// - deletes the associated order in the OpenOrders table
+/// Deletes the order from both open-order tables.
+///
+/// Spawns a task that attempts the stock delete and then the option delete; an
+/// order exists in at most one of them, so one delete normally reports zero
+/// rows and the other removes the row. Failures are logged and do not roll back
+/// the successful delete.
+///
+/// # Panics
+///
+/// Panics when `perm_id`/`order_id` cannot address an open-order table (the
+/// constructors reject `CASH`/`Unknown`); the asset types here are fixed.
 pub fn cancelled(pool: PgPool, order_status: &OrderStatus) {
     let (order_perm_id, order_id) = (order_status.perm_id, order_status.order_id);
 

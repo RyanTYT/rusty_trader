@@ -37,33 +37,44 @@ pub(crate) static NEXT_BRACKET_ID: AtomicUsize = AtomicUsize::new(0);
 /// Why a bracket was closed (kept for transaction tagging).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CloseReason {
+    /// Stop (or stop-limit) child filled.
     Stop,
+    /// Limit take-profit child filled.
     TakeProfit,
+    /// Time-gated midpoint/close child filled.
     MidpointClose,
+    /// Cancelled because the slot ended with the bracket still open.
     EodForceClose,
 }
 
 /// What role an order plays within its bracket.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OrderRole {
+    /// The bracket's opening order (active immediately).
     Entry,
+    /// One of the OCA exits (armed only once the entry fills).
     Exit(CloseReason),
 }
 
 /// Order lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RestingStatus {
+    /// In the book, waiting to fill or be cancelled.
     Resting,
+    /// Filled (terminal).
     Filled,
+    /// Cancelled (terminal).
     Cancelled,
 }
 
 /// A single open (resting or immediate-fill) order in the book.
 #[derive(Clone)]
 pub struct RestingOrder {
+    /// The instrument traded.
     pub contract: Contract,
     /// The side this order transacts (Buy or Sell).
     pub action: Action,
+    /// Signed quantity, same convention as the emitted order.
     pub qty: f64,
     /// Owning strategy's name (engine account). §8 pooled emission: fills
     /// settle into the OWNING sleeve's account — the reconcile resolves the
@@ -74,6 +85,7 @@ pub struct RestingOrder {
     pub oca_group: String,
     /// Links an entry to its exit orders.
     pub bracket_id: usize,
+    /// Entry or exit role.
     pub role: OrderRole,
     /// Exits start inactive until the entry fills.
     pub active: bool,
@@ -83,10 +95,12 @@ pub struct RestingOrder {
     pub close_mso: Option<i32>,
     /// Close fill price: `true` = (high+low)/2 (mid), `false` = bar close.
     pub close_is_mid: bool,
+    /// Current lifecycle status.
     pub status: RestingStatus,
 }
 
-/// Parse the `good_after_time` field (format "YYYYMMDD-HH:MM:SS") → mso.
+/// Parse the `good_after_time` field (format "YYYYMMDD-HH:MM:SS", also
+/// accepted with a space before the time) to minutes since 09:30 New York.
 fn parse_good_after_time_mso(good_after_time: &str) -> Option<i32> {
     if good_after_time.is_empty() {
         return None;
@@ -102,6 +116,9 @@ fn parse_good_after_time_mso(good_after_time: &str) -> Option<i32> {
 }
 
 /// Parse an `EmitOrders` Vec into bracket groups `(parent_idx, Vec<child_idx>)`.
+///
+/// A new bracket starts at every order with `references_parent_order == -1`;
+/// the orders after it (until the next head) are its children.
 pub fn parse_brackets(orders: &[OrderIBKR]) -> Vec<(usize, Vec<usize>)> {
     let mut brackets = Vec::new();
     let mut current_parent: Option<usize> = None;
@@ -124,6 +141,19 @@ pub fn parse_brackets(orders: &[OrderIBKR]) -> Vec<(usize, Vec<usize>)> {
 }
 
 /// Turn the emitted bracket orders into the book's resting orders.
+///
+/// Each bracket gets one globally unique `bracket_id` (the positional index is
+/// only unique within a batch). The entry is active immediately; every exit
+/// starts inactive and is armed by the entry's fill. Mapping:
+///
+/// - entry `LMT` with a positive limit → limit/optimistic-limit model; any
+///   other entry → market model with `slippage_bps`;
+/// - child `STP` → stop-limit when it has a positive limit, else market stop
+///   with `stop_pct_of_bar`;
+/// - child `LMT` with a positive limit → take-profit;
+/// - child `MIDPRICE`/`MIDCLOSE` → time-gated close (`close_mso` from
+///   `good_after_time`, mid vs close from the type);
+/// - any other child type is ignored.
 pub fn build_resting_orders(
     orders: &[OrderIBKR],
     slippage_bps: f64,

@@ -58,15 +58,25 @@ use trading_app::strategy::{ContractEntry, StrategySpec};
 /// `num_bars` select the period; the rest have defaults.
 #[derive(Deserialize)]
 struct BacktestConfigSection {
+    /// Period start (RFC3339); ignored when `num_bars` is set.
     start: Option<String>,
+    /// Period end (RFC3339); ignored when `num_bars` is set.
     end: Option<String>,
+    /// Newest `n` bars, instead of an explicit range.
     num_bars: Option<usize>,
+    /// Starting cash in SGD (default 100,000).
     starting_capital_sgd: Option<f64>,
+    /// `"db"` or `"in_memory"` (default `"db"`; case-insensitive).
     mode: Option<String>,
+    /// Stock/option bar width in seconds (default 300).
     stock_bar_interval_secs: Option<i64>,
+    /// FX/CFD bar width in seconds (default 60).
     forex_bar_interval_secs: Option<i64>,
+    /// Slippage in basis points (default 0).
     slippage_bps: Option<f64>,
+    /// `"Fixed"` or `"Tiered"` (default `"Tiered"`).
     commission_model: Option<String>,
+    /// Results file path (default `backtest_results.json`).
     output_path: Option<String>,
     /// Run the active strategies together in one multi pass instead of
     /// separately (default false = one run per strategy, the legacy shape).
@@ -78,6 +88,8 @@ struct BacktestConfigSection {
 
 /// The top-level `backtest.json` — the `config` section + the per-strategy
 /// sections (flattened: each strategy name → its spec).
+///
+/// Inactive strategies are parsed but contribute no contracts and are not run.
 #[derive(Deserialize)]
 struct BacktestFile {
     config: BacktestConfigSection,
@@ -85,6 +97,21 @@ struct BacktestFile {
     strategies: HashMap<String, StrategySpec>,
 }
 
+/// Backtest entry point: connect, migrate, read `backtest.json`, run.
+///
+/// `multi_run: true` sends the active strategies through one
+/// [`run_multi_route`](trading_app::backtester::run_multi_route) pass over the
+/// union of contracts; otherwise each active strategy gets its own
+/// [`run_backtest`](trading_app::backtester::run_backtest).
+///
+/// # Errors
+///
+/// - neither `TEST_TRADING_DB_URL` nor `DATABASE_URL` is set;
+/// - the pool cannot connect, or migrations fail;
+/// - `backtest.json` is missing/unparseable, the period is incomplete, a mode
+///   or commission string is invalid, or no active strategy defines a
+///   contract;
+/// - the routing/replay call itself fails.
 #[tokio::main]
 async fn main() -> Result<(), String> {
     tracing_subscriber::fmt()

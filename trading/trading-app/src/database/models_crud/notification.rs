@@ -1,3 +1,34 @@
+//! `trading.notifications` — append-only user notifications.
+//!
+//! `id` is `GENERATED ALWAYS`; only [`NotificationCRUD::create`](crate::database::models_crud::notification::NotificationCRUD::create) and
+//! [`NotificationCRUD::read_all`](crate::database::models_crud::notification::NotificationCRUD::read_all) are exposed. `body` and `alert_type` are
+//! `NOT NULL`. There is no uniqueness on `title`, so notifications are
+//! intentionally non-addressable.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use trading_app::database::db::DbDirect;
+//! use trading_app::database::models::NotificationFullKeys;
+//! use trading_app::database::tables::DbTables;
+//!
+//! # async fn example(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut db = DbDirect::connect(pool);
+//! db.notification()
+//!     .create(&NotificationFullKeys {
+//!         id: None,
+//!         title: "Risk".into(),
+//!         body: "Position limit reached".into(),
+//!         alert_type: "WARN".into(),
+//!     })
+//!     .await?;
+//!
+//! let all = db.notification().read_all().await?;
+//! # let _ = all;
+//! # Ok(())
+//! # }
+//! ```
+
 use crate::database::{
     crud::{CRUD, CRUDTrait},
     db::{DbError, Exec},

@@ -47,12 +47,19 @@ use crate::backtester::methods::in_memory::state::InMemoryState;
 /// whose construction would contend on `OrderStore::open()` across parallel
 /// sweep backtests). Built per-backtest by the sweep runner / single route.
 pub struct InMemoryRunContext<'a> {
+    /// Backtest configuration (capital, contracts, period).
     pub config: &'a BacktestConfig,
+    /// The warmed strategy to replay.
     pub strategy: StrategyEnum,
+    /// Runtime used for the `block_on` wait on `warm_up_data`.
     pub handle: &'a tokio::runtime::Handle,
+    /// Clock the strategy and reconcile read.
     pub clock: &'a BacktestClock,
+    /// Per-contract close cache.
     pub prices: &'a BacktestPriceSupplier,
+    /// Read facade used by the strategy.
     pub consolidator: &'a Arc<Consolidator>,
+    /// The strategy's details (hooks flag, name, FX flag).
     pub strategy_details: &'a StrategyDetails,
 }
 
@@ -68,6 +75,16 @@ impl InMemoryReplay {
     ///
     /// `bars` is the full pre-loaded bar set (shared via `Arc`); the cache
     /// reads the lookback from it + tracks `max_end_time` for the trim.
+    ///
+    /// # Errors
+    ///
+    /// - the period is [`BacktestPeriod::NumBars`] (warm-up needs a window);
+    /// - there are fewer than `warmup_bars_required()` bar slots;
+    /// - `warm_up_data` fails.
+    ///
+    /// # Panics
+    ///
+    /// A replay timestamp row contains no bars (`this_time.unwrap()`).
     pub fn run_with_warm_up(
         &self,
         strategy: StrategyEnum,
@@ -149,6 +166,18 @@ impl InMemoryReplay {
 
     /// Run the bar loop with pre-loaded shared bars. Returns the equity curve
     /// + the `InMemoryState` (the sweep uses the state for results).
+    ///
+    /// For each timestamp row: publish the clock and close to every contract,
+    /// run the real `on_bar_update`, reconcile the outcome against the
+    /// in-memory state (no DB, no broker), run the bucket-end sentinel, then
+    /// snapshot equity from the state. The thread-local state is installed
+    /// before the loop and cleared after it; the returned `Arc` remains valid.
+    ///
+    /// # Panics
+    ///
+    /// A bar row's contract index does not align with
+    /// `config.subscribed_contracts` (the two `.expect`s in the loop), or a
+    /// timestamp row contains no bars.
     pub fn run_with_bars(
         &self,
         ctx: InMemoryRunContext,
@@ -291,26 +320,35 @@ impl InMemoryReplay {
 /// Context for [`InMemoryReplay::run_multi_with_bars`] — one shared market
 /// surface (clock/prices/consolidator), N strategies, N seeds.
 pub struct InMemoryMultiContext<'a> {
+    /// Backtest configuration shared by all strategies.
     pub config: &'a BacktestConfig,
     /// Strategies in DETERMINISTIC order (sorted by name at the call site).
     pub strategies: Vec<StrategyEnum>,
     /// Per-strategy starting capital (transfer seeding: each sleeve account
     /// is seeded independently; the caller's residual = config capital − Σ).
     pub seeds: Vec<f64>,
+    /// Runtime used for the `block_on` waits.
     pub handle: &'a tokio::runtime::Handle,
+    /// Clock read by every strategy.
     pub clock: &'a BacktestClock,
+    /// Shared per-contract close cache.
     pub prices: &'a BacktestPriceSupplier,
+    /// Shared read facade.
     pub consolidator: &'a Arc<Consolidator>,
 }
 
 /// Output of the multi run: per-strategy curves + states (for results), the
 /// constant residual cash, and the rollup curve (residual + Σ sleeve equity).
 pub struct MultiRunOutput {
+    /// Strategy names, in `InMemoryMultiContext::strategies` order.
     pub names: Vec<String>,
+    /// One curve per strategy, same order.
     pub curves: Vec<EquityCurve>,
+    /// Each strategy's final state (for post-run result computation).
     pub states: Vec<Arc<InMemoryState>>,
     /// `config.starting_capital_sgd − Σ seeds` (≥ 0, asserted at entry).
     pub residual: f64,
+    /// Residual + Σ sleeve equity, one row per replay timestamp.
     pub rollup: EquityCurve,
 }
 
@@ -319,6 +357,19 @@ impl InMemoryReplay {
     /// [`InMemoryReplay::run_with_warm_up`]): set the bar cache → warm each
     /// strategy at its OWN warmup count → trim to post-warm-up →
     /// [`InMemoryReplay::run_multi_with_bars`] → clear the cache.
+    ///
+    /// The trim uses the shared cache's `max_end_time`, so it starts after
+    /// the deepest warm-up among all strategies.
+    ///
+    /// # Errors
+    ///
+    /// - the period is [`BacktestPeriod::NumBars`];
+    /// - a strategy's warm-up count exceeds the available bar slots;
+    /// - any strategy's `warm_up_data` fails.
+    ///
+    /// # Panics
+    ///
+    /// A replay timestamp row contains no bars.
     pub fn run_multi_with_warm_up(
         &self,
         strategies: Vec<StrategyEnum>,
@@ -402,6 +453,24 @@ impl InMemoryReplay {
     /// strategy gets its own seeded [`InMemoryState`]; the thread-local is
     /// switched per strategy call. Returns per-strategy curves + states, the
     /// residual cash, and the rollup curve.
+    ///
+    /// Composition-of-solos invariant: with one account per strategy and the
+    /// clock/close published once per bar before any strategy sees it, each
+    /// strategy's curve matches its solo run. Two deliberate differences from
+    /// solo:
+    ///
+    /// - parked intents fill FIRST at each slot (before new bars are fed);
+    /// - fills resolve their settlement state through the fill router by
+    ///   `order_ref`, so a pooled fill lands in the owning strategy's account.
+    ///
+    /// Per-strategy `order_id` counters start at zero and advance
+    /// independently. The rollup adds the residual to the summed curves.
+    ///
+    /// # Panics
+    ///
+    /// - `strategies.len() != seeds.len()`;
+    /// - the seeds over-commit `starting_capital_sgd`;
+    /// - a timestamp row contains no bars.
     pub fn run_multi_with_bars(
         &self,
         mut ctx: InMemoryMultiContext,

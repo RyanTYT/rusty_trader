@@ -1,3 +1,25 @@
+//! SGD valuation of a strategy's book.
+//!
+//! [`GetStrategyValue`] is the read port used by fund gates and the HTTP
+//! strategy-value endpoint. A value is computed as:
+//!
+//! 1. read the strategy's current stock positions (the stock table already
+//!    contains `CASH:<ccy>` rows, so cash is included);
+//! 2. price each non-zero position in its own currency;
+//! 3. convert to SGD — `CASH:SGD` is 1.0, any other cash row uses its FX pair,
+//!    and a non-SGD instrument is converted through `<currency>/SGD` on
+//!    IDEALPRO.
+//!
+//! Prices come from the memoised `GetPrice` function in the live path (15-minute
+//! TTL) and the strategy value itself is memoised for 60 seconds. Under
+//! `feature = "backtest"` the memoised path is bypassed and prices come from the
+//! [`PriceSupplier`], with an in-memory positions snapshot when one is active.
+//!
+//! FX rates are cached per contract for the duration of one valuation, so a book
+//! with many USD names performs one rate lookup.
+//!
+//! [`PriceSupplier`]: crate::market_data::traits::current_price::PriceSupplier
+
 use crate::database::tables::DbTables;
 use std::{collections::HashMap, sync::Arc};
 
@@ -20,7 +42,17 @@ use crate::{
     },
 };
 
+/// Reads a strategy's signed market value in SGD.
 pub trait GetStrategyValue {
+    /// Returns `sum(quantity * SGD price)` over the strategy's positions.
+    ///
+    /// Zero-quantity rows are skipped. Short positions contribute negatively.
+    ///
+    /// # Errors
+    ///
+    /// - the position read fails;
+    /// - a price or FX rate cannot be fetched (including an unknown currency);
+    /// - the memoised entry returns an unexpected type.
     fn get_strategy_sgd_value(&self, strategy: &str) -> Result<f64, String>;
 }
 
@@ -49,6 +81,11 @@ impl GetStrategyValue for Consolidator {
 
 impl Consolidator {
     // Ignore Options contracts for this for the time being
+    /// Live valuation body: reads the strategy's positions, then prices them.
+    ///
+    /// The database read runs on a spawned task and is awaited with
+    /// `futures::executor::block_on`, because this function is called from
+    /// synchronous strategy/gate code.
     pub(crate) fn _get_strategy_sgd_value(
         client: &Arc<Client>,
         get_current_price_fn: &Box<dyn AnyMemoized>,
@@ -76,6 +113,18 @@ impl Consolidator {
         Self::_get_positions_value(client, get_current_price_fn, positions)
     }
 
+    /// Prices a list of positions and returns their signed SGD value.
+    ///
+    /// Skips zero quantities. A `ForexPair` position is itself the cash leg, so
+    /// its own price is the rate (`CASH:SGD` is hard-coded to 1.0). Any other
+    /// non-SGD currency is converted via `<currency>/SGD`; the instrument price
+    /// and the FX rate each come from the `GetPrice` memoiser, and rates are
+    /// cached per contract for this call.
+    ///
+    /// # Errors
+    ///
+    /// Propagates price lookup failures. A missing `CASH:<ccy>` conversion pair
+    /// surfaces as an error from the price request.
     fn _get_positions_value(
         client: &Arc<Client>,
         get_current_price_fn: &Box<dyn AnyMemoized>,
@@ -271,6 +320,16 @@ impl Consolidator {
     /// `InMemoryState`) into SGD. Mirrors the DB path's valuation (CASH:SGD =
     /// rate 1.0; non-SGD positions are FX-converted via the price supplier).
     /// Only handles Stock + CASH:* (the Noise strategy's scope).
+    /// In-memory valuation of snapshot positions into SGD (backtest only).
+    ///
+    /// Supports stock rows and `CASH:*` rows; options are not handled here because
+    /// the in-memory replay state does not model them. `CASH:SGD` contributes at
+    /// 1.0, other cash rows via their FX pair, and non-SGD stocks via
+    /// `<currency>/SGD`, with rates cached per call.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any price-supplier failure.
     #[cfg(feature = "backtest")]
     pub(crate) fn _get_strategy_sgd_value_from_positions(
         price_supplier: &std::sync::Arc<
@@ -350,6 +409,19 @@ impl Consolidator {
 }
 
 impl Consolidator {
+    /// Valuates the **whole fund** (all strategies' grouped positions) in SGD.
+    ///
+    /// Uses `get_all_pos_grouped` and the live `GetPrice` memoiser. Intended for
+    /// capital reporting, not per-strategy gating.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the grouped position read fails or a price lookup fails.
+    /// # Panics
+    ///
+    /// Panics if the `GetPrice` memoiser was never installed (live consolidators
+    /// always install it; a backtest consolidator should use
+    /// [`GetStrategyValue`] instead).
     pub(crate) fn get_fund_value(
         &self,
         client: &Arc<Client>,

@@ -1,3 +1,24 @@
+//! HTTP surface for external tools over the running app.
+//!
+//! Everything here is read-only. The state is a `Weak<ApplicationState>`
+//! pushed in by `init_app` through `init_server`'s channel; until a state
+//! arrives (and after the app is dropped) every endpoint answers
+//! `500 "Trading App is currently not running!"`.
+//!
+//! Routes:
+//!
+//! - `GET /contract/price?stock=&primary_exchange=&currency=` → `{"price": f64}`
+//! - `GET /contracts/stock?...` → `[{stock, primary_exchange, currency, current_price}, ..]`
+//! - `GET /exchange_rate?currency=&quote=` → `{"price": f64}` (IDEALPRO pair)
+//! - `GET /strategy/capital?strategy=` → `{"sgd_value": f64}`
+//! - `GET /check-health` → `200 {"status":"ok"}` or a 500 failure shape
+//!   (process/container liveness, not trading-engine health)
+//!
+//! Lifecycle: the listener binds synchronously on the caller's thread (bind
+//! errors surface immediately), the worker thread owns its own multi-thread
+//! runtime, and dropping [`ServerHandle`] shuts the server down and joins the
+//! thread so the port is released.
+
 use crate::helpers::contract::{LocalContractTypes, get_contract_from};
 use crate::{
     database::{
@@ -69,11 +90,20 @@ impl Drop for ServerHandle {
     }
 }
 
+/// Shared axum state: a slot holding the weak handle to the running app.
+///
+/// `init_server`'s channel task replaces the slot on start and clears it on
+/// shutdown, so the handlers always see either a live weak reference or `None`.
 #[derive(Clone, Debug)]
 struct AppState {
     trading_app_state: Arc<Mutex<Option<Weak<ApplicationState>>>>,
 }
 
+/// Upgrade the shared weak handle, or answer the standard "not running" 500.
+///
+/// Two failure modes produce the same response: the slot is empty (server
+/// started but the app never arrived / was cleared), or the weak reference no
+/// longer upgrades (the app was dropped).
 async fn extract_application_state(
     state: AppState,
 ) -> Result<Arc<ApplicationState>, (StatusCode, String)> {
@@ -101,12 +131,20 @@ async fn extract_application_state(
     // }
 }
 
+/// Query parameters identifying a stock contract.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ContractDetails {
     stock: String,
     primary_exchange: String,
     currency: String,
 }
+
+/// `GET /contract/price` — last price for one stock.
+///
+/// # Errors
+///
+/// - state missing/dead → 500 `"Trading App is currently not running!"`;
+/// - price lookup failure → 500 with the consolidator's error text.
 async fn get_current_price(
     State(state): State<AppState>,
     Query(payload): Query<ContractDetails>,
@@ -142,6 +180,7 @@ async fn get_current_price(
         )
 }
 
+/// One resolved stock contract with its latest price.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ContractWithDetails {
     stock: String,
@@ -149,6 +188,19 @@ struct ContractWithDetails {
     currency: String,
     current_price: f64,
 }
+
+/// `GET /contracts/stock` — resolve a stock symbol to its listed contracts.
+///
+/// Builds a stock contract from the query (exchange/currency optional), asks
+/// IBKR for details under a 1-second timeout, then prices every returned
+/// contract. An empty details list is a valid `200 []`.
+///
+/// # Errors
+///
+/// - state missing/dead → standard 500;
+/// - IBKR details timeout/failure → 500 `"Failed to fetch contract details from IBKR: .."`;
+/// - any resolved contract cannot be priced → 500
+///   `"Could not get current price for one or more contracts"`.
 async fn get_possible_stock_contracts(
     State(state): State<AppState>,
     Query(payload): Query<ContractDetails>,
@@ -238,16 +290,25 @@ async fn get_possible_stock_contracts(
     }
 }
 
+/// Response body for `/exchange_rate`: rate of `quote` in `currency`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CurrencyVal {
     price: f64,
 }
 
+/// Query parameters for `/exchange_rate`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Currencies {
     currency: String,
     quote: String,
 }
+
+/// `GET /exchange_rate` — IDEALPRO rate for `quote/currency`.
+///
+/// # Errors
+///
+/// - state missing/dead → standard 500;
+/// - price failure → 500 `"Failed to fetch exchange rate: .."`.
 async fn get_exchange_rate(
     State(state): State<AppState>,
     Query(payload): Query<Currencies>,
@@ -282,15 +343,24 @@ async fn get_exchange_rate(
     // consolidator
 }
 
+/// Response body for `/strategy/capital`: the strategy's SGD value.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StrategyValue {
     sgd_value: f64,
 }
 
+/// Query parameter for `/strategy/capital`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StrategyQuery {
     strategy: String,
 }
+
+/// `GET /strategy/capital` — total SGD value of one strategy's positions.
+///
+/// # Errors
+///
+/// - state missing/dead → standard 500;
+/// - valuation failure → 500 with the consolidator's error text.
 async fn get_strategy_value(
     State(state): State<AppState>,
     Query(payload): Query<StrategyQuery>,
@@ -366,6 +436,21 @@ async fn get_strategy_value(
     // });
 }
 
+/// `GET /check-health` — process/container liveness, not trading-engine health.
+///
+/// This endpoint exists so an external supervisor (systemd, Docker, a load
+/// balancer) can tell whether the app thread is still alive and the container
+/// has not crashed. It is intentionally *not* a liveness check of the trading
+/// engine: strategies, the DB, order routing and the market-data pipeline are
+/// not exercised, so a hung or wedged engine can still answer `ok`.
+///
+/// It is consistent with the app-state slot, and uses the IBKR connection only
+/// as a secondary signal:
+///
+/// - app state never set (server up, app not started yet) → `200 {"status":"ok"}`;
+/// - slot set but the weak reference no longer upgrades → `500` with
+///   `"Trading app is currently not running BUT app_state still has Strong Reference to it"`;
+/// - app alive but the IBKR client is disconnected → `500 {"status":"not connected to IBKR"}` (JSON body, unlike the other 500s).
 async fn check_health(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {

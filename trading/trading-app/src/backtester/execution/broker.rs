@@ -48,13 +48,39 @@ use crate::backtester::execution::{
 };
 use crate::backtester::setup::config::BacktestConfig;
 
+/// A fill intent parked for `fill_lag_bars` of the order's own bars.
+///
+/// Only slots where the contract printed a bar advance `bars_remaining`; while
+/// parked the order is visible as an optimistic `(-1, order_id)` open-order
+/// row, so strategies can see their working orders.
 struct PendingFill {
+    /// Broker-assigned order id (`BacktestBroker::next_order_id`).
     order_id: i32,
+    /// Contract being traded; also the lookup key for the slot bar.
     contract: Contract,
+    /// The submitted order (action, quantity, limit price, order_ref).
     order: Order,
+    /// Own printed bars still to wait before the first fill decision.
     bars_remaining: u64,
 }
 
+/// Simulated broker: the order-placement surface of a Db-lane backtest.
+///
+/// `submit_order` decides a fill synchronously against the current slot's bar
+/// (published per contract by the replayer), then settles it the way the
+/// production execution handler would:
+/// - write a `transactions` row;
+/// - apply the instrument position through the real additive upsert;
+/// - apply the SGD cash leg through `CASH:SGD`.
+///
+/// There is no IBKR confirmation race, so no optimistic `-1` row is written
+/// except while an order is parked for a lagged or unfilled decision. Cash and
+/// positions are updated through `handle.block_on`, because the submit surface
+/// is synchronous.
+///
+/// Known limitation: option fills log a warning and record their transaction
+/// row in the **stock** transactions table (the option transaction write is not
+/// implemented in this lane).
 pub struct BacktestBroker {
     pool: PgPool,
     handle: tokio::runtime::Handle,
@@ -77,6 +103,8 @@ pub struct BacktestBroker {
 }
 
 impl BacktestBroker {
+    /// Build a broker for one run: the starting cash comes from
+    /// `config.starting_capital_sgd`, and order ids start at 1.
     pub fn new(
         pool: PgPool,
         handle: tokio::runtime::Handle,
@@ -99,10 +127,12 @@ impl BacktestBroker {
         }
     }
 
+    /// The database pool the broker settles against.
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
+    /// The runtime handle used for synchronous settlement writes.
     pub fn handle(&self) -> &tokio::runtime::Handle {
         &self.handle
     }
@@ -128,6 +158,9 @@ impl BacktestBroker {
     }
 
     /// Publish this slot's bar for `contract` (per-contract fill surface).
+    ///
+    /// Replaces any previous bar for the same contract; contracts that do not
+    /// publish a bar in a slot cannot fill in that slot.
     pub fn publish_slot_bar(&self, contract: &Contract, bar: HistoricalDataFullKeys) {
         self.latest_bars
             .lock()
@@ -138,7 +171,13 @@ impl BacktestBroker {
             );
     }
 
-    // pub fn advance_slot(&self) {
+    /// Re-evaluate every parked fill intent against the slot's published bars.
+    ///
+    /// A contract without a bar this slot does not advance the lag and cannot
+    /// fill. Once `bars_remaining` reaches zero the fill model is consulted:
+    /// crossed market/limit orders settle, unfilled limit orders stay parked
+    /// and are re-checked on the contract's next bar. A settled fill also
+    /// deletes its optimistic `(-1, order_id)` open-order row.
     pub fn drain_parked_orders(&self) {
         let mut to_fill: Vec<(PendingFill, f64, f64, chrono::DateTime<chrono::Utc>)> = Vec::new();
         {
@@ -206,6 +245,9 @@ impl BacktestBroker {
 
     /// Drain-and-clear the synthesized execution reports. Mirrors the
     /// consumer contract of the prod ring's `try_pop` drain loop.
+    ///
+    /// The caller gets every report accumulated since the previous take; the
+    /// backlog is left empty.
     pub fn take_execution_backlog(&self) -> Vec<ExecutionData> {
         std::mem::take(
             &mut *self
@@ -219,10 +261,19 @@ impl BacktestBroker {
 /// `BacktestBroker` implements `OrderSubmitter` so it can be passed as
 /// `&dyn OrderSubmitter` to the cfg-gated `handle_bar_update_outcome`.
 impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
+    /// Allocate the next broker order id (monotonic from 1).
     fn next_order_id(&self) -> i32 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// Submit an order: decide and settle immediately when possible, otherwise
+    /// park it.
+    ///
+    /// Parking happens when the contract printed no bar in this slot, when
+    /// `fill_lag_bars > 0`, or when the fill model reports no fill. A parked
+    /// order is recorded as an optimistic `(-1, order_id)` row and re-evaluated
+    /// by [`BacktestBroker::drain_parked_orders`]. Settlement failures are
+    /// logged; submission never fails.
     fn submit_order(&self, order_id: i32, contract: &Contract, order: &Order) {
         let asset_type = AssetType::from_str(&contract.security_type);
         let bar: Option<Arc<HistoricalDataFullKeys>> = {
@@ -291,6 +342,13 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
         }
     }
 
+    /// Remove a parked intent and both stock/option `(-1, order_id)` rows.
+    ///
+    /// Cancelling an id that is not parked (already filled or unknown) is a
+    /// successful no-op and touches no rows.
+    ///
+    /// # Errors
+    /// Never returns `Err`: every database failure is logged.
     fn cancel_order(&self, order_id: i32) -> Result<(), String> {
         // delete from parked intents first
         {
@@ -325,7 +383,24 @@ impl crate::backtester::execution::OrderSubmitter for BacktestBroker {
 }
 
 impl BacktestBroker {
-    /// Settle a decided fill
+    /// Settle a decided fill.
+    ///
+    /// Steps, all executed under `handle.block_on`:
+    /// 1. commission from the configured model;
+    /// 2. cash leg in SGD: `-(qty * price + fees) * fx`, where `fx` converts
+    ///    the contract currency to SGD (1.0 for SGD, otherwise the IDEALPRO
+    ///    pair via the price oracle, falling back to 1.0 with a warning);
+    /// 3. a `transactions` row for the fill;
+    /// 4. an instrument position update through `update_positions_additive`;
+    /// 5. a `CASH:SGD` update for the cash leg;
+    /// 6. a synthetic execution report appended to the backlog.
+    ///
+    /// The cash delta is negative for a positive (buy) quantity and positive
+    /// for a sell, because the fill quantity is signed. Fees are charged on
+    /// both sides.
+    ///
+    /// Known limitation: option fills warn and write a stock transaction row;
+    /// the option transaction path is not implemented in this lane.
     fn settle_fill(
         &self,
         order_id: i32,

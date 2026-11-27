@@ -1,3 +1,13 @@
+//! Per-contract trading-hours schedules, answered from IBKR contract details.
+//!
+//! [`IbkrContractScheduler`] lazily fetches a contract's schedule on first use
+//! (one IBKR request, 10 s timeout) and keeps a queue of `[open, close]`
+//! intervals in UTC. Callers ask "is this contract trading now?" or "when do
+//! these contracts next become available/unavailable?".
+//!
+//! The IBKR gateway must have "Expose whole trading schedule to API" enabled;
+//! otherwise only today's hours are returned and the queue drains rapidly.
+
 use std::{
     cell::UnsafeCell,
     collections::{HashMap, VecDeque},
@@ -23,28 +33,48 @@ use crate::helpers::sync_timeout::timeout;
 //     schedule: BTreeMap<NaiveDate, Option<TradingHours>>,
 // }
 
+/// Trading-hours questions answered per contract.
+///
+/// Implementations are queried both from the bar producers (should I poll?) and
+/// from the align/prime helpers (what is the next boundary?), so they must be
+/// cheap after warm-up and safe to call concurrently.
 pub trait ContractScheduler {
+    /// Register one contract and fetch its schedule up front.
     fn add_schedule(&mut self, contract: &Contract) -> Result<(), String>;
+    /// Register several contracts, fetching their schedules in parallel threads.
     fn add_all_schedules<I>(&mut self, contracts: I) -> Result<(), String>
     where
         I: IntoIterator<Item = Contract>;
+    /// `true` when `now` is inside the current `[open, close)` interval.
     fn is_trading(&self, contract: &Contract) -> Result<bool, String>;
+    /// Latest close across the given contracts that are currently trading.
+    ///
+    /// Returns "now" when none of them is trading.
     fn get_next_latest_unavailable_data<'a>(
         &self,
         contracts: impl IntoIterator<Item = &'a Contract>,
     ) -> Result<DateTime<Utc>, String>;
+    /// Earliest open among the given contracts.
+    ///
+    /// Returns "now" as soon as any contract is already trading.
     fn get_next_earliest_available_data<'a>(
         &self,
         contracts: impl IntoIterator<Item = &'a Contract>,
     ) -> Result<DateTime<Utc>, String>;
 }
 
+/// One `[open, close)` window, as UTC epoch seconds.
 #[derive(Debug, Clone, Copy)]
 pub struct Interval {
     open: i64,
     close: i64,
 }
 
+/// IBKR-backed scheduler: schedules keyed by `contract_id`.
+///
+/// Each contract has a queue of intervals plus an `AtomicBool` "under edit"
+/// spin lock; the queue lives behind `UnsafeCell` and is only touched by the
+/// lock holder.
 #[derive(Debug)]
 pub struct IbkrContractScheduler {
     client: Arc<Client>,
@@ -53,10 +83,15 @@ pub struct IbkrContractScheduler {
     schedules: Arc<HashMap<i32, UnsafeCell<VecDeque<Interval>>>>,
 }
 
+// SAFETY: every access to a `VecDeque` goes through its contract's
+// `is_under_editing` flag (acquired with a CAS spin loop, released by an RAII
+// guard). The maps themselves are only mutated while `&mut self` is held and
+// no clones exist (`Arc::get_mut` asserts that).
 unsafe impl Send for IbkrContractScheduler {}
 unsafe impl Sync for IbkrContractScheduler {}
 
 impl IbkrContractScheduler {
+    /// Empty scheduler bound to an IBKR client; schedules are added explicitly.
     pub fn new(client: Arc<Client>) -> Self {
         Self {
             client,
@@ -65,10 +100,25 @@ impl IbkrContractScheduler {
         }
     }
 
+    /// Whether a schedule is already tracked for this contract id.
     pub fn contains_contract(&self, contract: &Contract) -> bool {
         self.schedules.contains_key(&contract.contract_id)
     }
 
+    /// Ask IBKR for the contract's hours and convert them to UTC intervals.
+    ///
+    /// Prefers `liquid_hours` when present, else `trading_hours`; skips empty
+    /// entries and `:CLOSED` days; parses `YYYYMMDD:HHMM` in the contract's
+    /// timezone.
+    ///
+    /// # Errors
+    ///
+    /// The 10 s details request times out, the timezone id is unknown, or a day
+    /// string cannot be parsed.
+    ///
+    /// # Panics
+    ///
+    /// IBKR returned no contract details (`.first().unwrap()`).
     fn fetch_schedule(&self, contract: &Contract) -> Result<VecDeque<Interval>, String> {
         let client = self.client.clone();
         let cloned_contract = contract.clone();
@@ -162,6 +212,15 @@ impl IbkrContractScheduler {
         }
     }
 
+    /// Fetch and store the schedule when it is still empty.
+    ///
+    /// Takes the contract's edit flag with a CAS spin lock (RAII-released),
+    /// double-checks emptiness, fetches, sorts by open time and drops intervals
+    /// that have already closed.
+    ///
+    /// # Errors
+    ///
+    /// The contract is unknown, the IBKR fetch fails, or the response is empty.
     fn update_schedule(&self, contract: &Contract) -> Result<(), String> {
         // =====================
         // skip if alr have data
@@ -229,6 +288,19 @@ impl IbkrContractScheduler {
         Ok(())
     }
 
+    /// Current time and the first not-yet-closed interval.
+    ///
+    /// Lazily refetches when the queue is empty and advances past expired
+    /// intervals under the edit flag.
+    ///
+    /// # Errors
+    ///
+    /// The contract is unknown or a refetch fails.
+    ///
+    /// # Panics
+    ///
+    /// The contract has no entry in the scheduler, or a queue entry vanished
+    /// while locked.
     fn get_interval(&self, contract: &Contract) -> Result<(i64, Interval), String> {
         let schedule_cell = self
             .schedules

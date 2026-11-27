@@ -20,6 +20,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::{Mutex, OnceLock};
 
+/// Cached env-flag lookup (`"1"` after trimming). Evaluated once per process.
 fn env_flag(name: &str) -> bool {
     static FLAGS: OnceLock<Vec<(String, bool)>> = OnceLock::new();
     let f = FLAGS.get_or_init(|| {
@@ -33,6 +34,7 @@ fn env_flag(name: &str) -> bool {
     f.iter().any(|(n, on)| n == name && *on)
 }
 
+/// Whether the per-fill diag log is enabled (`BLENDED5_FUND_DIAG=1`).
 pub fn diag_fills() -> bool {
     env_flag("BLENDED5_FUND_DIAG")
 }
@@ -53,8 +55,10 @@ pub fn diag_window() -> Option<(chrono::NaiveDate, chrono::NaiveDate)> {
     })
 }
 
+/// One lazily-created CSV sink behind a mutex (`None` until first write).
 struct Writer(Mutex<Option<BufWriter<File>>>);
 
+/// The process-wide writer slot for a CSV env key.
 fn writer(key: &'static str) -> &'static Writer {
     static EQ: OnceLock<Writer> = OnceLock::new();
     static FILLS: OnceLock<Writer> = OnceLock::new();
@@ -120,6 +124,17 @@ pub fn diag_eq_row(time_ms: i64, cells: &[f64], rollup: f64) {
 
 /// One fill (any branch). `routed_owner` None = settled on the emitter's own
 /// account (or no router entry — surfacing that IS the point).
+///
+/// # Arguments
+///
+/// - `time_ms` — bar time, epoch milliseconds, as written to the CSV;
+/// - `date_et` — ET calendar date used by `BLENDED5_DIAG_WINDOW`;
+/// - `emitter` — strategy whose reconcile emitted the order;
+/// - `order_ref` — the emitted order's reference (owner name, or `name:price`);
+/// - `routed_owner` — strategy the fill settled into via the fill router;
+/// - `sym` / `action` — traded symbol and `BOT`/`SLD` side;
+/// - `fill_qty` / `fill_price` / `fees` — signed quantity, price, commission;
+/// - `fx_rate` — conversion applied to SGD (1.0 for SGD).
 #[allow(clippy::too_many_arguments)]
 pub fn diag_fill(
     time_ms: i64,

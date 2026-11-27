@@ -1,3 +1,42 @@
+//! FX funding: how every opening in a target-position update gets paid for.
+//!
+//! A strategy that trades instruments in a non-base currency cannot place a buy before the
+//! cash exists in that currency. This module turns a slice of
+//! [`TargetPositionsQtyDiff`](crate::database::models_crud::target_positions::target_positions::TargetPositionsQtyDiff)
+//! rows into an [`FxFundingPlan`](crate::execution::fx_organiser::FxFundingPlan): what can be placed now, what has to wait for an FX fill, and
+//! which standalone conversions are needed.
+//!
+//! # Pipeline
+//! 1. **Classify** — `CASH:<ccy>` rows contribute their positive `current_qty` to that
+//!    currency's budget and their `qty_diff` is ignored. Every other row is split into the
+//!    quantity being closed and the quantity being opened
+//!    (`closing = current_qty != 0 && current_qty * qty_diff < 0`).
+//! 2. **Value** — closings are priced once in their own currency, then ranked by base-currency
+//!    value so "smallest first" is comparable across currencies.
+//! 3. **Fund** — an opening draws from its own-currency budget, then from other-currency
+//!    budgets (largest first, emitted as standalone FX sells), then from a same-currency
+//!    closing, then from one closing in another currency through a single FX leg.
+//! 4. **Assemble** — one batch per closing, `[head]` or `[head, fx legs..]`; the head transmits
+//!    only after the last leg.
+//!
+//! # Invariants
+//! - An opening head carries `order_ref = "{strategy}:{price}"`. That suffix is a parked-order
+//!   key only: [`place_backed_up_orders`](crate::execution::order_update_stream::event_handlers::execution)
+//!   rewrites it to the bare strategy before submission, so it never reaches the open-order
+//!   table.
+//! - A fully funded opening is placed (`order_batches`); a partially funded one is parked
+//!   (`parked_orders`) and waits for the credit; an unfunded one is dropped with an error log.
+//! - Closings, FX roots and reconcile-only heads carry the bare strategy in `order_ref`.
+//! - An opening identical to an order already parked in the
+//!   [`OrderStore`](crate::execution::fx_backed_up_order::OrderStore) is in flight and is not
+//!   funded again.
+//! - Conversions are one hop (`sell_ccy -> buy_ccy`); a child order cannot have children, so
+//!   deeper chains are deferred.
+//!
+//! # Where the plan goes
+//! [`OrderEngine::handle_bar_update_outcome`](crate::execution::order_engine::OrderEngine::handle_bar_update_outcome)
+//! passes each batch to `on_new_qty_diff_for_strat`, places `root_orders` directly (they carry
+//! no target) and stores `parked_orders` in the `OrderStore`.
 use std::collections::HashMap;
 #[cfg(not(feature = "backtest"))]
 use std::sync::Weak;
@@ -25,11 +64,14 @@ use crate::{
 /// is first converted into this one.
 const BASE_CURRENCY: &str = "SGD";
 
+/// Legacy SELL → FX → BUY attachment description.
+///
+/// Produced by [`get_required_fx_attachments`](OrderEngine::get_required_fx_attachments); the
+/// live path uses [`FxFundingPlan`] instead.
 pub struct FxAttachments {
-    // Contract to be sold -> FX orders:
-    // - FX to be attached as child orders directly to Contract
+    /// Equity contract to be sold → FX orders to attach as its children.
     pub contracts_sold_to_fx_orders: HashMap<HashContract<'static>, Vec<OrderIBKR>>,
-    // Backed up orders that are blocked by the FX shortfall
+    /// Buy orders blocked by an FX shortfall; they wait for the sale proceeds to settle.
     pub backed_up_orders: Vec<OrderIBKR>,
 }
 
@@ -55,6 +97,10 @@ impl OrderEngine {
     ///
     /// Matching is greedy: shortfalls are iterated in order, and each is satisfied
     /// by consuming sell proceeds until the shortfall is covered or no more sells remain.
+    ///
+    /// # Panics
+    /// Panics when the consolidator has been dropped or an FX conversion price is missing:
+    /// this legacy path cannot size a conversion without a rate.
     pub fn get_required_fx_attachments<MarketBroker>(
         funds: HashMap<String, f64>,
         funds_from_selling: HashMap<HashContract<'static>, Vec<f64>>,
@@ -202,6 +248,66 @@ impl OrderEngine {
     /// - A flip (current 100, `qty_diff` -150) is a 100 close plus a 50 open, and the caller
     ///   places both.
     /// - Prices fall back to `avg_price`; a zero price defers the opening.
+    ///
+    /// # Errors
+    /// Returns `Err` only when the parked-order store cannot be read for `strategy_name`. Every
+    /// other problem (missing price, unfulfillable order) is logged and degrades the plan.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use async_trait::async_trait;
+    /// # use ibapi::prelude::Contract;
+    /// # use trading_app::database::models_crud::target_positions::target_positions::TargetPositionsQtyDiff;
+    /// # use trading_app::database::models_crud::target_positions::target_stock_positions::TargetStockPositionsQtyDiff;
+    /// # use trading_app::execution::fx_backed_up_order::OrderStore;
+    /// # use trading_app::execution::order_engine::OrderEngine;
+    /// # use trading_app::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
+    /// # #[derive(Debug)]
+    /// # struct FixedPrice(f64);
+    /// # #[async_trait]
+    /// # impl PriceSupplier for FixedPrice {
+    /// #     fn get_current_price(&self, _contract: Contract, _vwap: bool, _ticks: &[&str]) -> Result<f64, String> {
+    /// #         Ok(self.0)
+    /// #     }
+    /// #     #[cfg(not(feature = "backtest"))]
+    /// #     async fn populate_historical_data(&self, _contract: &Contract, _config: &HistoricalDataConfig) -> Result<(), String> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # fn example() -> Result<(), String> {
+    /// // The strategy holds 5,000 USD in cash ...
+    /// let cash = TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+    ///     strategy: "s".into(),
+    ///     primary_exchange: String::new(),
+    ///     currency: "USD".into(),
+    ///     stock: "CASH:USD".into(),
+    ///     avg_price: 1.0,
+    ///     qty_diff: 0.0,
+    ///     current_qty: 5_000.0,
+    /// });
+    /// // ... and wants to buy 10 AAPL at 100 (1,000 USD).
+    /// let buy = TargetPositionsQtyDiff::Stock(TargetStockPositionsQtyDiff {
+    ///     strategy: "s".into(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    ///     stock: "AAPL".into(),
+    ///     avg_price: 100.0,
+    ///     qty_diff: 10.0,
+    ///     current_qty: 0.0,
+    /// });
+    ///
+    /// let market = Arc::new(FixedPrice(100.0));
+    /// let store = OrderStore::open()?; // reads ORDERS_FILE_PATH
+    /// let plan = OrderEngine::get_fx_attachments(&[cash, buy], "s", &store, &Arc::downgrade(&market))?;
+    ///
+    /// // Fully funded in USD: one ready batch, nothing parked, no FX root.
+    /// assert_eq!(plan.order_batches.len(), 1);
+    /// assert!(plan.parked_orders.is_empty());
+    /// assert!(plan.root_orders.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(dead_code)]
     pub fn get_fx_attachments<#[cfg(not(feature = "backtest"))] MarketBroker: PriceSupplier>(
         target_pos_diffs: &[TargetPositionsQtyDiff],
@@ -564,20 +670,37 @@ impl OrderEngine {
     }
 }
 
+/// A closing trade whose proceeds can fund openings, plus any FX legs it carries.
 struct ClosingPosition {
+    /// Currency the proceeds land in.
     currency: String,
+    /// Cash still available to fund openings; decremented as it is consumed.
     cash_remaining: f64,
+    /// The closing order; it becomes the head of its batch.
     order_ibkr: OrderIBKR,
+    /// FX legs attached to the closing; only the last leg transmits.
     legs: Vec<OrderIBKR>,
 }
 
+/// An opening trade waiting for cash in its own currency.
 struct OpeningPosition {
+    /// `"{symbol}, {security_type}"`, used in log messages.
     label: String,
+    /// Currency the order needs.
     currency: String,
+    /// Cash required in that currency: `qty * price * multiplier`.
     required: f64,
+    /// The order to place once funded.
     order_ibkr: OrderIBKR,
 }
 
+/// Price of one unit of `from` expressed in `to`.
+///
+/// Identity pairs (`from == to`) return `1.0` without a lookup; everything else is priced as the
+/// IDEALPRO Forex pair `from/to`.
+///
+/// # Errors
+/// Propagates the supplier error when the pair cannot be priced.
 fn fx_conversion_rate(
     fetch_price: &impl Fn(Contract) -> Result<f64, String>,
     from: &str,

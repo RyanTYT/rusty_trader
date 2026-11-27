@@ -21,7 +21,9 @@ use crate::strategy::ContractEntry;
 /// One sweep result: the params that produced it + the computed metrics.
 #[derive(Debug, Serialize)]
 pub struct SweepResult {
+    /// The parameter set that produced `results`.
     pub params: HashMap<String, f64>,
+    /// Metrics for that parameter set.
     pub results: BacktestResults,
 }
 
@@ -42,6 +44,25 @@ pub struct SweepResult {
 /// [[AAPL_0, QQQ_0], [AAPL_1, QQQ_1], ...]
 ///
 /// for cache friendliness
+///
+/// # Arguments
+///
+/// - `name` — strategy name, resolved by `construct_strategy`;
+/// - `pool` — DB pool for the strategy's own reads and the light context;
+/// - `config` — backtest configuration (period, interval, capital,
+///   subscribed contracts);
+/// - `params` — the parameter set for this sweep entry, applied through the
+///   strategy's `with_backtest_params` path;
+/// - `bars` — pre-loaded bars in the 2D layout above;
+/// - `handle` — runtime handle used by DB reads inside the strategy.
+///
+/// # Errors
+///
+/// `Unknown strategy '{name}'`, or any error from the replay's warm-up/run.
+///
+/// # Panics
+///
+/// A poisoned `InMemoryState` lock while computing results.
 pub fn run_one_backtest(
     name: &str,
     pool: &sqlx::PgPool,

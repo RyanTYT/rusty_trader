@@ -1,3 +1,36 @@
+//! Live bar producers: one OS thread drives a batch of IBKR realtime-bar
+//! subscriptions into their SPMC rings.
+//!
+//! # Scheduling model
+//!
+//! The producer group is deliberately bar-clock driven rather than
+//! event driven:
+//!
+//! 1. at startup it drains any backlog and anchors its deadline to the newest
+//!    observed bar time ([`align_and_prime_schedule_producers`]);
+//! 2. every `BAR_INTERVAL` (5 s) it sleeps until the deadline, then spins for
+//!    up to `HOT_WINDOW` (500 ms) calling `try_next` on each trading
+//!    subscription and pushing each bar into its ring;
+//! 3. a subscription that produced no bar in a cycle counts as a miss; after
+//!    12 consecutive misses it is cancelled and re-subscribed;
+//! 4. when the contract scheduler says a contract is between sessions, the
+//!    subscription is re-created at the next available boundary.
+//!
+//! # Backpressure and failure signals
+//!
+//! A full ring is *not* silently dropped: the producer retries the push up to
+//! 10 times, incrementing `bar_push_retries`; if all retries fail the bar is
+//! logged as lost. Misses and subscription errors are exposed as per-symbol
+//! `bar_missed_<symbol>` / `bar_sub_errors_<symbol>` gauges, and arrival lag as
+//! `bar_arrival_lag_seconds`.
+//!
+//! # Panics
+//!
+//! The producer thread treats an unusable client or scheduler as fatal: a dead
+//! `Weak<Client>`, a failed `realtime_bars` subscription, or a scheduler lookup
+//! error panics the thread. There is no in-thread recovery; the owning
+//! [`crate::market_data::handler::MarketDataHandler`] must be rebuilt.
+
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -20,19 +53,27 @@ use crate::{
     schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler},
 };
 
+/// Cadence of the producer loop; IBKR realtime bars are 5-second bars.
 const BAR_INTERVAL: Duration = Duration::from_secs(5);
+/// How long each cycle spins waiting for that cycle's bar before declaring a miss.
 const HOT_WINDOW: Duration = Duration::from_millis(500);
+/// Spin hint between empty polls inside the hot window (zero = pure spin).
 const SPIN_BACKOFF: Duration = Duration::ZERO;
 
+/// One IBKR subscription paired with the ring producer it feeds.
 pub struct IbkrBarProducer<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize> {
+    /// Contract being streamed.
     pub contract: Contract,
+    /// Tick type requested.
     pub what_to_show: WhatToShow,
+    /// Handle used to push bars into the shared ring.
     producer: SpmcRingBufferProducer<Bar, BUFFER_CAPACITY, NUM_CONSUMERS>,
 }
 
 impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     IbkrBarProducer<BUFFER_CAPACITY, NUM_CONSUMERS>
 {
+    /// Wraps an existing ring producer for `contract`.
     pub fn new(
         contract: Contract,
         what_to_show: WhatToShow,
@@ -46,12 +87,19 @@ impl<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>
     }
 }
 
+/// Lifetime handle for one producer thread group.
 pub struct MarketDataProducer {
+    /// Cleared on drop/shutdown; the thread checks it each cycle.
     is_alive: Arc<AtomicBool>,
+    /// Taken by [`MarketDataProducer::async_drop`]; `None` afterwards.
     thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MarketDataProducer {
+    /// Signals the group to stop and joins its thread.
+    ///
+    /// The join runs on a blocking-pool thread so the async runtime is not
+    /// stalled; a panicked producer thread is logged, not propagated.
     pub async fn async_drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
         if let Some(handle) = self.thread_handle.take() {
@@ -69,11 +117,25 @@ impl MarketDataProducer {
 }
 
 impl Drop for MarketDataProducer {
+    /// Signals shutdown only; the thread is detached. Use
+    /// [`MarketDataProducer::async_drop`] to join it.
     fn drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
     }
 }
 
+/// Spawns the producer thread for a batch of subscriptions.
+///
+/// Every producer in `producers` is subscribed with 5-second realtime bars and
+/// `Extended` trading hours, except `ForexPair` which uses `Regular` (FX has no
+/// extended session). The returned handle owns the thread; dropping it signals
+/// shutdown but does not join.
+///
+/// # Panics
+///
+/// Panics while spawning the thread, when the client is already dead, or when a
+/// `realtime_bars` subscription fails. Panics inside the spawned closure abort
+/// the producer group (logged by [`MarketDataProducer::async_drop`]).
 pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_CONSUMERS: usize>(
     weak_client_borrowed: &Weak<Client>,
     contract_scheduler: Arc<IbkrContractScheduler>,
@@ -329,6 +391,13 @@ pub fn begin_producer_thread_grouped<const BUFFER_SIZE: usize, const MAX_NO_OF_C
     }
 }
 
+/// Cancels and re-creates the subscription at `idx`, preserving bar size,
+/// tick type and trading-hours choice.
+///
+/// # Panics
+///
+/// Panics when the client is dead or the replacement subscription fails; the
+/// caller treats a broken subscription as fatal for the group.
 fn resubscribe_bar<
     const BUFFER_CAPACITY: usize,
     const NUM_CONSUMERS: usize,
@@ -377,6 +446,11 @@ fn resubscribe_bar<
 /// Consumers that aren't trading yet at startup are skipped here; they'll
 /// simply be picked up by the active-set snapshot once they start trading,
 /// on whatever schedule the group has already settled into.
+///
+/// Returns the first steady-state deadline: one `BAR_INTERVAL` after the newest
+/// observed bar, or the next wall-clock 5-second boundary when nothing was
+/// trading at startup. The function gives up after 20 s and returns a deadline
+/// based on whatever was observed, so startup cannot hang forever.
 pub fn align_and_prime_schedule_producers<
     const BUFFER_CAPACITY: usize,
     const NUM_CONSUMERS: usize,

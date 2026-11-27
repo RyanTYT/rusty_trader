@@ -1,3 +1,62 @@
+//! Order placement and bar-outcome reconciliation.
+//!
+//! [`OrderEngine`](crate::execution::order_engine::OrderEngine) is the write
+//! side of the execution layer: it turns a
+//! [`BarUpdateOutcome`](crate::strategy::strategy::BarUpdateOutcome) into broker
+//! submissions and keeps the database's working-order book in step with them.
+//!
+//! # Outcome paths
+//!
+//! - [`BarUpdateOutcome::EmitOrders`](crate::strategy::strategy::BarUpdateOutcome::EmitOrders)
+//!   cancels the listed rows **before** submitting the batch, so a cancel from
+//!   one bar can never hit an order the same bar just placed.
+//! - [`BarUpdateOutcome::PendingDbQuery`](crate::strategy::strategy::BarUpdateOutcome::PendingDbQuery)
+//!   reads target-position diffs for every requested asset class, shares one
+//!   cash budget across them (`CASH:` rows live in the stock table), builds an
+//!   [`FxFundingPlan`](crate::execution::fx_organiser::FxFundingPlan), and
+//!   reconciles each batch against the working orders for that `order_ref`.
+//! - [`BarUpdateOutcome::NoAction`](crate::strategy::strategy::BarUpdateOutcome::NoAction)
+//!   does nothing.
+//!
+//! # Invariants
+//!
+//! - [`OrderEngine::place_order`](crate::execution::order_engine::OrderEngine::place_order)
+//!   writes an *optimistic* row keyed by `(perm_id = -1, order_id)`; the broker
+//!   acknowledgement replaces it with the real `perm_id` (see
+//!   `order_update_stream::event_handlers::open_order`).
+//! - [`OrderIBKR`](crate::execution::order_engine::OrderIBKR) equality ignores
+//!   the `:price` suffix of `order_ref`; the suffix only distinguishes parked
+//!   funding keys (`strategy:price`).
+//! - Bracket legs reference their head by index into the submitted batch
+//!   ([`OrderIBKR::references_parent_order`](crate::execution::order_engine::OrderIBKR::references_parent_order)),
+//!   and
+//!   [`OrderEngine::place_orders`](crate::execution::order_engine::OrderEngine::place_orders)
+//!   rewrites `parent_id` from the ids it actually received.
+//! - `CASH:<ccy>` target rows are funding capacity, never orders
+//!   ([`is_cash_diff`](crate::execution::order_engine::is_cash_diff)).
+//!
+//! # Example
+//!
+//! Two orders that differ only in the price suffix of `order_ref` are the same
+//! order for reconciliation purposes:
+//!
+//! ```
+//! use ibapi::orders::{Action, order_builder::market_order};
+//! use ibapi::prelude::Contract;
+//! use trading_app::execution::order_engine::OrderIBKR;
+//!
+//! let contract = Contract::stock("AAPL").build();
+//! let mut priced = market_order(Action::Buy, 10.0);
+//! priced.order_ref = "momentum:150.25".to_string();
+//! let mut bare = priced.clone();
+//! bare.order_ref = "momentum".to_string();
+//!
+//! assert_eq!(
+//!     OrderIBKR::new(contract.clone(), priced, -1),
+//!     OrderIBKR::new(contract, bare, -1),
+//! );
+//! ```
+
 // Issues: Line 619
 // - NEED to update place_order to function properly and efficiently
 // await for order updates
@@ -52,6 +111,12 @@ use crate::{
 //     // pub(super) account: String,
 // }
 
+/// Execution-layer façade for order placement and reconciliation.
+///
+/// Holds only long-lived context — a pool and a runtime handle — so it is cheap
+/// to clone and safe to share. Every operation opens its own short-lived
+/// database session ([`crate::database::db::DbDirect`]) rather than caching a
+/// connection.
 #[derive(Debug, Clone)]
 pub struct OrderEngine {
     pool: PgPool,
@@ -61,6 +126,35 @@ pub struct OrderEngine {
     // order_update_stream: Arc<OrderUpdateStreamController>,
 }
 
+/// A broker order plus the contract it trades.
+///
+/// `references_parent_order` is an index into the batch being submitted: `-1`
+/// means "standalone", and `>= 0` points at the head order whose broker id
+/// becomes this order's `parent_id`.
+///
+/// # Equality
+///
+/// Equality compares the contract and the order after truncating `order_ref` at
+/// the first `:` on both sides. The suffix exists only to make parked funding
+/// orders unique in [`OrderStore`]; the same working order may be recorded as
+/// `strategy` or `strategy:price` depending on who wrote it.
+///
+/// ```
+/// use ibapi::orders::{Action, order_builder::market_order};
+/// use ibapi::prelude::Contract;
+/// use trading_app::execution::order_engine::OrderIBKR;
+///
+/// let contract = Contract::stock("AAPL").build();
+/// let mut priced = market_order(Action::Sell, 25.0);
+/// priced.order_ref = "orb:101.5".to_string();
+/// let mut bare = priced.clone();
+/// bare.order_ref = "orb".to_string();
+///
+/// assert_eq!(
+///     OrderIBKR::new(contract.clone(), priced, -1),
+///     OrderIBKR::new(contract, bare, -1),
+/// );
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderIBKR {
     pub contract: Contract,
@@ -82,6 +176,7 @@ impl PartialEq for OrderIBKR {
 impl Eq for OrderIBKR {}
 
 impl OrderIBKR {
+    /// Builds the pair, recording where the parent sits in the submitted batch.
     pub fn new(contract: Contract, order: Order, references_parent_order: i32) -> Self {
         Self {
             contract,
@@ -91,6 +186,11 @@ impl OrderIBKR {
     }
 }
 
+/// A working order as reconciliation sees it.
+///
+/// `is_from_db` distinguishes the authoritative row (`true`) from a parked
+/// order replayed out of [`OrderStore`] (`false`). Cancellation uses that flag
+/// to decide whether to delete a database row or edit the store.
 #[derive(Debug, Clone)]
 pub struct LocalOpenOrder {
     pub order: OpenOrdersFullKeys,
@@ -99,7 +199,7 @@ pub struct LocalOpenOrder {
 
 #[hotpath::measure_all]
 impl OrderEngine {
-    // Active Strategies passed for deconflicting of executions in cases where it occurs
+    /// Creates the façade. Both handles are cheap to clone.
     pub fn new(
         pool: PgPool,
         tokio_handle: tokio::runtime::Handle,
@@ -113,7 +213,23 @@ impl OrderEngine {
         Self { pool, tokio_handle }
     }
 
-    /// Note: it is on onus of client to pass with the correct .transmit field
+    /// Submits one order and records an optimistic open-order row.
+    ///
+    /// The caller owns `transmit`; bracket legs must arrive with the parent's
+    /// transmit semantics already set.
+    ///
+    /// Writes the row under the optimistic primary key `(perm_id = -1,
+    /// order_id)` from a spawned task, so the ack can replace it with the
+    /// broker's perm id. A database failure is logged, not returned.
+    ///
+    /// # Returns
+    ///
+    /// The broker order id, or `-1` when the broker rejected the order (in
+    /// which case no row is written).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the client weak reference is already dead.
     #[cfg(not(feature = "backtest"))]
     pub fn place_order<T>(
         handle: tokio::runtime::Handle,
@@ -170,6 +286,11 @@ impl OrderEngine {
         })
     }
 
+    /// Backtest variant: submits through the replay [`OrderSubmitter`] and
+    /// returns the id it allocated. The replay engine owns the order book, so
+    /// no optimistic database row is written here.
+    ///
+    /// [`OrderSubmitter`]: crate::backtester::execution::OrderSubmitter
     #[cfg(feature = "backtest")]
     pub fn place_order(
         handle: tokio::runtime::Handle,
@@ -182,12 +303,20 @@ impl OrderEngine {
         order_id
     }
 
-    /// `place_order` that surfaces failure instead of logging it.
+    /// `place_order` that surfaces broker failure instead of logging it.
     ///
-    /// Same wire call and the same optimistic open-order row, but:
-    /// - a dead client returns `Err` rather than panicking on `unwrap()`;
-    /// - a rejected submission returns `Err` and writes **no** open-order row,
-    ///   so the books never show an order the broker refused.
+    /// Same wire call and the same optimistic row as [`OrderEngine::place_order`],
+    /// but a rejected submission returns `Err` and writes **no** open-order row,
+    /// so the books never show an order the broker refused.
+    ///
+    /// # Errors
+    ///
+    /// - the client weak reference is dead;
+    /// - the broker rejects the order (returns `-1`).
+    ///
+    /// Database failures after a successful submission are still only logged,
+    /// because the order is live at the broker and the ack path will heal the
+    /// row.
     #[cfg(not(feature = "backtest"))]
     pub fn place_order_checked<T>(
         handle: tokio::runtime::Handle,
@@ -239,7 +368,15 @@ impl OrderEngine {
         Ok(order_id)
     }
 
-    /// Note: it is on onus of client to pass with the correct .transmit field
+    /// Submits a batch, linking bracket legs to their head.
+    ///
+    /// `references_parent_order` is rewritten to the real broker id of the
+    /// referenced entry, so callers use positions in this iterator rather than
+    /// ids they cannot know yet.
+    ///
+    /// A failure of the head (`idx == 0`, id `-1`) aborts the rest of the batch;
+    /// failures of later legs are logged and the batch continues. The caller
+    /// owns `transmit` on every order.
     pub fn place_orders<#[cfg(not(feature = "backtest"))] T: OrderRouter>(
         handle: tokio::runtime::Handle,
         pool: PgPool,
@@ -273,6 +410,16 @@ impl OrderEngine {
         }
     }
 
+    /// Cancels a list of working orders on the broker and in local storage.
+    ///
+    /// - Orders with a real `perm_id` are cancelled at the broker (live) or
+    ///   through the submitter (backtest); the optimistic `perm_id == -1` rows
+    ///   never were accepted, so they are only removed locally.
+    /// - `is_from_db` rows are deleted from the database; parked rows are
+    ///   removed from [`OrderStore`] under their bare strategy name.
+    ///
+    /// Broker-side cancellation runs on a fresh OS thread in live mode, so this
+    /// method does not await it.
     fn cancel_orders<
         #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
     >(
@@ -383,6 +530,32 @@ impl OrderEngine {
         }
     }
 
+    /// Executes whatever a strategy asked for after a bar.
+    ///
+    /// This is the main reconciliation entry point, called once per strategy
+    /// per bar from the strategy driver.
+    ///
+    /// - **`EmitOrders`** cancels the listed stock and option rows first, then
+    ///   submits the batch. The head order failing aborts the batch; later legs
+    ///   may fail individually.
+    /// - **`PendingDbQuery`** reads target diffs and working orders for each
+    ///   requested asset class, adds the stock `CASH:` rows as shared funding
+    ///   capacity, and skips any asset class already covered by its working
+    ///   orders ([`requires_reconciliation`]). The surviving diffs go through
+    ///   one [`OrderEngine::get_fx_attachments`] pass, whose batches are
+    ///   reconciled by [`OrderEngine::on_new_qty_diff_for_strat`]; standalone FX
+    ///   roots are submitted directly and unfunded orders are parked.
+    /// - **`NoAction`** does nothing.
+    ///
+    /// Errors are logged, never returned: this runs inside the strategy loop,
+    /// and a failed bar must not stall the strategy. A missing target table or
+    /// unreadable working book just means the class is skipped this bar.
+    ///
+    /// # Blocking
+    ///
+    /// Uses [`tokio::runtime::Handle::block_on`] for its database reads, so it
+    /// must not be called from inside an async task; the driver calls it on a
+    /// blocking thread.
     pub fn handle_bar_update_outcome<
         #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
         #[cfg(not(feature = "backtest"))] MarketBroker: PriceSupplier,
@@ -656,9 +829,38 @@ impl OrderEngine {
         }
     }
 
-    /// Provides the logic to handle open order
-    /// - i.e. cancelling and placing orders efficiently
-    /// - 1st order MUST be correct strategy (i.e. order_ref == strategy)
+    /// Reconciles one funding batch against the working orders for its head's
+    /// `order_ref`.
+    ///
+    /// `orders` is the head followed by any legs; the head's `order_ref` is the
+    /// lookup key, which is the bare strategy for closings and FX roots but
+    /// `strategy:price` for opening heads.
+    ///
+    /// The target is signed (`+` buy, `-` sell). The current position implied by
+    /// working orders is `(Σ|quantity| − Σfilled) × sign(Σquantity)`, so fills
+    /// already booked count toward the target and are not re-submitted.
+    ///
+    /// # Branches
+    ///
+    /// - target `0` — cancel everything (the position is already correct);
+    /// - opposite sign, or `|current| > |target|` — cancel everything and submit
+    ///   the full target again;
+    /// - `|current| < |target|` — keep the working orders and submit only the
+    ///   residual;
+    /// - equal — do nothing.
+    ///
+    /// A mix of buy and sell working orders under one key is logged as an error
+    /// but not rejected; the signed sum is still used.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the batch is empty or the working orders cannot be
+    /// read.
+    ///
+    /// # Blocking
+    ///
+    /// Reads through [`tokio::runtime::Handle::block_on`]; call it off the async
+    /// runtime.
     pub fn on_new_qty_diff_for_strat<
         #[cfg(not(feature = "backtest"))] OrderBroker: OrderRouter + Send + Sync + 'static,
     >(
@@ -840,10 +1042,22 @@ impl OrderEngine {
 }
 
 /// A `CASH:<ccy>` row carries funding capacity, not an order.
+///
+/// Funding rows are always included in the plan's inputs so an option opening
+/// can draw the same cash as a stock opening; they never become orders.
 pub fn is_cash_diff(diff: &TargetPositionsQtyDiff) -> bool {
     matches!(diff, TargetPositionsQtyDiff::Stock(v) if v.stock.starts_with("CASH:"))
 }
 
+/// Whether the working orders leave any target uncovered.
+///
+/// Sums the signed quantity of every working order per contract, then compares
+/// each target diff with that sum: any non-zero difference means the book must
+/// be reconciled. `CASH:` rows are ignored for non-FX strategies (they are
+/// budget, not inventory).
+///
+/// Used by [`OrderEngine::handle_bar_update_outcome`] to skip asset classes
+/// whose targets are already fully represented by resting orders.
 pub fn requires_reconciliation(
     target_pos_diffs: &Vec<TargetPositionsQtyDiff>,
     open_orders: Vec<LocalOpenOrder>,

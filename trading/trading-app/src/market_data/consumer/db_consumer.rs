@@ -1,3 +1,21 @@
+//! DB consumers: drain bars from the SPMC rings into TimescaleDB.
+//!
+//! Each consumer thread follows the same 5-second clock as the producers. On
+//! every cycle it pops the bars that arrived, aggregates them into 60 s (FX) or
+//! 300 s (stocks/options) buckets with [`aggregate_bars`], updates the in-memory
+//! price cache, and spawns a task per completed bucket to upsert
+//! `market_data.historical_*` through the CRUD layer.
+//!
+//! Two threading shapes exist:
+//!
+//! - [`begin_db_consumer_thread_singular`] — one thread per subscription.
+//! - [`begin_db_consumer_thread_grouped`] — one thread for a batch; a slow
+//!   writer or DB stall delays every subscription in the batch.
+//!
+//! Writes are asynchronous and fire-and-forget: a failed upsert is logged, not
+//! retried, and the bar is not re-queued. The cache update happens *before* the
+//! write, so prices can be fresher than the stored bars.
+
 use crate::database::tables::DbTables;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -17,6 +35,7 @@ use crate::market_data::consumer::helper::{aggregate_bars, align_and_prime_sched
 use crate::market_data::consumer::strategy_consumer::{IbkrBarConsumer, IbkrBarType};
 use crate::schedule::contract_scheduler::{ContractScheduler, IbkrContractScheduler};
 
+/// Cadence of the consumer loop; matches the producer's 5-second bars.
 const BAR_INTERVAL: Duration = Duration::from_secs(5);
 /// How long to spin-poll around each expected bar arrival before giving up
 /// on stragglers for this cycle. IBKR jitter is usually well under 100ms,
@@ -30,12 +49,18 @@ const SPIN_BACKOFF: Duration = Duration::ZERO;
 // struct MarketDataDbConsumer<const BUFFER_CAPACITY: usize> {
 //     consumer: SpmcRingBufferConsumer<Bar, BUFFER_CAPACITY>,
 // }
+/// Lifetime handle for one DB consumer thread.
 pub struct MarketDataDbConsumer {
+    /// Cleared on drop/shutdown; the thread checks it each cycle.
     is_alive: Arc<AtomicBool>,
+    /// Taken by [`MarketDataDbConsumer::async_drop`].
     thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MarketDataDbConsumer {
+    /// Signals the thread to stop and joins it on the blocking pool.
+    ///
+    /// A panicked thread is logged, not propagated. Safe to call twice.
     pub async fn async_drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
 
@@ -56,11 +81,23 @@ impl MarketDataDbConsumer {
 }
 
 impl Drop for MarketDataDbConsumer {
+    /// Signals shutdown only; use [`MarketDataDbConsumer::async_drop`] to join.
     fn drop(&mut self) {
         self.is_alive.store(false, Ordering::Release);
     }
 }
 
+/// Starts one DB consumer thread for a single subscription.
+///
+/// The thread primes its deadline with [`align_and_prime_schedule`], then every
+/// 5 s drains the ring for up to `HOT_WINDOW`, aggregates completed buckets
+/// and spawns an upsert per bucket. The cache is keyed by `contract_id` and
+/// stores `(bucket time, bucket close)`.
+///
+/// # Panics
+///
+/// Panics when the OS thread cannot be spawned, or when
+/// [`align_and_prime_schedule`] finds a contract missing from the scheduler.
 #[hotpath::measure]
 pub fn begin_db_consumer_thread_singular<
     const BUFFER_CAPACITY: usize,
@@ -178,6 +215,20 @@ pub fn begin_db_consumer_thread_singular<
     }
 }
 
+/// Starts one DB consumer thread for a batch of subscriptions.
+///
+/// Equivalent to the singular variant, but keeps one deque per consumer and
+/// iterates only the currently-trading set each cycle. A subscription that
+/// yields no bar in a cycle is logged, not retried.
+///
+/// The thread name and the startup log use the **first** consumer's symbol and
+/// security type, and that startup line is emitted at `error` level even on the
+/// happy path.
+///
+/// # Panics
+///
+/// Panics when `consumers` is empty, when the thread cannot be spawned, or when
+/// a contract is missing from the scheduler.
 #[hotpath::measure]
 pub fn begin_db_consumer_thread_grouped<
     const BUFFER_CAPACITY: usize,
@@ -372,6 +423,8 @@ pub fn begin_db_consumer_thread_grouped<
     }
 }
 
+/// Sleeps until `target`, or logs and returns immediately when the consumer has
+/// fallen behind its 5-second cadence.
 #[hotpath::measure]
 fn sleep_until_system_time(target: SystemTime) {
     match target.duration_since(SystemTime::now()) {

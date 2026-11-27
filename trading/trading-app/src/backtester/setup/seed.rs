@@ -21,6 +21,18 @@ use crate::database::models_crud::current_positions::current_positions::{
 
 /// Clear leftover positions/transactions for `strat_name` + seed a
 /// `CASH:SGD` position with `capital` SGD (rate 1.0). Idempotent.
+///
+/// Only `trading.current_stock_positions` and `trading.stock_transactions`
+/// for this strategy are cleared; option positions/transactions and open
+/// orders are left untouched. The `CASH:SGD` row is what funding and
+/// sizing reads through `get_strategy_sgd_value`, so it is inserted with
+/// `avg_price = 1.0` (SGD is the base currency) and `last_updated = None`
+/// (the trigger stamps it).
+///
+/// # Errors
+/// Returns a string for any SQL failure, including a missing
+/// `trading.strategy` row for `strat_name` (the position FK rejects the
+/// insert) and any failure of the cumulative position upsert.
 pub async fn seed_initial_capital(
     pool: &PgPool,
     strat_name: &str,

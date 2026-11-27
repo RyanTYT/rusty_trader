@@ -19,6 +19,11 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, Utc};
 
+/// As-of clock for a replay: the replayer advances it before each tick and
+/// every backtest-side reader (strategies, allocators, the price oracle) uses
+/// `now()` instead of wall-clock time.
+///
+/// One writer (the replay thread) and lock-free readers; shared as an `Arc`.
 #[derive(Debug, Default)]
 pub struct BacktestClock {
     /// Timestamp nanos; `0` = not yet set (so `now()` falls back to wall-clock).
@@ -34,6 +39,10 @@ impl BacktestClock {
 
     /// Advance the clock to `t`. Called by the replayer before each tick.
     /// Lock-free atomic store.
+    ///
+    /// A timestamp outside the representable nanosecond range collapses to the
+    /// `0` sentinel, which `now()` treats as "not set" and reports wall-clock
+    /// time instead.
     pub fn set(&self, t: DateTime<Utc>) {
         let nanos = t.timestamp_nanos_opt().unwrap_or(0);
         self.now.store(nanos, Ordering::Release);

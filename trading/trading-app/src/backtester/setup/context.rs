@@ -31,8 +31,11 @@ use crate::backtester::setup::config::BacktestConfig;
 /// order_engine / order_store (so no `OrderStore::open()` file contention).
 /// Used by the InMemory path (single route + sweep).
 pub struct LightContext {
+    /// The replay clock; advanced to the current bar before each tick.
     pub clock: Arc<BacktestClock>,
+    /// Point-in-time price oracle over the replayed bar history.
     pub prices: Arc<BacktestPriceSupplier>,
+    /// Read facade wired to the oracle, with memoisation disabled.
     pub consolidator: Arc<Consolidator>,
 }
 
@@ -40,6 +43,10 @@ pub struct LightContext {
 /// pool + config. Shared by the InMemory single route, the sweep
 /// (`run_one_backtest`), + `BacktestContext::build` (so the wiring isn't
 /// duplicated).
+///
+/// The consolidator is built with `new_for_backtest`, so no lookup is
+/// memoised: every price/value read reaches the oracle (and therefore the
+/// replayed history) instead of a cache that could hold a stale bar.
 pub fn build_light_context(pool: &PgPool, config: &BacktestConfig) -> LightContext {
     let clock = Arc::new(BacktestClock::new());
     let prices = Arc::new(BacktestPriceSupplier::new(
@@ -64,22 +71,38 @@ pub fn build_light_context(pool: &PgPool, config: &BacktestConfig) -> LightConte
 /// order_store + strategy. Used by the DB-backed `HistoricalReplay` method
 /// (which needs the broker/order_engine/order_store for real reconciliation).
 pub struct BacktestContext {
+    /// Database pool used by the broker, engine and handlers.
     pub pool: PgPool,
+    /// Handle of the owning runtime; used for `block_on` and spawned writes.
     pub handle: tokio::runtime::Handle,
+    /// The run's configuration (bar intervals, fees, period, lag).
     pub config: BacktestConfig,
+    /// The replay clock shared with the oracle.
     pub clock: Arc<BacktestClock>,
+    /// Point-in-time price oracle.
     pub prices: Arc<BacktestPriceSupplier>,
+    /// The simulated broker that materializes fills.
     pub broker: Arc<BacktestBroker>,
+    /// Read facade over the oracle.
     pub consolidator: Arc<Consolidator>,
+    /// Order engine used for placement/cancellation.
     pub order_engine: OrderEngine,
+    /// Parked-order store (opened from `ORDERS_FILE_PATH`).
     pub order_store: Arc<OrderStore>,
+    /// The strategy under test.
     pub strategy: StrategyEnum,
+    /// The strategy's metadata, resolved once for the run.
     pub strategy_details: StrategyDetails,
 }
 
 impl BacktestContext {
     /// Construct the full execution surface. Reuses `build_light_context` for
     /// the clock/prices/consolidator, then adds the broker/order_engine/order_store.
+    ///
+    /// # Panics
+    /// Panics when the parked-order store cannot be opened — either
+    /// `ORDERS_FILE_PATH` is unset or the redb file cannot be created
+    /// (permissions, contention, corrupt file).
     pub fn build(
         config: BacktestConfig,
         pool: PgPool,

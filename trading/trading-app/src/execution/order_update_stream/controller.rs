@@ -1,3 +1,47 @@
+//! The single subscription that turns IBKR order callbacks into database writes.
+//!
+//! IBKR delivers order state through one push subscription per client. This
+//! module owns that subscription for the whole process: a dedicated OS thread
+//! blocks on the stream, forwards every event into a bounded Tokio channel, and
+//! an async task dispatches each event to the matching handler in
+//! [`super::event_handlers`].
+//!
+//! # Routing
+//!
+//! | Event | Status | Handler |
+//! |---|---|---|
+//! | `OrderStatus` | `Submitted` | [`event_handlers::order_status::submitted`](crate::execution::order_update_stream::event_handlers::order_status::submitted) (read-only consistency check) |
+//! | `OrderStatus` | `PendingCancel`, `Inactive`, `ApiCancelled`, `Cancelled` | [`event_handlers::order_status::cancelled`](crate::execution::order_update_stream::event_handlers::order_status::cancelled) (deletes rows) |
+//! | `OrderStatus` | anything else | no database write |
+//! | `OpenOrder` | `Submitted`, `PreSubmitted` | [`event_handlers::open_order::submitted`](crate::execution::order_update_stream::event_handlers::open_order::submitted) (replaces the optimistic row) |
+//! | `ExecutionData` | — | [`event_handlers::execution::on_execution_update`](crate::execution::order_update_stream::event_handlers::execution::on_execution_update) |
+//! | `CommissionReport` | — | [`event_handlers::commission_report::on_commission_update`](crate::execution::order_update_stream::event_handlers::commission_report::on_commission_update) |
+//! | `Message` | — | logged only |
+//!
+//! # Invariants
+//!
+//! - Exactly one controller may exist per process. [`OrderUpdateStreamController::new`]
+//!   returns `None` on the second call until the first is dropped (the
+//!   `ORDER_UPDATE_STREAM_NO` latch).
+//! - The subscription belongs to client id `0`; other ids cannot receive the
+//!   account-wide order stream.
+//! - The stream is resubscribed after a subscription error while the controller
+//!   is alive; a dead client ends the thread instead of retrying forever.
+//! - Events are forwarded from a freshly spawned OS thread each time, so the
+//!   relative order of two callbacks is **not** guaranteed. Handlers must be
+//!   idempotent and tolerate the database already reflecting an earlier event.
+//! - The channel holds 1024 events. A producer uses `blocking_send`, so a stalled
+//!   consumer applies backpressure to the callback thread rather than dropping
+//!   updates.
+//!
+//! # Lifecycle
+//!
+//! Construct with [`OrderUpdateStreamController::new`], keep the value alive for
+//! the life of the process, and prefer
+//! [`async_drop`](OrderUpdateStreamController::async_drop) on shutdown: it joins
+//! the OS thread off the runtime. Dropping without it only clears the latch and
+//! the alive flag; the OS thread ends on its next loop check.
+
 use core::str;
 use std::{
     collections::HashMap,
@@ -22,23 +66,54 @@ use crate::{
     strategy::strategy::StrategyDetails,
 };
 
+/// Process-wide latch: `0` when no controller exists, `1` once one has been
+/// constructed. Reset by [`OrderUpdateStreamController::async_drop`] and by
+/// [`Drop`].
 static ORDER_UPDATE_STREAM_NO: AtomicUsize = AtomicUsize::new(0);
 
+/// The subset of IBKR's `orderStatus.status` values this crate reacts to.
+///
+/// IBKR sends a free-form string; anything unrecognised maps to
+/// [`Unknown`](StatusOfOrderStatus::Unknown), which the dispatcher treats as an
+/// error rather than silently ignoring.
 #[derive(Debug, PartialEq, Eq)]
 pub enum StatusOfOrderStatus {
+    /// Accepted by TWS, not yet sent to the broker.
     ApiPending,
+    /// Being submitted.
     PendingSubmit,
+    /// A cancellation request is in flight.
     PendingCancel,
+    /// Accepted by the broker but not filled.
     PreSubmitted,
+    /// Working at the broker.
     Submitted,
+    /// Cancelled by the API.
     ApiCancelled,
+    /// Cancelled.
     Cancelled,
+    /// Fully filled.
     Filled,
+    /// Rejected or deactivated by the broker.
     Inactive,
+    /// Unrecognised wire value.
     Unknown,
 }
 
 impl StatusOfOrderStatus {
+    /// Parses the exact IBKR wire strings; matching is case-sensitive.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use trading_app::execution::order_update_stream::controller::StatusOfOrderStatus;
+    ///
+    /// assert_eq!(StatusOfOrderStatus::from_str("Submitted"), StatusOfOrderStatus::Submitted);
+    /// assert_eq!(StatusOfOrderStatus::from_str("ApiCancelled"), StatusOfOrderStatus::ApiCancelled);
+    /// // Unrecognised values (including wrong casing) become Unknown.
+    /// assert_eq!(StatusOfOrderStatus::from_str("submitted"), StatusOfOrderStatus::Unknown);
+    /// assert_eq!(StatusOfOrderStatus::from_str(""), StatusOfOrderStatus::Unknown);
+    /// ```
     pub fn from_str(input: &str) -> StatusOfOrderStatus {
         match input {
             "ApiPending" => StatusOfOrderStatus::ApiPending,
@@ -55,17 +130,28 @@ impl StatusOfOrderStatus {
     }
 }
 
+/// Handle to the process-wide order-update subscription.
+///
+/// Dropping this does not join the OS thread; call
+/// [`async_drop`](Self::async_drop) for a clean shutdown that also releases the
+/// singleton latch before returning.
 pub struct OrderUpdateStreamController {
-    // order_map: Arc<RwLock<HashMap<i32, (String, Contract, Order)>>>,
-    // strategy_map: Arc<HashMap<String, StrategyEnum>>,
-    // weak_client: Weak<Client>,
-    // default_strategy: String,
+    /// Flipped to `false` to make the OS thread leave its loop.
     is_alive: Arc<AtomicBool>,
+    /// The blocking subscription thread, joined by [`async_drop`](Self::async_drop).
     stream_handle: Option<std::thread::JoinHandle<()>>,
+    /// The Tokio task that dispatches events to the handlers.
     async_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OrderUpdateStreamController {
+    /// Stops the subscription and waits for both the OS thread and the async
+    /// dispatcher to finish.
+    ///
+    /// Clears the singleton latch first, flips the alive flag, joins the OS
+    /// thread on a blocking-pool thread, then awaits the async task. Errors from
+    /// either join are logged, not returned. Missing handles (already dropped or
+    /// partially initialised) are logged as `"Stream handle is empty"`.
     pub async fn async_drop(&mut self) {
         ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
         self.is_alive
@@ -92,6 +178,9 @@ impl OrderUpdateStreamController {
 }
 
 impl Drop for OrderUpdateStreamController {
+    /// Clears the latch and the alive flag so another controller can be
+    /// constructed. Does **not** wait for the threads; prefer
+    /// [`async_drop`](OrderUpdateStreamController::async_drop) at shutdown.
     fn drop(&mut self) {
         ORDER_UPDATE_STREAM_NO.store(0, std::sync::atomic::Ordering::Release);
         self.is_alive
@@ -101,10 +190,27 @@ impl Drop for OrderUpdateStreamController {
 }
 
 impl OrderUpdateStreamController {
-    /// Initialises the Order Update Stream to listen for all order events for the client
-    /// Note: Should only be run once for initialisation - creates a channel on each call
-    /// NOTE: initialises a synchronous thread and sends msgs to async runtime - blocking_send if
-    /// not handled quickly could block up channel and stow updates indefinitely
+    /// Subscribes to the order stream and starts dispatching events.
+    ///
+    /// The blocking half runs on a dedicated OS thread named
+    /// `order_update_stream`: it subscribes with a 5-second poll timeout,
+    /// resubscribes after a stream error, and forwards each event through a
+    /// 1024-slot channel. The async half drains that channel and calls
+    /// `on_order_update_received`.
+    ///
+    /// `default_strategy` names the strategy used when an execution carries no
+    /// order reference; `None` becomes `"unknown"`. `execution_events_queue`
+    /// receives the strategy hooks for accepted fills, and `backed_up_orders`
+    /// supplies parked orders for post-fill placement.
+    ///
+    /// Returns `None` when a controller already exists (including when a
+    /// previous controller was dropped without clearing the latch, or when the
+    /// first subscription attempt failed). Initialisation failures are logged.
+    ///
+    /// # Panics
+    ///
+    /// Panics on the subscription thread if the client id is not `0`, because
+    /// only client `0` receives the account-wide order stream.
     pub fn new(
         pool: PgPool,
         consolidator: Weak<Consolidator>,
@@ -241,7 +347,20 @@ impl OrderUpdateStreamController {
     }
 }
 
-/// Async only because it has to await open order handle
+/// Routes one IBKR order event to the handler that owns it.
+///
+/// Async only because `OpenOrder` waits for the spawned database task so an
+/// error surfaces here (it is logged by the caller).
+///
+/// # Errors
+///
+/// - An `OrderStatus` whose status string is unrecognised.
+/// - An execution handler failure (validation, strategy lookup, database).
+/// - A commission-report failure (e.g. a fee that cannot be represented as a
+///   decimal).
+///
+/// Handler failures for `OrderStatus` and `OpenOrder` are logged and reported as
+/// `Ok`; only executions and commissions propagate.
 async fn on_order_update_received(
     strategy_details: Arc<HashMap<String, StrategyDetails>>,
     execution_events_queue: Arc<HashMap<String, SpmcRingBufferProducer<ExecutionData, 64, 1>>>,

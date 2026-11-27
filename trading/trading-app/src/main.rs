@@ -1,3 +1,24 @@
+//! Binary entry point.
+//!
+//! Live build (`not(backtest)`) runs a single-threaded bootstrap on a fresh
+//! Tokio runtime:
+//!
+//! 1. read `DATABASE_URL` / `TRADING_TYPE` and open a 50-connection pool
+//!    (`synchronous_commit = off`, 30 s acquire timeout);
+//! 2. run the embedded migrations (failure is logged, not fatal);
+//! 3. install the tracing registry — pretty stdout at INFO plus the IBKR
+//!    connection layer at WARN — and wire its alert channel;
+//! 4. bind the HTTP server (`SERVER_URL`, default `0.0.0.0:8000`);
+//! 5. hand control to [`crate::schedule::program_scheduler::run_program`],
+//!    which boots the app, serves its weak state to the server, and restarts
+//!    through broker maintenance and connection alerts until SIGINT/SIGTERM.
+//!
+//! The backtest build instead exposes [`backtester`] and does nothing in
+//! `main`.
+//!
+//! The file also re-declares the modules so the binary compiles the same
+//! sources as the library ([`crate::lib`] equivalent) without shared state.
+
 use std::sync::{Arc, Mutex, Weak};
 
 #[cfg(not(feature = "backtest"))]
@@ -33,6 +54,11 @@ pub mod server;
 pub mod strategy;
 pub mod strategy_wrappers;
 
+/// Take ownership of the sole `Arc` and asynchronously drop the app state.
+///
+/// # Panics
+///
+/// If more than one strong reference exists (`Arc::into_inner` returns `None`).
 #[macro_export]
 macro_rules! arc_drop_async {
     ($app_state:ident) => {
@@ -42,7 +68,10 @@ macro_rules! arc_drop_async {
     };
 }
 
-/// for logger
+/// Log timer that stamps every line in New York time (`%Y-%m-%dT%H:%M:%S%.3f %Z`).
+///
+/// The app trades US sessions, so wall-clock log times in ET are what operators
+/// compare against market hours; the underlying records are still UTC.
 struct NewYorkTime {}
 impl FormatTime for NewYorkTime {
     fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
@@ -51,6 +80,11 @@ impl FormatTime for NewYorkTime {
     }
 }
 
+/// Process entry point.
+///
+/// In the live build this creates a Tokio runtime and runs [`tokio_main`];
+/// in the backtest build it is intentionally empty (the backtesting entry
+/// points are the `local_backtest` / `backtest` binaries).
 #[hotpath::main]
 fn main() {
     #[cfg(not(feature = "backtest"))]
@@ -62,6 +96,23 @@ fn main() {
 }
 
 #[cfg(not(feature = "backtest"))]
+/// Live bootstrap: DB pool + migrations, tracing/alert wiring, HTTP server and
+/// the supervisor loop.
+///
+/// Environment:
+///
+/// - `DATABASE_URL` — required Postgres URL;
+/// - `TRADING_TYPE` — `live` selects the gateway port `4001`, anything else
+///   uses `4002` (paper);
+/// - `SERVER_URL` — bind address, default `0.0.0.0:8000`.
+///
+/// The IBKR account (`DU3156861`) and the `unknown` default strategy are
+/// hard-coded here; the supervisor reconnects with a fresh `init_app` on every
+/// restart.
+///
+/// # Panics
+///
+/// When `DATABASE_URL` / `TRADING_TYPE` are missing or the pool cannot connect.
 async fn tokio_main() {
     // ================== INITIALISATION ======================
     let database_url = std::env::var("DATABASE_URL")

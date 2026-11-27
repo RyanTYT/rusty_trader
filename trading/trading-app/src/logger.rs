@@ -1,3 +1,23 @@
+//! Logging layers and the IBKR connection-alert classifier.
+//!
+//! Two independent `tracing` layers live here:
+//!
+//! - `IbConnectionLayer` watches ERROR/WARN events for IBKR disconnection
+//!   signatures and turns them into [`ConnectionAlert`](crate::logger::ConnectionAlert)s on a channel consumed
+//!   by the supervisor in `schedule::program_scheduler` (restart vs. continue);
+//! - `ChannelLayer` + [`init_db_logger`](crate::logger::init_db_logger) forward normal log records into
+//!   `logs.logs` through a bounded channel (best-effort: a full channel drops
+//!   the record).
+//!
+//! The classifier is substring-based, not structured: it scans the rendered
+//! message for `error_code: 1100`, `error_code: 1102`,
+//! `connection refused (os error 111)`, `Broken pipe: (os error 32)`, and the
+//! "timed out waiting for next bar ... Trying a re-subscription" warning.
+//! The 1100/1102 pair is treated as one pattern, and what it means depends on
+//! the wall clock: IBKR's nightly autorestart, an APAC reset window, market
+//! hours (wait for the timeout warning, then alert), or closed markets (alert
+//! immediately).
+
 use chrono::{DateTime, Datelike, NaiveTime, Timelike, Utc, Weekday};
 use chrono_tz::America::New_York;
 use chrono_tz::Asia::Hong_Kong;
@@ -17,13 +37,23 @@ use tracing_subscriber::layer::{Context, Layer};
 
 use crate::market_data::consolidator::is_fx_trading_datetime;
 
+/// Renders every event field as `name=value ` (the generic record format
+/// used by [`ChannelLayer`]).
 #[allow(dead_code)]
 struct FieldVisitor {
     pub output: String,
 }
 
+/// Keeps only the `message` field of an event — the layer only classifies the
+/// rendered message text.
 #[allow(dead_code)]
+#[derive(Default)]
+struct IbMessageVisitor {
+    pub ib_message: String,
+}
+
 impl FieldVisitor {
+    /// Empty visitor.
     fn new() -> Self {
         FieldVisitor {
             output: String::new(),
@@ -37,12 +67,6 @@ impl Visit for FieldVisitor {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Default)]
-struct IbMessageVisitor {
-    pub ib_message: String,
-}
-
 impl Visit for IbMessageVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
@@ -51,8 +75,10 @@ impl Visit for IbMessageVisitor {
     }
 }
 
+/// Strict equity-hours check: a business day with `09:25 < t < 16:05` in the
+/// supplied timezone. Deliberately *hard* (no early closes or holidays beyond
+/// business-day detection); used only to classify connection events.
 #[allow(dead_code)]
-// Helper functions
 // pub(crate) visibility ONLY for testing purposes
 pub(crate) fn is_stock_open_hard(dt: &DateTime<Tz>) -> bool {
     let date = dt.date_naive();
@@ -68,12 +94,17 @@ pub(crate) fn is_stock_open_hard(dt: &DateTime<Tz>) -> bool {
     is_busday && time < stock_close_time && time > stock_open_time
 }
 
+/// IBKR's nightly autorestart window: 23:55–00:05 UTC.
 #[allow(dead_code)]
 // pub(crate) visibility ONLY for testing purposes
 pub(crate) fn is_autorestart(dt: DateTime<Utc>) -> bool {
     (dt.hour() == 23 && dt.minute() >= 55) || (dt.hour() == 0 && dt.minute() <= 5)
 }
 
+/// APAC reset windows, in HKT with a ±5-minute lax:
+///
+/// - daily (Sun–Fri): 04:40–06:10 and 20:10–21:20 HKT;
+/// - weekend (ET): Friday 23:00 → Saturday 03:00, converted live to HKT.
 #[allow(dead_code)]
 // pub(crate) visibility ONLY for testing purposes
 pub(crate) fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
@@ -159,30 +190,39 @@ pub(crate) fn is_apac_reset_now(now_utc: &DateTime<chrono::Utc>) -> bool {
     is_weekend_window
 }
 
+/// True when any supported market is open: FX (Sunday 17:00 → Friday 17:00 NY)
+/// or the hard stock window.
 // pub(crate) visibility ONLY for testing purposes
 pub(crate) fn is_any_open(dt: &DateTime<Tz>) -> bool {
     is_fx_trading_datetime(dt) || is_stock_open_hard(dt)
 }
 
-#[allow(dead_code)]
+/// What the supervisor should do about a connection event.
 #[derive(Debug, Clone)]
 pub enum ConnectionAlert {
+    /// Disconnection pattern during market hours, after the timeout warning was
+    /// (or was not) observed within the wait window.
     UnstableConnectionDuringMarketHours {
         first_event_time: DateTime<Tz>,
         timeout_occurred: bool,
     },
+    /// Disconnection pattern while all markets are closed — restart immediately.
     UnstableConnectionOutsideMarketHours {
         first_event_time: DateTime<Tz>,
     },
+    /// OS error 111 (connection refused) or 32 (broken pipe).
     BrokenPipe {
         first_event_time: DateTime<Tz>,
     },
+    /// Inside an APAC reset window.
     APACRESET {
         first_event_time: DateTime<Tz>,
     },
+    /// Inside IBKR's nightly autorestart window — nothing to fix, just wait.
     AutoRestarting,
 }
 
+/// Mutable classifier state shared between the layer and its timeout thread.
 #[derive(Clone)]
 pub(crate) struct ConnectionState {
     // Track 1100/1102 pattern
@@ -331,6 +371,11 @@ impl ConnectionState {
     }
 }
 
+/// `tracing` layer that classifies IBKR connection errors into alerts.
+///
+/// Substring matching is intentional (the ibapi client logs unstructured
+/// messages); the market-time decision is delegated to
+/// [`ConnectionState::check_pattern`].
 pub(crate) struct IbConnectionLayer {
     state: Arc<Mutex<ConnectionState>>,
     tz: Tz,
@@ -338,6 +383,7 @@ pub(crate) struct IbConnectionLayer {
 
 #[allow(dead_code)]
 impl IbConnectionLayer {
+    /// Build a layer sharing `state`, evaluating clocks in `tz`.
     pub(crate) fn new(state: Arc<Mutex<ConnectionState>>, tz: Tz) -> Self {
         Self { state, tz }
     }
@@ -451,6 +497,7 @@ where
     }
 }
 
+/// One formatted log row destined for `logs.logs`.
 #[derive(Debug, Clone)]
 pub struct LogRecord {
     timestamp: DateTime<Tz>,
@@ -530,6 +577,11 @@ where
 //     Ok(())
 // }
 
+/// Start the database log sink: a 1024-slot channel plus a spawned writer that
+/// inserts every record into `logs.logs`.
+///
+/// Best-effort by design: a full channel drops records, and insert failures
+/// are ignored. The returned sender is handed to `ChannelLayer`.
 pub fn init_db_logger(pool: PgPool) -> tokio::sync::mpsc::Sender<LogRecord> {
     let (tx, mut rx) = mpsc::channel::<LogRecord>(1024);
 

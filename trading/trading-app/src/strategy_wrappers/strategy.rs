@@ -56,13 +56,28 @@ pub struct ClockCtx {
 /// tail converts once. Fill feedback enters via `on_realised`, routed by the
 /// fund's `on_fill`.
 pub trait BasicStrategy: Send + Sync + std::any::Any {
+    /// Stable strategy name used for attribution and `order_ref` assembly.
     fn name(&self) -> &str;
 
+    /// Number of warm-up bars the strategy needs before its first valid
+    /// emission; the sleeve sizes its warm-up window from this.
     fn warmup_bars_required(&self) -> usize;
 
     /// Emission for the current tick.
+    ///
+    /// Returns sizing intents (never shares): the enhancement chain transforms
+    /// them and the `SharesGate` tail converts once. The returned side is +1
+    /// long, -1 short, 0 explicit flatten.
+    ///
+    /// # Errors
+    ///
+    /// Implementation-specific; an error aborts the chain for this tick and
+    /// the sleeve logs it without emitting orders.
     fn on_row(&mut self, frame: &BarFrame, ctx: &ClockCtx) -> Result<crate::strategy_wrappers::intent::IntentMap, String>;
 
     /// Fill feedback (default no-op).
+    ///
+    /// Receives only engine-cleared fills, head-first, and must not assume the
+    /// events are consumed: every gate sees the same slice.
     fn on_realised(&mut self, _fills: &[RealisedFill], _ctx: &ClockCtx) {}
 }

@@ -24,6 +24,17 @@ use ibapi::prelude::SecurityType;
 use crate::helpers::contract::HashContract;
 use crate::market_data::traits::current_price::{HistoricalDataConfig, PriceSupplier};
 
+/// Point-in-time price oracle used by every backtest method.
+///
+/// Implements the production [`PriceSupplier`] port so strategies, the
+/// allocator and `Consolidator::new_for_backtest` can request "current"
+/// prices without touching IBKR.
+///
+/// Resolution order in [`BacktestPriceSupplier::get_current_price`]:
+/// 1. the lock-free per-contract cache last written by
+///    [`BacktestPriceSupplier::publish_close`];
+/// 2. the fixed FX-rate map for FX pairs that are not in the bar stream;
+/// 3. an error (the point-in-time database slow path is not implemented).
 pub struct BacktestPriceSupplier {
     clock: Arc<crate::backtester::setup::clock::BacktestClock>,
     /// Fixed-size lock-free cache: slot `i` holds the latest published close
@@ -43,10 +54,13 @@ pub struct BacktestPriceSupplier {
 }
 
 impl BacktestPriceSupplier {
-    /// Build the supplier with a FIXED set of contracts (one cache slot each).
-    /// The replayer passes `config.subscribed_contracts` here — the strategy
-    /// tracks a known, fixed set, so the cache size is fixed + the slot map is
-    /// immutable after init.
+    /// Build the supplier with a fixed set of contracts, one cache slot each.
+    /// The replayer passes `config.subscribed_contracts`, the union the run
+    /// can price, so the cache size and the slot map are immutable afterwards.
+    ///
+    /// Duplicate contracts collapse in the slot map (last one wins); the cache
+    /// is still sized by the input length. An empty input still allocates one
+    /// unused slot.
     pub fn new(
         clock: Arc<crate::backtester::setup::clock::BacktestClock>,
         pool: sqlx::PgPool,
@@ -76,6 +90,9 @@ impl BacktestPriceSupplier {
     /// a contract. Lock-free: an atomic store into the contract's pre-assigned
     /// slot. If the contract isn't in the fixed set, it's logged + ignored
     /// (the strategy shouldn't publish closes for contracts it doesn't track).
+    ///
+    /// A published close of exactly `0.0` is indistinguishable from "not yet
+    /// published": the cache uses `0` as its sentinel.
     pub fn publish_close(&self, contract: &Contract, close: f64) {
         let key = HashContract::borrowed(&contract);
         match self.slot_map.get(&key) {
@@ -94,6 +111,9 @@ impl BacktestPriceSupplier {
     /// Look up a fixed FX rate for `contract` (a ForexPair). Checks both the
     /// pair + its reverse. Returns `Some(rate)` where `rate` is in the same
     /// direction as the contract (1 base symbol = rate quote currency).
+    ///
+    /// Only `SecurityType::ForexPair` contracts are considered; a reverse pair
+    /// with a stored rate of `0.0` is reported as missing rather than divided.
     fn fx_map_lookup(&self, contract: &Contract) -> Option<f64> {
         if contract.security_type != SecurityType::ForexPair {
             return None;
@@ -116,6 +136,16 @@ impl BacktestPriceSupplier {
 
 #[async_trait::async_trait]
 impl PriceSupplier for BacktestPriceSupplier {
+    /// Returns the latest published close for `contract`, else a fixed FX
+    /// rate, else an error.
+    ///
+    /// `vwap` and `generic_ticks` are ignored: the oracle always serves the
+    /// replayed bar's close.
+    ///
+    /// # Errors
+    /// Returns an error naming the symbol when no close has been published for
+    /// the contract and it is not an FX pair present in the fixed rate map.
+    /// The point-in-time database fallback is not implemented.
     fn get_current_price(
         &self,
         contract: Contract,
@@ -152,6 +182,7 @@ impl PriceSupplier for BacktestPriceSupplier {
         ))
     }
 
+    /// No-op: the data-loader phase pre-loads `market_data` before the replay.
     #[cfg(not(feature = "backtest"))]
     async fn populate_historical_data(
         &self,

@@ -1,7 +1,19 @@
+//! IBKR's weekly maintenance window.
+//!
+//! IBKR takes its gateway down every week from Friday 23:00 to Saturday 03:00
+//! Eastern; the connection is unavailable for the whole window (all regions
+//! share it). Helpers here answer "is the broker down right now?" and "when
+//! does it go down / come back?" so callers can avoid pointless reconnects.
+//!
+//! [`BrokerScheduler`] methods are state-specific by contract: call
+//! `get_next_broker_unavailable` only while available, and
+//! `get_next_broker_available` only while unavailable.
+
 use chrono::{DateTime, Datelike, Days, NaiveTime, Utc};
 use chrono_tz::Tz;
 use chrono_tz::US::Eastern;
 
+/// When the broker next changes availability, in Eastern time.
 pub trait BrokerScheduler {
     /// should only be called when broker is currently unavailable
     fn get_next_broker_available(&self) -> Result<DateTime<Tz>, String>;
@@ -9,15 +21,24 @@ pub trait BrokerScheduler {
     fn get_next_broker_unavailable(&self) -> Result<DateTime<Tz>, String>;
 }
 
+/// Snapshot of broker availability.
 pub enum BrokerState {
+    /// Broker accepts connections and requests.
     Available,
+    /// Broker is inside its maintenance window.
     Unavailable,
 }
 
+/// Reports the broker's current availability.
 pub trait BrokerStateChecker {
+    /// Current state, computed from the clock.
     fn get_current_state(&self) -> BrokerState;
 }
 
+/// IBKR's maintenance regions.
+///
+/// Every region currently shares the same weekly window, so the region only
+/// labels which deployment the state service belongs to.
 #[derive(Clone, Debug)]
 pub enum IbkrRegion {
     NorthAmerica,
@@ -25,15 +46,21 @@ pub enum IbkrRegion {
     Apac,
 }
 
+/// A recurring weekly down window (Eastern time), crossing midnight.
 pub struct MaintenanceWindow {
+    /// Weekday the window opens.
     pub start_day: chrono::Weekday,
+    /// Time (ET) the window opens.
     pub start_time: NaiveTime,
+    /// Weekday the window closes.
     pub end_day: chrono::Weekday,
+    /// Time (ET) the window closes.
     pub end_time: NaiveTime,
 }
 
 impl IbkrRegion {
-    /// Defines the schedule (Fri 23:00 - Sat 03:00 ET)
+    /// The weekly window: Friday 23:00 → Saturday 03:00 ET (identical for all
+    /// regions today).
     pub fn schedule(&self) -> MaintenanceWindow {
         MaintenanceWindow {
             start_day: chrono::Weekday::Fri,
@@ -43,7 +70,10 @@ impl IbkrRegion {
         }
     }
 
-    /// Checks if a specific UTC time falls within the maintenance window
+    /// Whether `time_utc` falls inside the weekly window.
+    ///
+    /// Converts to Eastern and only looks at weekday + time: Friday at/after
+    /// the open, Saturday before the close. Public holidays are not modelled.
     pub fn is_in_maintenance(&self, time_utc: DateTime<Utc>) -> bool {
         let et_time = time_utc.with_timezone(&Eastern);
         let weekday = et_time.weekday();
@@ -64,12 +94,15 @@ impl IbkrRegion {
 // Implementations
 // ===============
 
+/// Broker state service for one IBKR region.
 #[derive(Clone, Debug)]
 pub struct IbkrStateService {
+    /// Region this service reports on.
     pub ibkr_region: IbkrRegion,
 }
 
 impl BrokerStateChecker for IbkrStateService {
+    /// Maintenance window → `Unavailable`, otherwise `Available`.
     fn get_current_state(&self) -> BrokerState {
         let now = Utc::now();
         if self.ibkr_region.is_in_maintenance(now) {

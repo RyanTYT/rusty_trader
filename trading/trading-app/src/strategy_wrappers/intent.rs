@@ -61,6 +61,7 @@ impl Intent {
         Self { side: 1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
+    /// Short entry intent on the dollars path (`side = -1`).
     pub const fn short(n_base: f64, w: f64) -> Self {
         Self { side: -1, n_base, w, per_share: false, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
@@ -71,12 +72,17 @@ impl Intent {
     }
 
     /// Vol-target intent (`n_base` = vt size; raw = (vt*|w|)*sc, no px).
+    ///
+    /// `side` is +1 long / -1 short / 0 flat; `vt` is the per-share target
+    /// size and `w` the weight accumulated so far.
     pub const fn per_share(side: i32, vt: f64, w: f64) -> Self {
         Self { side, n_base: vt, w, per_share: true, sc: 1.0, unscaled: false, strategy: None, limit_px: None, oca_group: None }
     }
 
     /// Battery SigStrat dollars-fallback: plain notional, NEVER eq-stamped
     /// (battery SH 445-447; EqScaleGate skips `unscaled` intents).
+    ///
+    /// Use for fallbacks that must not be scaled by the fund's `sc`.
     pub const fn unscaled(side: i32, n_base: f64, w: f64) -> Self {
         Self { side, n_base, w, per_share: false, sc: 1.0, unscaled: true, strategy: None, limit_px: None, oca_group: None }
     }

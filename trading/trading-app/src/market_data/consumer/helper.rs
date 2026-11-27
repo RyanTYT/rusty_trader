@@ -1,3 +1,10 @@
+//! Bar aggregation and startup alignment shared by the DB consumers.
+//!
+//! IBKR delivers 5-second bars; storage uses coarser bars (60 s for FX, 300 s
+//! for stocks/options). [`aggregate_bars`] turns the 5-second stream into
+//! completed buckets, and [`align_and_prime_schedule`] anchors a consumer thread
+//! to the bars actually arriving instead of wall-clock guesses.
+
 use std::{
     collections::VecDeque,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -17,15 +24,23 @@ use crate::{
 
 const BAR_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Spawns a new OS thread to process the 5 second bars from the subscription
-/// - is called by the channel instead of directly since calling directly would be on the
-/// separate OS kernel thread which doesn't have a tokio runtime
-/// - Note: multithreading should be fine because each bar for each contract is separated by 5
-/// sec times which should be sufficient time for this whole check to complete
-/// - highest_granularity_timestep_in_seconds: granularity of bars being stored in the table
-///     - i.e. for stocks, 5 min / 300 sec
-///     - i.e. for forex, 1 min / 60 sec
-/// - MINOR_BUG: if data starts being loaded within a bar, start of bar data is ignored/lost
+/// Aggregates 5-second bars into completed `bar_time_width_u32`-second buckets.
+///
+/// Buckets are aligned to the Unix epoch (`timestamp - timestamp % width`), so a
+/// 300 s bucket starts at :00/:05/:10 and a 60 s bucket at :00. For each bucket:
+/// `open` is the first bar's open, `high`/`low` are the extrema, `close` is the
+/// last bar's close, and `volume` is summed.
+///
+/// The newest bucket is withheld while it is still open: if the latest collected
+/// bar and the next 5-second tick fall in the same bucket, nothing is returned
+/// yet. Bars belonging to the newest (incomplete) bucket stay in `collected_bars`
+/// for the next call, so callers must keep the deque between calls.
+///
+/// # Caveats
+///
+/// - `MINOR_BUG`: a bucket that is already in progress when loading starts is
+///   emitted with a partial open/high/low/volume rather than being discarded.
+/// - Timestamps are seconds since the epoch; sub-second precision is ignored.
 pub fn aggregate_bars(
     contract: &Contract,
     what_to_show: &WhatToShow,
@@ -101,17 +116,14 @@ pub fn aggregate_bars(
     agg_bars
 }
 
-/// Runs once at thread startup, before the steady-state loop. For every
-/// currently-trading consumer, drains whatever backlog is sitting in its
-/// ring buffer (dispatching each bar — nothing gets silently discarded),
-/// and records the timestamp of the last bar it saw. The returned deadline
-/// is derived from the latest observed `bar.time` rather than guessed from
-/// local `SystemTime`, so the steady-state schedule is anchored to what the
-/// producers are actually doing, not what we assume they're doing.
+/// Consumer-side twin of the producer priming pass.
 ///
-/// Consumers that aren't trading yet at startup are skipped here; they'll
-/// simply be picked up by the active-set snapshot once they start trading,
-/// on whatever schedule the group has already settled into.
+/// Drains each trading consumer's backlog, records the newest bar time seen, then
+/// waits up to 250 ms per consumer for laggards to reach that newest time (an
+/// unaligned consumer is logged). Returns `newest bar time + 5 s`, or the next
+/// wall-clock 5-second boundary when nothing was trading at startup.
+///
+/// The loop gives up after 20 s so startup cannot block forever.
 pub fn align_and_prime_schedule<const BUFFER_CAPACITY: usize, const NUM_CONSUMERS: usize>(
     contract_scheduler: &IbkrContractScheduler,
     consumers: &[IbkrBarConsumer<BUFFER_CAPACITY, NUM_CONSUMERS>],

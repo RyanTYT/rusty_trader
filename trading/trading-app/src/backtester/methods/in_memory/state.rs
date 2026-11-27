@@ -15,42 +15,74 @@ use chrono::{DateTime, Utc};
 
 use crate::backtester::methods::in_memory::bracket::RestingOrder;
 
+/// Identity of one position in the in-memory mirror: the same key the DB
+/// uses (`strategy` + instrument, plus the cash pseudo-symbol `CASH:<ccy>`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PositionKey {
+    /// Owning strategy.
     pub strategy: String,
+    /// Local symbol, or `CASH:<ccy>` for a cash balance row.
     pub stock: String,
+    /// Exchange (empty for cash rows).
     pub primary_exchange: String,
+    /// Currency of the instrument.
     pub currency: String,
 }
 
+/// Quantity and weighted-average cost of one in-memory position.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryPosition {
+    /// Signed quantity (negative = short).
     pub quantity: f64,
+    /// Weighted-average entry price; `0.0` once flat.
     pub avg_price: f64,
 }
 
+/// One realized execution in the in-memory mirror (the analogue of a row in
+/// `trading.stock_transactions`).
 #[derive(Debug, Clone)]
 pub struct InMemoryTransaction {
+    /// Owning strategy.
     pub strategy: String,
+    /// Local symbol traded.
     pub stock: String,
+    /// Exchange.
     pub primary_exchange: String,
+    /// Instrument currency.
     pub currency: String,
+    /// Fill time (bar time on the in-memory lane).
     pub time: DateTime<Utc>,
+    /// Fill price.
     pub price: f64,
+    /// Signed quantity.
     pub quantity: f64,
+    /// Fees charged on this fill.
     pub fees: f64,
+    /// `BOT` or `SLD`.
     pub action: String,
 }
 
+/// Complete DB-mirror state for one strategy on the in-memory lane.
+///
+/// Single-threaded at runtime (one replayer thread); `RwLock` only satisfies
+/// the `Sync` requirement for `Arc` hand-off into `spawn_blocking`, so lock
+/// contention never happens.
 pub struct InMemoryState {
+    /// Current positions (including `CASH:SGD`).
     pub current_positions: RwLock<HashMap<PositionKey, InMemoryPosition>>,
+    /// Target positions set by the strategy.
     pub target_positions: RwLock<HashMap<PositionKey, InMemoryPosition>>,
+    /// Realized fills, in arrival order.
     pub transactions: RwLock<Vec<InMemoryTransaction>>,
+    /// The owning strategy's name.
     pub strategy_name: String,
+    /// Limit/stop intents waiting for a bar (see [`RestingOrder`]).
     pub resting_orders: RwLock<Vec<RestingOrder>>,
 }
 
 impl InMemoryState {
+    /// Fresh state seeded with `CASH:SGD = starting_capital_sgd` at price
+    /// `1.0`; targets and transactions start empty.
     pub fn new(strategy_name: String, starting_capital_sgd: f64) -> Self {
         let mut current = HashMap::new();
         // Seed CASH:SGD = starting capital (rate 1.0). The strategy's

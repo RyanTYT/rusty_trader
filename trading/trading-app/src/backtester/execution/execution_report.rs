@@ -1,3 +1,10 @@
+//! Synthesized execution reports for backtest fills.
+//!
+//! The Db lane writes its own transaction/position rows, but post-commit
+//! consumers (the fund hooks, order store release, scenario dumps) still expect
+//! an IBKR-shaped `ExecutionData`. This module fabricates one that is
+//! indistinguishable from a live fill to those consumers.
+
 use chrono::DateTime;
 use chrono::Utc;
 use chrono_tz::America::New_York;
@@ -17,6 +24,13 @@ use ibapi::prelude::{Action, Contract};
 ///   prod convention that all submitted orders carry clean refs)
 /// - `cumulative_quantity`/`average_price` = this fill (backtest fills whole
 ///   orders in one shot, so per-order cumulative == per-fill quantity)
+///
+/// `signed_qty` carries the direction (+buy / −sell) and is converted to
+/// `shares = abs`; `bar_time` is the bar at which the fill was decided and is
+/// rendered in New York time; `strategy` becomes `order_reference` verbatim.
+/// Broker metadata (`perm_id`, `client_id`, `submitter`, …) is deterministic
+/// zero/empty, and `request_id` keeps its default because a backtest has no
+/// historical stream.
 pub fn synthetic_execution(
     order_id: i32,
     contract: &Contract,

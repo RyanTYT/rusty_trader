@@ -1,3 +1,12 @@
+//! Commission staging.
+//!
+//! IBKR reports commissions separately and sometimes after the fill. The handler
+//! stores the fee in `trading.staged_commissions`; database triggers then apply
+//! it to the already-inserted transaction (last report wins) or keep it staged
+//! until the fill arrives. See
+//! [`super::execution`](crate::execution::order_update_stream::event_handlers::execution)
+//! for the fill side of that handshake.
+
 use crate::database::tables::DbTables;
 use ibapi::orders::CommissionReport;
 use rust_decimal::prelude::FromPrimitive;
@@ -8,10 +17,20 @@ use crate::database::{
     models::{StagedCommissionsPrimaryKeys, StagedCommissionsUpdateKeys},
 };
 
-/// Should be triggered by CommissionUpdate(CommissionReport) events
-/// Simply create_or_update the row in StagedCommissions
-/// - StagedCommissions should have triggers attached to update the associated transactions
-/// automatically on inserts
+/// Stages the commission for the execution so the database triggers can merge
+/// it into the transaction.
+///
+/// Upserts `trading.staged_commissions` keyed by `execution_id` with the report's
+/// commission. The write happens in a spawned task, so the function returns
+/// before the row exists; staging failures are only logged. The database's
+/// `trg_try_apply_commission_to_transaction` decides whether the fee is applied
+/// immediately (transaction already present) or left staged (fill not seen yet);
+/// a later report overwrites an earlier fee.
+///
+/// # Panics
+///
+/// Panics if the commission cannot be represented as a
+/// [`rust_decimal::Decimal`].
 pub fn on_commission_update(
     pool: PgPool,
     commission_report: &CommissionReport,

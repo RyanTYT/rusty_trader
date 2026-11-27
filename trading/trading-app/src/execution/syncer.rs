@@ -1,3 +1,32 @@
+//! Startup and reconnect reconciliation with IBKR.
+//!
+//! The syncer runs at startup and after a reconnect to make the database match
+//! what the broker reports. Its passes are deliberately ordered:
+//! `sync_executions` first (fills that happened while the process was down),
+//! then `sync_open_orders` (the resting book), then `sync_positions` (the
+//! resulting positions). Execution events go through the same handlers as the
+//! live order-update stream, so there is one code path for applying a fill.
+//!
+//! # Attribution
+//!
+//! A fill's strategy is its `order_reference`; an open order's is its
+//! `order_ref`, then the contract's configured strategy, then the default
+//! strategy, then `"unknown"`. When several strategies subscribe to the same
+//! contract, the smallest [`StrategyDetails`](crate::strategy::strategy::StrategyDetails) (priority, then name) owns it.
+//!
+//! # State model
+//!
+//! Every write is a delta against the broker's view, not a snapshot: a
+//! position is corrected by `broker - local`, so running a pass twice against
+//! an unchanged broker writes zero. Position corrections and open-order
+//! upserts are spawned, so a pass returns before every row is durable.
+//!
+//! # Errors
+//!
+//! Subscription errors are accumulated and logged, never propagated from the
+//! position pass; an execution or open-order stream error stops that pass. The
+//! streams end after ten seconds of idling.
+
 use crate::{
     database::tables::DbTables,
     execution::traits::{order_router::OrderRouter, positions_tracker::PositionsTracker},
@@ -42,19 +71,32 @@ use crate::{
     strategy::strategy::{StrategyDetails, StrategyExecutor},
 };
 
+/// Reconciles the database with the broker.
+///
+/// Build one per account from the active strategy roster; the roster supplies
+/// both the transaction-handler configuration and the contract attribution.
 pub struct SyncerEngine {
+    /// Pool handed to the spawned writes.
     pool: PgPool,
+    /// IBKR account number, used for the FX cash balances.
     account: String,
-
-    // Strategy -> StrategyEnum (for mapping DB fields)
+    /// Strategy name -> configuration, shared with the event handlers.
     strategy_details: Arc<HashMap<String, StrategyDetails>>,
-    // Contract -> Strategy
-    // - Prioritisation of Strategy happens here
+    /// Contract -> owning strategy. A contract subscribed by more than one
+    /// strategy is owned by the smallest [`StrategyDetails`] (priority, then
+    /// name), so attribution is deterministic.
     contract_to_strategy: HashMap<HashContract<'static>, String>,
+    /// Runtime used to spawn database writes.
     handle: tokio::runtime::Handle,
 }
 
 impl SyncerEngine {
+    /// Builds the engine from the active strategy roster.
+    ///
+    /// `active_strategies` supplies the per-strategy configuration
+    /// (`strategy_details`) and the subscribed contracts used for
+    /// attribution. Duplicate subscriptions collapse to one owner: the
+    /// smallest [`StrategyDetails`] wins, priority first and name second.
     pub fn new(
         pool: PgPool,
         account: String,
@@ -94,8 +136,21 @@ impl SyncerEngine {
     }
 }
 
+/// The three reconciliation passes.
+///
+/// The passes are independent and may be called in any order, but a full
+/// startup runs `sync_executions`, then `sync_open_orders`, then
+/// `sync_positions`: fills create transactions and positions, open orders hold
+/// the resting state, and positions are the final authority.
 #[async_trait]
 pub trait SyncOps {
+    /// Replays fills the broker reports for the session.
+    ///
+    /// Each fill is handed to `on_execution_update`, commission reports are
+    /// staged, and notices are logged. A stream error stops the pass, so later
+    /// items are not applied. A fill with no `order_reference` uses
+    /// `default_strategy`, or `"unknown"` when that is `None`. The stream ends
+    /// after ten seconds of idling.
     fn sync_executions<Broker, MarketBroker>(
         &self,
         client: &Arc<Broker>,
@@ -109,6 +164,13 @@ pub trait SyncOps {
     where
         Broker: PositionsTracker + OrderRouter + Send + Sync + 'static,
         MarketBroker: PriceSupplier + ContractBroker;
+    /// Rebuilds the resting open-order book.
+    ///
+    /// The stream interleaves `OrderData` and `OrderStatus` by `perm_id`. Only
+    /// complete pairs are written; incomplete ones are logged and skipped. A
+    /// stream error returns without writing anything. Each order is upserted
+    /// with the broker's filled quantity, so re-running the pass is
+    /// idempotent.
     fn sync_open_orders<Broker, MarketBroker>(
         &self,
         client: &Broker,
@@ -117,6 +179,13 @@ pub trait SyncOps {
     ) where
         Broker: PositionsTracker,
         MarketBroker: ContractBroker;
+    /// Corrects local positions to match the broker.
+    ///
+    /// FX cash balances are reconciled first, then stock and option positions.
+    /// Each instrument is corrected by the discrepancy `broker - local` at the
+    /// broker's average cost; a local row the broker no longer reports is
+    /// zeroed. Reads are grouped per instrument, so a variant mismatch aborts
+    /// the pass before any write. Errors are accumulated and logged.
     async fn sync_positions<Broker, MarketBroker>(
         &self,
         client: &Broker,
@@ -471,6 +540,11 @@ impl SyncOps for SyncerEngine {
 // ===================================== SYNC POSITIONS HELPERS ============================================
 /// fx_map: Local FX positions
 /// broker_currency: Broker "fx_map"
+/// Reconciles `CASH:<currency>` rows against the account's cash balances.
+///
+/// Only discrepancies of at least 1000 units are written, because IBKR reports
+/// small drift. The base currency is stored as `SGD`; a non-base currency is
+/// priced into SGD for the average cost.
 async fn sync_fx_positions<MarketBroker, PositionsBroker>(
     consolidator: &MarketBroker,
     client: &PositionsBroker,
@@ -600,6 +674,11 @@ async fn sync_fx_positions<MarketBroker, PositionsBroker>(
 
 /// stock_map: Contract -> (current quantity, average price)
 /// option_map: Contract -> (current quantity, average price)
+/// Reconciles stock and option positions.
+///
+/// Broker rows are validated through `MarketBroker`, attributed to a strategy
+/// and corrected by their discrepancy; local rows missing at the broker are
+/// zeroed. Each correction is spawned, so the writes land after this returns.
 async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
     account: String,
     client: &PositionsBroker,
@@ -664,7 +743,10 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
         }
     }
 
-    fn reconcile_position(
+    /// Writes the additive correction for one instrument.
+///
+/// A zero discrepancy is a no-op. The write is spawned; failures are logged.
+fn reconcile_position(
         pool: PgPool,
         contract: &Contract,
         local_position: (f64, f64),
@@ -786,6 +868,12 @@ async fn sync_stock_and_option_positions<PositionsBroker, MarketBroker>(
 // ===================================== SYNC POSITIONS HELPERS ============================================
 
 // ONLY called in conjunction with sync_open_orders
+/// Upserts one complete open order.
+///
+/// The strategy is the order's `order_ref` (verbatim, suffix included), then
+/// the contract's configured owner, then `default_strategy`, then `"unknown"`.
+/// The contract is validated when possible, with the raw contract as a
+/// fallback. The upsert is spawned and records the broker's filled quantity.
 fn on_full_open_order_received<MarketBroker>(
     contract_to_strategy: &HashMap<HashContract, String>,
     pool: PgPool,

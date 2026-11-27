@@ -1,3 +1,19 @@
+//! Top-level supervisor loop for the live program.
+//!
+//! [`run_program`] alternates between the broker being available and
+//! unavailable:
+//!
+//! - **Available** — initialise the app behind
+//!   `with_gateway_retry("/tmp/ibc.log", 3)`, publish the weak state to the
+//!   HTTP server, then park until the next maintenance window, connection
+//!   alert or signal;
+//! - **Unavailable** — sleep until the next maintenance window opens (or a
+//!   signal arrives).
+//!
+//! Every teardown publishes `None` to the server and drops the app with
+//! `arc_drop_async!` before deciding what to do next. SIGINT/SIGTERM are
+//! terminal; every other reason restarts the loop.
+
 use std::{
     sync::{Arc, Weak},
     time::Duration,
@@ -24,6 +40,10 @@ use crate::{
 //     Running,
 // }
 
+/// Sleep until `dt`, returning immediately when it is already in the past.
+///
+/// A duration that cannot be represented as a `std::time::Duration` is logged
+/// and treated as "do not sleep".
 async fn sleep_until(dt: &DateTime<Utc>) {
     let now = Utc::now();
     if now > *dt {
@@ -42,19 +62,35 @@ async fn sleep_until(dt: &DateTime<Utc>) {
 
 use tokio::signal::unix::{SignalKind, signal};
 
+/// Why one supervision iteration ended; drives restart vs exit.
 pub enum AppReturnState {
+    /// The broker maintenance window began.
     BrokerDown,
+    /// Application initialisation failed; the message is logged.
     InitAppErr(String),
+    /// The broker schedule could not be resolved (logged, then panics in `AppReturnState::log_state`).
     NoBrokerSchedule(String),
+    /// Unstable connection during market hours that timed out.
     UnstableConnMktHours,
+    /// Unstable connection outside market hours, carrying the first event time.
     UnstableConnOutsideHours(DateTime<Tz>),
+    /// The gateway connection hit a broken pipe.
     UnstableConnBrokenPipe,
+    /// APAC session reset.
     UnstableConnAPAC,
+    /// SIGINT received — terminal.
     SigintTerminalSignal,
+    /// SIGTERM received — terminal.
     SigtermTerminalSignal,
 }
 
 impl AppReturnState {
+    /// Log the reason at the severity it deserves.
+    ///
+    /// # Panics
+    ///
+    /// [`AppReturnState::NoBrokerSchedule`] logs and then panics: without a
+    /// broker schedule the supervisor cannot decide when to sleep.
     fn log_state(&self) {
         match self {
             Self::BrokerDown => {
@@ -92,6 +128,7 @@ impl AppReturnState {
         }
     }
 
+    /// `true` only for the two terminal signals; every other reason restarts.
     fn is_terminal_state(&self) -> bool {
         match self {
             Self::SigintTerminalSignal | Self::SigtermTerminalSignal => true,
@@ -100,6 +137,35 @@ impl AppReturnState {
     }
 }
 
+/// Run the live supervisor until a terminal signal.
+///
+/// # Arguments
+///
+/// - `init_application` — async factory producing a fresh `ApplicationState`;
+///   invoked once per available-broker iteration behind
+///   `with_gateway_retry("/tmp/ibc.log", 3)`;
+/// - `interrupt_rcx` — connection alerts from the logger/connection monitor;
+/// - `sender` — pushes `Some(weak state)` to the HTTP server on boot and
+///   `None` on every teardown.
+///
+/// # Behaviour
+///
+/// The loop asks the region scheduler whether the broker is available:
+///
+/// - available → retry-wrapped init, publish the state, then `select!` on the
+///   next maintenance window, alerts and signals. A timeout during market
+///   hours, an outside-hours instability, a broken pipe or an APAC reset
+///   tears down and restarts; a market-hours alert without a timeout and an
+///   `AutoRestarting` notice continue waiting (the latter after 3 minutes);
+/// - unavailable → sleep until the next window, still honouring signals.
+///
+/// A failed init inside the retry wrapper is logged and the loop continues;
+/// `NoBrokerSchedule` panics in `AppReturnState::log_state`.
+///
+/// # Panics
+///
+/// If the SIGTERM/SIGINT handlers cannot be installed, or when the broker
+/// schedule is missing (see above).
 pub async fn run_program<F, Fut>(
     init_application: F,
     interrupt_rcx: &mut tokio::sync::mpsc::Receiver<ConnectionAlert>,

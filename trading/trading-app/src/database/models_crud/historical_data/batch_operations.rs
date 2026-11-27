@@ -1,3 +1,32 @@
+//! COPY-based bulk writes into the historical tables.
+//!
+//! [`BatchDbCreator`] wraps a bounded channel (10 000 rows) and one long-lived
+//! `tokio_postgres` connection. A worker buffers rows, flushes at 200 000 rows
+//! or after one second of inactivity, and flushes whatever is queued when
+//! shutdown is signalled. Each flush runs in its own transaction: a random
+//! staging table is created, rows are binary-COPYed (deduplicated by primary
+//! key, later rows winning), and a SQL merge upserts staging into the target.
+//!
+//! This path is deliberately separate from the sqlx CRUD layer: it talks to
+//! `tokio_postgres` directly so it can stream `COPY`. Use it for market-data
+//! ingestion, not for transactional business writes.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use trading_app::database::models::HistoricalStockDataFullKeys;
+//! use trading_app::database::models_crud::historical_data::batch_operations::init_channel;
+//!
+//! # async fn example(fk: HistoricalStockDataFullKeys) -> Result<(), Box<dyn std::error::Error>> {
+//! let batch = init_channel::<HistoricalStockDataFullKeys>().await;
+//! batch.batch_create_or_update(&fk).await?;
+//!
+//! // Rows become visible on the size/interval flush, or immediately here.
+//! batch.flush().await?;
+//! # Ok(())
+//! # }
+//! ```
+
 use std::hash::Hash;
 use std::sync::Mutex;
 use std::{collections::HashSet, sync::Arc};
@@ -16,20 +45,33 @@ use crate::database::models::{
 };
 use crate::database::models_crud::historical_data::historical_data::HistoricalDataFullKeys;
 
-/// Trait representing a bulk-insertable table model
+/// A row model that can be streamed into a table with `COPY`.
+///
+/// Implementors describe the target table once — the staging DDL, the COPY
+/// statement, the column types and how to write a row — plus how to merge the
+/// staging table back into the target.
 pub trait BulkInsertable {
+    /// Identity used to deduplicate a batch; later rows with the same key win.
     type PrimaryKey: Hash + Eq + Send + Sync;
 
+    /// Fully qualified target table, e.g. `market_data.historical_data`.
     fn table_name() -> &'static str;
+    /// Primary key of `self`, used for in-batch deduplication.
     fn primary_keys(&self) -> Self::PrimaryKey;
+    /// `CREATE TEMP TABLE <staging_table> (...)` matching the target columns.
     fn create_temp_table_sql(staging_table: &str) -> String;
+    /// `COPY <staging_table> FROM STDIN (FORMAT binary)`.
     fn copy_in_sql(staging_table: &str) -> String;
+    /// Binary COPY column types, in column order.
     fn types() -> &'static [Type];
+    /// Appends `self`'s columns to `row`, in [`Self::types`] order.
     fn write_to_row<'a>(&'a self, row: &mut Vec<&'a (dyn tokio_postgres::types::ToSql + Sync)>);
+    /// Upsert from staging into the target table.
     fn merge_sql(staging_table: &str) -> String;
 }
 
-// Impl BulkInsertable for all Borrowed types that alr impl BulkInsertable
+/// Borrowed rows implement the trait by delegating to the owned type, so a
+/// `&T` slice can be flushed without cloning.
 impl<'b, T: BulkInsertable> BulkInsertable for &'b T {
     type PrimaryKey = T::PrimaryKey;
 
@@ -62,6 +104,12 @@ impl<'b, T: BulkInsertable> BulkInsertable for &'b T {
     }
 }
 
+/// Implements [`BulkInsertable`] from a table/column specification.
+///
+/// `pk_fields` computes the dedupe key, `[pk]` marks the columns used by the
+/// generated `ON CONFLICT` merge, and `columns` supplies the staging DDL
+/// fragment, the Postgres type and the accessor for every column. The target
+/// table must have a unique constraint on the `[pk]` columns.
 macro_rules! impl_bulk_insertable {
     (
         $struct_name:ident {
@@ -139,6 +187,16 @@ macro_rules! impl_bulk_insertable {
     };
 }
 
+/// Writes one batch into `T`'s table through a staging table.
+///
+/// Empty batches are a no-op. Rows are deduplicated by
+/// [`BulkInsertable::primary_keys`], iterating the batch in reverse so the
+/// latest row wins. Staging creation, COPY and merge run in one transaction.
+/// A COPY-finish error is logged and the merge is still attempted, so only rows
+/// that reached the staging table are committed.
+///
+/// # Errors
+/// Any connection, transaction, COPY or merge failure, naming the step.
 pub async fn flush_batch_generic<T>(
     client: &mut tokio_postgres::Client,
     batch: &[T],
@@ -316,14 +374,22 @@ impl_bulk_insertable! {
     }
 }
 
+/// Handle to the background historical-data writer.
+///
+/// Cloning shares the row channel and the shutdown signal. The worker is
+/// stopped by [`Self::flush`] or, best-effort, when the last clone drops.
 #[derive(Debug, Clone)]
 pub struct BatchDbCreator<T>
 where
     T: BulkInsertable + Clone,
 {
+    /// Bounded channel to the worker (capacity 10 000).
     sender: Arc<Sender<T>>,
+    /// One-shot shutdown signal shared by all clones.
     shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
+    /// Worker handle, taken by [`Self::flush`].
     join: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Set after [`Self::flush`] awaited the worker; suppresses the Drop signal.
     joined: bool,
 }
 
@@ -331,6 +397,7 @@ impl<T> BatchDbCreator<T>
 where
     T: BulkInsertable + Clone,
 {
+    /// Builds a handle around an already-spawned worker.
     fn new(
         sender: Arc<Sender<T>>,
         shutdown_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
@@ -344,7 +411,11 @@ where
         }
     }
 
-    /// Signals the worker to flush everything and waits for it to finish.
+    /// Signals shutdown, lets the worker drain and flush the queue, and awaits
+    /// it.
+    ///
+    /// After this, [`Drop`] does nothing for this handle. Errors when the
+    /// worker task panicked or was cancelled.
     pub async fn flush(mut self) -> Result<(), String> {
         if let Some(sender) = self
             .shutdown_sender
@@ -370,6 +441,10 @@ where
         Ok(())
     }
 
+    /// Queues one row (cloned) for the worker.
+    ///
+    /// Best-effort: a send failure is logged and swallowed, so this always
+    /// returns `Ok`.
     pub async fn batch_create_or_update(&self, fk: &T) -> Result<(), String> {
         if let Err(e) = self.sender.send(fk.clone()).await {
             tracing::error!("error sending data via batch_create_or_update: {e:?}");
@@ -415,10 +490,16 @@ where
     // }
 }
 
+/// Best-effort shutdown.
+///
+/// Only the last remaining clone signals the worker; the worker flushes on its
+/// way out. Dropping does not wait for the flush — call [`BatchDbCreator::flush`]
+/// when the final write must be guaranteed.
 impl<T> Drop for BatchDbCreator<T>
 where
     T: BulkInsertable + Clone,
 {
+    /// Sends the shutdown signal unless [`BatchDbCreator::flush`] already joined.
     fn drop(&mut self) {
         if self.joined {
             return;
@@ -446,6 +527,19 @@ where
     }
 }
 
+/// Spawns the background writer and returns its handle.
+///
+/// Reads `DATABASE_HOST`, `DB_USERNAME`, `DB_PW` and `DB_DB`; the host string is
+/// interpolated as libpq keywords, so a non-default port must be carried as
+/// `host port=5432`.
+///
+/// # Panics
+/// Panics when an environment variable is missing or the initial
+/// `tokio_postgres` connection fails.
+///
+/// The worker flushes at 200 000 rows or after one second of inactivity and
+/// drains anything already sent before its final flush, so
+/// [`BatchDbCreator::flush`] cannot lose queued rows.
 pub async fn init_channel<T>() -> BatchDbCreator<T>
 where
     T: BulkInsertable + Clone + Send + Sync + 'static,
@@ -573,14 +667,22 @@ where
 }
 
 #[derive(Debug, Clone)]
+/// Asset-dispatching batch writer for [`HistoricalDataFullKeys`].
 pub enum BatchDbCreatorEnum {
+    /// Writer for `market_data.historical_data`.
     Stock(BatchDbCreator<HistoricalStockDataFullKeys>),
+    /// Writer for `market_data.historical_options_data`.
     Options(BatchDbCreator<HistoricalOptionsDataFullKeys>),
+    /// Writer for `market_data.historical_forex_data`.
     Forex(BatchDbCreator<HistoricalForexDataFullKeys>),
 }
 
 #[hotpath::measure_all]
 impl BatchDbCreatorEnum {
+    /// Queues `fk` on the creator matching its variant.
+    ///
+    /// # Errors
+    /// Returns an error when the key variant and the creator variant differ.
     pub async fn batch_create_or_update(&self, fk: &HistoricalDataFullKeys) -> Result<(), String> {
         match (self, fk) {
             (Self::Stock(creator), HistoricalDataFullKeys::Stock(data)) => {

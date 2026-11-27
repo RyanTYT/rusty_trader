@@ -986,7 +986,7 @@ fn pooled_intents(
 /// The per-sleeve fund cap gate. One instance per sleeve, chained before
 /// `SharesGate` (see `sleeve.rs` `with_fund_gate`).
 pub struct FundGate {
-    /// Owning sleeve's engine strategy name ("blended5_<key>") — excluded
+    /// Owning sleeve's engine strategy name (`"blended5_<key>"`) — excluded
     /// from the peer gross (its own gross comes from its own book).
     own: String,
     /// Last-known-price cache (legacy `FundBook::last_px` idiom: freshly

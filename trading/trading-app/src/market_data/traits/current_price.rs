@@ -1,3 +1,25 @@
+//! Price reads and historical-bar population.
+//!
+//! [`PriceSupplier`] is the port used everywhere a price is needed (fund gates,
+//! strategy values, the HTTP server, backtests). The live implementation on
+//! [`Consolidator`] resolves a price in this order:
+//!
+//! 1. the live cache from an active subscription (`try_get_price`, 60 s TTL),
+//!    skipped for VWAP requests;
+//! 2. `symbol == currency` → `1.0` (a currency pricing itself);
+//! 3. a memoised IBKR snapshot (`GetPrice`, 15-minute TTL).
+//!
+//! Inside a snapshot request it retries up to 10 times with a 5 s wait, treats
+//! error 10167 (delayed data confirmed) as informational, falls back to delayed
+//! data once, inverts an FX pair once if IBKR has no access, and finally uses
+//! Yahoo Finance when the error indicates a permission/subscription problem.
+//! The client is always switched back to real-time data before returning.
+//!
+//! [`Consolidator::populate_historical_data`] is the write side used by the
+//! freshness checks: it requests bars from IBKR, drops the still-forming newest
+//! bucket, and upserts the rest (optionally through the batch channel), fetching
+//! both bid and ask for FX.
+
 use crate::database::tables::DbTables;
 use std::{sync::Arc, time::Duration};
 
@@ -31,6 +53,10 @@ use crate::{
 #[allow(dead_code)]
 const DUKASCOPY_BASE_URL: &str = "https://jetta.dukascopy.com/v1/candles/minute";
 
+/// Request shape for [`PriceSupplier::populate_historical_data`].
+///
+/// `use_batching` selects the batch channel instead of per-row upserts; the
+/// caller must have opened the channels for that asset type first.
 pub struct HistoricalDataConfig {
     duration: ibapi::market_data::historical::Duration,
     bar_size: ibapi::market_data::historical::BarSize,
@@ -39,6 +65,8 @@ pub struct HistoricalDataConfig {
 }
 
 impl HistoricalDataConfig {
+    /// Builds a config from IBKR duration/bar-size/what-to-show plus the batching
+    /// flag.
     pub fn new(
         duration: ibapi::market_data::historical::Duration,
         bar_size: ibapi::market_data::historical::BarSize,
@@ -54,14 +82,38 @@ impl HistoricalDataConfig {
     }
 }
 
+/// Port for current and historical prices.
+///
+/// Implementations must be safe to call from synchronous strategy code;
+/// `get_current_price` may block while it waits for a tick.
 #[async_trait::async_trait]
 pub trait PriceSupplier {
+    /// Returns the current price for `contract`.
+    ///
+    /// `vwap = true` requests the VWAP tick; when set, `generic_ticks` is
+    /// ignored (VWAP is requested as tick 233). `generic_ticks` may otherwise
+    /// request specific tick types.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no price can be obtained from any source (IBKR, delayed data,
+    /// Yahoo fallback).
     fn get_current_price(
         &self,
         contract: Contract,
         vwap: bool,
         generic_ticks: &[&str],
     ) -> Result<f64, String>;
+
+    /// Fetches historical bars for `contract` and upserts them.
+    ///
+    /// The newest, still-forming bucket is skipped. For FX pairs only the bid leg
+    /// is requested here; the implementation then recurses for the ask leg.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the IBKR request fails. Per-bar insert failures are logged and
+    /// do not abort the remaining bars.
     #[cfg(not(feature = "backtest"))]
     async fn populate_historical_data(
         &self,
@@ -72,6 +124,11 @@ pub trait PriceSupplier {
 
 #[async_trait::async_trait]
 impl PriceSupplier for Consolidator {
+    /// Live: cache → self-priced currency → memoised snapshot; backtest: delegate
+    /// to the replay supplier.
+    ///
+    /// The live shortcut `try_get_price` is only used for non-VWAP reads because
+    /// the cache stores trade prices, not VWAP.
     fn get_current_price(
         &self,
         contract: Contract,
@@ -114,6 +171,20 @@ impl PriceSupplier for Consolidator {
     }
 
     // If is_forex is true, what_to_show is ignored - takes both bid and ask
+    /// Requests bars from IBKR and upserts every complete bucket.
+    ///
+    /// The bar interval is 60 s for FX and 300 s otherwise; the bucket containing
+    /// the request time is skipped because it is still forming. With
+    /// `use_batching`, rows go through the asset-specific batch channel.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the contract resolves to `AssetType::CASH` or
+    /// `AssetType::Unknown` (neither can have a historical table).
+    ///
+    /// # Errors
+    ///
+    /// Returns the IBKR/`async_call` error; insert failures are logged per bar.
     #[cfg(not(feature = "backtest"))]
     async fn populate_historical_data(
         &self,
@@ -266,6 +337,10 @@ pub enum PriceExtraction {
     Err(String),
 }
 
+// ---------------------------------------------------------------------------
+// Price helpers
+// ---------------------------------------------------------------------------
+
 impl Consolidator {
     /// Derives the Yahoo Finance ticker symbol from an IBKR Contract.
     ///
@@ -381,6 +456,15 @@ impl Consolidator {
     /// Fetches price from Yahoo Finance (yfinance-rs) as a synchronous fallback.
     /// Uses `fast_info().last_price` which is the simplest current-price path.
     /// The Yahoo ticker must already be in the correct format (e.g. "7203.T", "AAPL").
+    /// Fetches `fast_info().last_price` from Yahoo Finance as a blocking fallback.
+    ///
+    /// Returns `Ok(None)` when Yahoo yields no last price. The caller must pass a
+    /// ticker already in Yahoo form (see
+    /// [`Consolidator::yahoo_ticker_from_contract`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the yfinance error or a join failure.
     fn get_price_from_yfinance(
         yahoo_ticker: &str,
         handle: &tokio::runtime::Handle,
@@ -402,6 +486,11 @@ impl Consolidator {
 
     /// Returns true if the IBKR error string indicates a market data permission/access issue,
     /// as opposed to a connectivity or timeout problem.
+    ///
+    /// Detection is deliberately conservative: any of the text patterns
+    /// "not subscribed", "market data farm" or "no security definition"
+    /// matches, and numeric error codes are compared as whole tokens so `3540`
+    /// and `100901` are not mistaken for `354` / `10090`.
     ///
     /// pub visibility ONLY for testing purposes
     pub fn is_ibkr_market_data_error(err: &str) -> bool {
@@ -430,6 +519,11 @@ impl Consolidator {
     /// NOTE: this extracts the first price returned which may NOT be the actual correct data point
     /// - i.e. smth like requesting for ask -> may result in ticktype of high, open, ... to come
     /// first and is returned first
+    ///
+    /// Both `Price` and `PriceSize` ticks are accepted (IBKR sends either for a
+    /// snapshot). `SnapshotEnd` cancels the subscription before returning the
+    /// error. Notice `10167` maps to [`PriceExtraction::DelayedDataConfirmed`];
+    /// every other notice is an error.
     ///
     /// pub visibility ONLY for testing purposes
     pub fn _extract_price(
@@ -485,6 +579,11 @@ impl Consolidator {
     /// of whether the delayed-data fallback was triggered or the request succeeded/failed.
     ///
     /// - if you want to pass generic_ticks, vwap MUST be false
+    ///
+    /// VWAP requests are translated to generic tick `233` (the explicit
+    /// `generic_ticks` list is then ignored). The reset to
+    /// [`MarketDataType::Realtime`] happens even when the price lookup fails; a
+    /// reset failure is only warned.
     pub(crate) fn _get_current_price(
         client: Arc<Client>,
         contract: &Contract,
@@ -510,6 +609,17 @@ impl Consolidator {
         result
     }
 
+    /// Snapshot request loop: up to 10 ticks with a 5 s timeout each.
+    ///
+    /// Fallback rules:
+    /// - one delayed-data retry, only when IBKR reports delayed data is available;
+    /// - one FX inversion (swap symbol/currency, take the reciprocal), only when
+    ///   access is denied for an FX pair and this is not already the second try;
+    /// - otherwise, on an access error, Yahoo Finance (or `Err` when no ticker can
+    ///   be derived).
+    ///
+    /// All failures across the attempts are accumulated into one newline-joined
+    /// error.
     fn _get_current_price_inner(
         client: Arc<Client>,
         contract: &Contract,
@@ -616,6 +726,16 @@ impl Consolidator {
         Err(cum_err.join("\n"))
     }
 
+    /// Unused Dukascopy minute-candle fetcher kept for reference.
+    ///
+    /// Builds `.../<PAIR>/<SIDE>/<year>/<month>/<day>` from the pair name
+    /// (stripping any `FX:` prefix and replacing `/` with `-`) and returns
+    /// `(time, open, high, low, close)` rows.
+    ///
+    /// # Panics
+    ///
+    /// Panics on malformed payloads (missing `time`/OHLC fields) and on pairs
+    /// without the expected `FX:` prefix.
     #[allow(unused)]
     async fn fetch_dukascopy_day(
         pair: &str, // "GBP/USD"
@@ -669,6 +789,10 @@ impl Consolidator {
     }
 }
 
+/// Forwards both price calls to the inner supplier.
+///
+/// Lets `Arc<dyn PriceSupplier>` and `Arc<Consolidator>` be used wherever a
+/// `PriceSupplier` is expected, including in spawned tasks.
 impl<T> PriceSupplier for Arc<T>
 where
     T: PriceSupplier,

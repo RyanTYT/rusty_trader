@@ -1,3 +1,33 @@
+//! Read-side facade for prices, contracts and strategy values.
+//!
+//! [`Consolidator`] is the object strategies and the server hold. It combines
+//!
+//! - a [`MarketDataHandler`] (live subscriptions and the price cache),
+//! - memoised price and strategy-value lookups, and
+//! - a contract-details cache used for validation.
+//!
+//! The point of the type is to make the common reads cheap and consistent:
+//! [`PriceSupplier`] prices are cached for 15 minutes, strategy values for 60
+//! seconds, and contract details for 5 days (max 100 entries). Histogram
+//! freshness is maintained by [`Consolidator::update_at_least_n_days_data`],
+//! which checks bar counts in TimescaleDB before asking IBKR for more.
+//!
+//! Under `feature = "backtest"` the client is replaced by a
+//! [`PriceSupplier`] and `Consolidator::new_for_backtest` is used; the rest of
+//! the API is unchanged.
+//!
+//! # Calendar rules
+//!
+//! Bar-availability helpers implement the market calendar used to decide
+//! whether the newest bar is stale:
+//!
+//! - stocks/futures: 09:30–16:30 NY, 5-minute grid;
+//! - options: 09:00–16:00 NY, 5-minute grid;
+//! - FX/CFD: continuous from Sunday 17:00 to Friday 17:00 NY, with New Year,
+//!   Christmas and Good Friday (Computus) excluded.
+//!
+//! These helpers `panic!` on asset types they do not model rather than guessing.
+
 use crate::database::tables::DbTables;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -39,30 +69,48 @@ const STOCK_BAR_GRANULARITY_MIN: u32 = 5;
 const OPTION_BAR_GRANULARITY_MIN: u32 = 5;
 // const FOREX_BAR_GRANULARITY_MIN: u32 = 1;
 
+/// Names of the operations whose results are memoised in [`Consolidator`].
+///
+/// The map is keyed by this enum so each function can have its own TTL and
+/// input/output types while sharing one type-erased store.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum MemoisedConsolidatorFns {
+    /// Current price of a contract (15-minute TTL).
     GetPrice,
+    /// SGD value of a strategy's positions (60-second TTL).
     GetStrategyValue,
+    /// Available funds (reserved; not populated in the current build).
     GetAvailableFunds,
 }
 
+/// Shared read facade over live market data, caches and the database.
 pub struct Consolidator {
-    // AccountTracker
+    /// Pool used for bar reads and strategy-value computation.
     pub pool: PgPool,
+    /// Owns the live subscription threads; shut down via [`Consolidator::async_drop`].
     pub(crate) market_data_handler: MarketDataHandler,
+    /// Type-erased memoised functions keyed by [`MemoisedConsolidatorFns`].
     pub(super) memoisers: Arc<HashMap<MemoisedConsolidatorFns, Arc<Box<dyn AnyMemoized>>>>,
+    /// Contract details by `contract_id`; 5-day TTL, 100 entries (live).
     pub(super) memoised_contract_details: Arc<Cache<i32, ContractDetails>>,
 
+    /// Decides whether a contract is currently trading (live only).
     #[cfg(not(feature = "backtest"))]
     contract_scheduler: Arc<IbkrContractScheduler>,
 
+    /// IBKR client (live only).
     #[cfg(not(feature = "backtest"))]
     pub(crate) client: Arc<Client>,
+    /// Replay price source (backtest only).
     #[cfg(feature = "backtest")]
     pub(crate) price_supplier: Arc<dyn PriceSupplier + Send + Sync>,
 }
 
 impl Consolidator {
+    /// Stops market-data threads and disconnects the IBKR client.
+    ///
+    /// Prefer this over dropping: `Drop` disconnects but cannot await the
+    /// producer/consumer shutdown.
     pub async fn async_drop(&mut self) {
         #[cfg(not(feature = "backtest"))]
         {
@@ -75,6 +123,8 @@ impl Consolidator {
 
 #[cfg(not(feature = "backtest"))]
 impl Drop for Consolidator {
+    /// Best-effort disconnect when the consolidator is dropped outside
+    /// [`Consolidator::async_drop`]. Thread shutdown is not awaited here.
     fn drop(&mut self) {
         if self.client.is_connected() {
             self.client.disconnect();
@@ -84,6 +134,15 @@ impl Drop for Consolidator {
 }
 
 impl Consolidator {
+    /// Builds the live consolidator and installs the memoised lookups.
+    ///
+    /// Memoiser keys:
+    /// - price: `(HashContract, vwap, generic_ticks, is_second_try)` — `false`
+    ///   and `true` are separate entries because the retry uses a different
+    ///   request shape;
+    /// - strategy value: the strategy name.
+    ///
+    /// Contract details get their own 5-day/100-entry cache.
     #[cfg(not(feature = "backtest"))]
     pub fn new(
         handle: tokio::runtime::Handle,
@@ -164,6 +223,11 @@ impl Consolidator {
         }
     }
 
+    /// Builds a replay consolidator whose prices come from `price_supplier`.
+    ///
+    /// Unlike [`Consolidator::new`], this installs **no** memoised price or
+    /// strategy-value functions (`memoisers` is empty); every read goes to the
+    /// supplier. That keeps backtests deterministic and replayable.
     #[cfg(feature = "backtest")]
     pub fn new_for_backtest(
         pool: PgPool,
@@ -184,6 +248,13 @@ impl Consolidator {
         }
     }
 
+    /// Refreshes the contract's bars only if its newest bucket is behind the
+    /// calendar's last available bar.
+    ///
+    /// Skips entirely when the contract is not currently trading. Compares the
+    /// latest stored bucket time with `last_bar_available`; a mismatch triggers
+    /// [`Consolidator::populate_historical_data`] with `config`. All failures are
+    /// logged, never returned, because this is a best-effort freshness check.
     #[cfg(not(feature = "backtest"))]
     async fn refresh_if_stale(&self, contract: &Contract, config: &HistoricalDataConfig) {
         let asset_type = AssetType::from_str(&contract.security_type);
@@ -254,6 +325,17 @@ impl Consolidator {
     /// for me
     ///
     /// NOTE: Requests always for 5 minute data
+    ///
+    /// The bar budget is `days * 78` for stocks/options and `days * 1425` for
+    /// FX/CFD. It counts rows since the earliest required trading session, then
+    /// either refreshes the newest bar (budget already met) or populates the
+    /// missing window.
+    ///
+    /// # Errors
+    ///
+    /// The `Result` is currently always `Ok`: row-count failures and population
+    /// failures are logged and swallowed so a freshness check cannot abort a
+    /// trading session.
     #[cfg(not(feature = "backtest"))]
     pub async fn update_at_least_n_days_data(
         &self,
@@ -376,6 +458,13 @@ impl Consolidator {
     }
 }
 
+/// Last FX trading minute at or before `now`.
+///
+/// Walks backwards one minute at a time until [`is_fx_trading_datetime`] agrees,
+/// so it can cross a weekend or holiday. Always returns a value; callers using
+/// it as "the newest bar that can exist" get the pre-open minute before the
+/// session rather than `None`.
+///
 /// pub(crate) visibility ONLY for testing purposes
 pub(crate) fn last_bar_available_time_forex(now: DateTime<Tz>) -> DateTime<Tz> {
     let mut cursor = now;
@@ -388,6 +477,16 @@ pub(crate) fn last_bar_available_time_forex(now: DateTime<Tz>) -> DateTime<Tz> {
 /// Grid-based variant used by stock and option: floor-to-grid, optionally
 /// cap at a session close, then gate on a session-open threshold.
 /// Returns `None` if we're before the open threshold (nothing to refresh yet).
+///
+/// Stocks/futures use a 09:30–16:30 NY session on a 5-minute grid; options use
+/// 09:00–16:00 NY on a 5-minute grid; FX/CFD defer to
+/// [`last_bar_available_time_forex`]. The result is the *start* of the newest
+/// bucket that can be complete at `now`.
+///
+/// # Panics
+///
+/// Panics for asset types this calendar does not model (`CASH`, `Unknown`), and
+/// on impossible New York local times (DST gaps) when capping at the close.
 ///
 /// pub(crate) visibility ONLY for testing purposes
 pub(crate) fn last_bar_available(
@@ -433,6 +532,12 @@ pub(crate) fn last_bar_available(
     (last_bar > open_threshold).then_some(last_bar)
 }
 
+/// Whether `dt` falls inside an FX trading window.
+///
+/// New York time: Sunday from 17:00 through Friday before 17:00; Saturday is
+/// closed. New Year's Day and Christmas are excluded on their observed weekday
+/// (Saturday holidays observed Friday, Sunday holidays observed Monday), as is
+/// Good Friday computed with the Meeus/Jones/Butcher (Computus) algorithm.
 pub(crate) fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
     fn is_fx_market_holiday(date: NaiveDate) -> bool {
         let year = date.year();
@@ -518,6 +623,12 @@ pub(crate) fn is_fx_trading_datetime(dt: &DateTime<Tz>) -> bool {
     }
 }
 
+/// Start of the FX trading day that contains `date`: 17:00 New York on the
+/// previous calendar day.
+///
+/// This mirrors IBKR's FX day boundary, which rolls at the New York close rather
+/// than midnight.
+///
 /// pub(crate) instead of private visibility ONLY for testing purposes
 pub(crate) fn fx_trading_day_start(date: &NaiveDate, tz: &Tz) -> DateTime<Tz> {
     const FX_WEEK_OPEN_HOUR: u32 = 17; // Sunday 17:00 NY

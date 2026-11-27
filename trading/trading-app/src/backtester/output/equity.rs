@@ -18,8 +18,10 @@ use crate::database::models_crud::current_positions::current_positions::{
 use crate::helpers::contract::{LocalContractTypes, get_contract_from};
 use crate::market_data::traits::current_price::PriceSupplier;
 
+/// One mark-to-market snapshot, taken after the bar's fills settle.
 #[derive(Debug, Clone)]
 pub struct EquitySnapshot {
+    /// Bar time of the snapshot.
     pub time: DateTime<Utc>,
     /// Cash balance (CASH:SGD position value) after settling this bar's fills.
     pub cash: f64,
@@ -29,34 +31,52 @@ pub struct EquitySnapshot {
     pub equity: f64,
 }
 
+/// The run's equity history, in replay order.
 #[derive(Debug, Default)]
 pub struct EquityCurve {
+    /// One snapshot per replay bar.
     pub snapshots: Vec<EquitySnapshot>,
 }
 
 impl EquityCurve {
+    /// Empty curve.
     pub fn new() -> Self {
         Self {
             snapshots: Vec::new(),
         }
     }
 
+    /// Append a snapshot.
     pub fn push(&mut self, snap: EquitySnapshot) {
         self.snapshots.push(snap);
     }
 
+    /// Equity of the latest snapshot, or `None` for an empty curve.
     pub fn last_equity(&self) -> Option<f64> {
         self.snapshots.last().map(|s| s.equity)
     }
 }
 
-/// Compute an equity snapshot at `time` by iterating the strategy's current
-/// positions: `CASH:*` → `cash`, the rest → `positions_value` (valued via the
-/// price supplier). `fallback_close` is used if the supplier can't price a
-/// position contract.
+/// Compute an equity snapshot at `time` from the strategy's current positions:
+/// `CASH:*` rows add to `cash`, everything else is marked to market into
+/// `positions_value`. Uses the DB (not `broker.cash()`) to avoid
+/// double-counting — the broker updates the `CASH:SGD` position on fills, so
+/// that row *is* the cash.
 ///
-/// Uses the DB (not `broker.cash()`) to avoid double-counting — the broker
-/// updates the `CASH:SGD` position on fills, so it IS the cash.
+/// `fallback_close` prices a position whose contract the supplier cannot price
+/// (e.g. a contract not subscribed in this run). A foreign-currency position is
+/// converted to SGD at the IDEALPRO pair rate, falling back to the constant
+/// `1.2713` when the pair cannot be priced.
+///
+/// When the `backtest` feature is on and the replay thread has installed its
+/// [`InMemoryState`](crate::backtester::methods::in_memory::state::InMemoryState),
+/// the positions come from that state instead of the DB.
+///
+/// # Limitations
+///
+/// Only `CurrentPositionsFullKeys::Stock` rows are valued — option positions
+/// are skipped by the `_ => continue` arm, so option PnL does not appear in the
+/// curve. A position whose absolute quantity is below `1e-9` is ignored.
 pub async fn compute_snapshot(
     pool: &PgPool,
     prices: &dyn PriceSupplier,
@@ -144,8 +164,15 @@ pub async fn compute_snapshot(
 }
 
 /// Value a list of `(PositionKey, InMemoryPosition)` — the shared valuation
-/// logic used by the in-memory `compute_snapshot` branch. `CASH:*` → `cash`,
-/// the rest → `positions_value` (valued via the price supplier).
+/// logic used by the in-memory `compute_snapshot` branch. `CASH:*` rows add to
+/// `cash`, everything else is marked to market into `positions_value`; a
+/// position is priced by the supplier and converted to SGD at the IDEALPRO pair
+/// rate (constant `1.2713` when the pair cannot be priced).
+///
+/// Differences from the DB path: cash in the base currency is priced at exactly
+/// `1.0` (`CASH:SGD`), the position contract is rebuilt from the key's
+/// stock/exchange/currency, and no DB access happens at all, so this is safe to
+/// call from the replay thread.
 pub fn compute_snapshot_from_positions(
     positions: Vec<(
         crate::backtester::methods::in_memory::state::PositionKey,

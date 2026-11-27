@@ -32,14 +32,23 @@ pub type BarFrame = BTreeMap<String, HistoricalDataFullKeys>;
 ///   (`ogcancel-…`), or engine OCA group; `None` = no OCA.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShareOut {
+    /// Instrument symbol.
     pub sym: String,
+    /// Signed target quantity: positive long, negative short, 0 flatten.
     pub qty: i64,
+    /// `Some(name)` = pooled cross-sleeve emission owned by `name`; `None` =
+    /// the sleeve that owns the chain and fills its own name at order assembly.
     pub owner: Option<String>,
+    /// `Some(px)` = rest passively at `px`; `None` = market. Ignored by size
+    /// arithmetic.
     pub limit_px: Option<f64>,
+    /// OrderGate descriptor/cancel marker or engine OCA group; `None` = none.
     pub oca_group: Option<String>,
 }
 
 impl ShareOut {
+    /// Build one emission entry; all fields are taken verbatim (no sizing or
+    /// attribution logic here).
     pub fn new(
         sym: String,
         qty: i64,
@@ -72,6 +81,8 @@ pub enum Payload {
 }
 
 impl Payload {
+    /// Borrow the intent list, or `None` when this payload is already shares
+    /// (i.e. it has passed the `SharesGate` tail).
     pub fn intents(&self) -> Option<&IntentMap> {
         match self {
             Payload::Intents(v) => Some(v),
@@ -79,6 +90,7 @@ impl Payload {
         }
     }
 
+    /// Borrow the share list, or `None` while the payload is still intents.
     pub fn shares(&self) -> Option<&Vec<ShareOut>> {
         match self {
             Payload::Shares(v) => Some(v),

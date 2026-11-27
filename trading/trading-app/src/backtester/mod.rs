@@ -1,30 +1,51 @@
-//! Backtester — replay historical bars through the REAL prod strategy +
-//! reconciliation against test-db, with a simulated broker + point-in-time
-//! price oracle. Feature-gated on `backtest`.
+//! Backtester — replays historical bars through the production strategy and
+//! reconciliation code with a simulated broker and a point-in-time price
+//! oracle. Feature-gated on `backtest`.
 //!
 //! # Architecture
-//! - [`BacktestConfig`] — the user-facing interface layer (bar granularity,
-//!   lookback period, capital, fees, commission model, mode, + the
-//!   per-strategy specs). Built via the fluent builder from `backtest.json`.
-//! - [`LightContext`] / [`BacktestContext`] — the execution surface. The light
-//!   context (clock/prices/consolidator) is used by the InMemory path; the
-//!   full context (+ broker/order_engine/order_store) by the Db path.
-//! - [`BacktestMethod`] trait — the Db-backed `HistoricalReplay` method. The
-//!   InMemory path uses [`InMemoryReplay::run_with_warm_up`] directly.
-//! - [`run_backtest`] — runs each active strategy in `config.strategies`
-//!   (one backtest per strategy, with the directly-defined params from
-//!   `backtest.json`).
+//! Two execution lanes share one strategy contract:
+//! - **InMemory** — `InMemoryReplay::run_with_warm_up` drives the sleeves
+//!   against an in-memory account and bar cache; nothing is written to the
+//!   trading tables.
+//! - **Db** — `HistoricalReplay` runs the real handlers, writing real
+//!   transactions/positions/open orders and reconciling against them.
+//!
+//! Entry points:
+//! - [`run_backtest`] — one backtest per active strategy in
+//!   `config.strategies`, each writing `backtest_results_{name}.json`.
+//! - [`run_multi_route`] — one shared market pass with per-strategy
+//!   accounts seeded by an equal split of the fund capital; Db mode delegates
+//!   to an internal Db-lane runner and the rollup goes to
+//!   `backtest_results_blended5_multi_db.json`.
+//!
+//! Setup types: [`BacktestConfig`] (period, capital, fees, mode, strategy
+//! specs), [`LightContext`] (clock/prices/consolidator) and
+//! [`BacktestContext`] (the full Db surface plus broker/order engine/order
+//! store). [`BacktestMethod`] is the Db replay trait.
+//!
+//! # Determinism and parity
+//! Active strategies are always visited in name-sorted order, so output
+//! ordering and account seeding are stable. Warm-up is positioned at the
+//! configured window start, not at the `warmup_bars_required` hint, because
+//! the inclusive `read_last_n` warm feed would otherwise swallow replay bars.
+//! The two lanes are **not** pin-comparable: the Db broker materializes fills
+//! at the current bar's close.
+//!
+//! # Data
+//! For [`BacktestPeriod::TimeRange`] the runner checks the loaded bars once
+//! per run. If every contract has data it refreshes the continuous
+//! aggregate; if any contract is empty it enters offline mode and never tries
+//! IBKR/Alpaca — bars must already be in `market_data.historical_data`.
 //!
 //! # Layout
-//! - `setup/` — the once-constructed types (config, context, clock, seed).
-//! - `output/` — the equity curve + results.
-//! - `execution/` — the order/fill surface (broker, fill model, OrderSubmitter).
-//! - `oracle/` — the price/data surface (price supplier, data loader).
-//! - `methods/` — the backtest methods (`HistoricalReplay`, `InMemoryReplay`).
-//! - `sweep/` — `run_one_backtest` (shared with the optimizer crate).
+//! - `setup/` — config, contexts, clock, seed (constructed once per run).
+//! - `output/` — the equity curve and results.
+//! - `execution/` — broker, fill model, `OrderSubmitter`.
+//! - `oracle/` — price supplier and data loader.
+//! - `methods/` — `HistoricalReplay` and `InMemoryReplay`.
+//! - `sweep.rs` — `run_one_backtest`, shared with the optimizer crate.
 //!
-//! Build & run:
-//!   cargo run --bin backtest --features backtest
+//! Build & run: `cargo run --bin backtest --features backtest`.
 
 pub mod execution;
 pub mod methods;
@@ -54,20 +75,32 @@ use crate::backtester::methods::load_bars;
 use crate::backtester::oracle::data_loader::refresh_continuous_aggregate;
 use crate::strategy::strategy::StrategyExecutor;
 
-/// Entry point. Runs each active strategy in `config.strategies` (one
-/// backtest per strategy, with the directly-defined params from
-/// `backtest.json`). The `config.subscribed_contracts` (the union of all
-/// active strategies' contracts + benchmarks, built by the binary) is
-/// loaded once for the period.
+/// Entry point for the single-strategy lane. Runs each active strategy in
+/// `config.strategies` as its own backtest with the params defined in
+/// `backtest.json`; the union of contracts plus benchmarks is loaded once.
+///
+/// Inactive strategies are logged and skipped. Each active strategy writes
+/// `backtest_results_{name}.json` in the current directory.
+///
+/// # Errors
+/// Returns an error for an unknown strategy name, a market-data load failure,
+/// a replay task join failure, or a result serialization/write failure. All
+/// strategy-level details are propagated as strings.
 pub async fn run_backtest(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
     let handle = tokio::runtime::Handle::current();
     run_single_route(pool, config, handle).await
 }
 
-/// Run each active strategy in `config.strategies`. InMemory mode uses the
-/// light context + `run_with_warm_up` (no `OrderStore::open()`); Db mode
-/// uses the full `BacktestContext` + `HistoricalReplay`. Results are
-/// written to `backtest_results_{name}.json` per strategy.
+/// Single-strategy lane: one strategy at a time, each in its own replay.
+///
+/// InMemory mode builds the light context and calls
+/// `run_with_warm_up` on a blocking thread (no `OrderStore::open()`); Db mode
+/// builds the full [`BacktestContext`] and calls `HistoricalReplay`. Both run
+/// off the async runtime because the strategy functions are synchronous and
+/// the replay uses `handle.block_on`.
+///
+/// Results are computed per lane (`compute_in_memory` vs `compute`) and
+/// written to `backtest_results_{name}.json`.
 async fn run_single_route(
     pool: PgPool,
     config: BacktestConfig,
@@ -189,14 +222,22 @@ async fn run_single_route(
     Ok(())
 }
 
-/// §8/P1b: run ALL active strategies in ONE replay pass — per-strategy
-/// in-memory accounts (transfer-seeded), per-strategy results files + a
-/// rollup curve (`backtest_results_blended5_multi.json`). InMemory mode only
-/// (the multi state model is an in-memory construct).
+/// Multi-strategy lane: one replay pass for every active strategy, so they
+/// share a single market surface (clock, prices, consolidator) while each
+/// keeps its own account. Fills attribute to the owning strategy by
+/// construction (`PositionKey.strategy`).
 ///
-/// The strategies see one shared market surface (clock/prices/consolidator)
-/// and their own accounts; fills attribute to the owning strategy by
-/// construction (`PositionKey.strategy` = the account's strategy name).
+/// Seeding is an equal split (`starting_capital_sgd / n`) with the residual
+/// left un-traded. Each account writes its own `backtest_results_{name}.json`
+/// and the rollup is written to `backtest_results_blended5_multi.json`.
+///
+/// Db mode is delegated to the internal Db-lane runner; only InMemory uses the
+/// in-memory multi state model.
+///
+/// # Errors
+/// Returns an error when there are no active strategies, when a strategy name
+/// is unknown, on a market-data load failure, on a replay join failure, or on
+/// result/rollup I/O.
 pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
     // Db lane: ONE shared pass over the union of contracts driving every
     // active sleeve on real DB state (`run_multi_route_db`). The ≥2 guard
@@ -329,12 +370,24 @@ pub async fn run_multi_route(pool: PgPool, config: BacktestConfig) -> Result<(),
     Ok(())
 }
 
-/// Db-lane multi runner: ONE `HistoricalReplay`-shaped pass over the union
-/// of contracts, driving every active sleeve on REAL DB state. NO
-/// InMemoryState is installed; equity snapshots read the DB per slot.
-/// Accepts 1–4 active sleeves (no ≥2 guard here — solo = the sleeve IS the
-/// fund). NOT pin-comparable with the InMemory lane (BacktestBroker fills
-/// materialize at the current bar's close).
+/// Db-lane multi runner: one `HistoricalReplay`-shaped pass over the union of
+/// contracts, driving every active sleeve against real DB state. No
+/// `InMemoryState` is installed; equity snapshots read the database per slot.
+/// Accepts one to four active sleeves — a solo sleeve is legitimate here
+/// (the sleeve is the fund), so there is no minimum-participant guard.
+///
+/// Warm-up runs at the configured window start for every sleeve (the analogue
+/// of the InMemory per-strategy `bar_times`): `warm_up_data` consumes every DB
+/// bar up to that instant, so the replay then starts at the first bar at or
+/// after it. The replay slice is trimmed at the deepest warm-up end.
+///
+/// This lane is **not** pin-comparable with InMemory: `BacktestBroker` fills
+/// materialize at the current bar's close.
+///
+/// # Errors
+/// Returns an error when there are no active strategies, when the period is
+/// `NumBars` (warm-up needs a time boundary), on data/warm-up/replay
+/// failures, or on result/rollup I/O.
 async fn run_multi_route_db(pool: PgPool, config: BacktestConfig) -> Result<(), String> {
     let handle = tokio::runtime::Handle::current();
 

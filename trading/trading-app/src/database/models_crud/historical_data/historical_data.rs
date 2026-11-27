@@ -1,3 +1,110 @@
+//! Historical bars and the reads built on them.
+//!
+//! One interface ([`HistoricalDataCRUD`]) over three physical tables:
+//! `market_data.historical_data` (stock/future/CFD/cash),
+//! `market_data.historical_options_data`, and
+//! `market_data.historical_forex_data`. Bar times are UTC; bucketing and
+//! "today" filters run in `America/New_York` (the market's civil day).
+//!
+//! The ops here are read-side analytics:
+//! [`HistoricalDataOps::read_last_n`] (time-bucketed OHLCV aggregation with a
+//! completeness split), [`HistoricalDataOps::read_last_bar`],
+//! [`HistoricalDataOps::read_last_vwap`], and
+//! [`HistoricalDataOps::get_rows_since`]; [`NoiseOps`] computes the average
+//! absolute move since the open. Writes go through the CRUD interface and the
+//! batch COPY writer in [`super::batch_operations`].
+
+//! Historical-data interface: stock, option and forex bars, selected by
+//! [`AssetType`].
+//!
+//! The concrete table is chosen from the contract's security type. The methods
+//! in [`HistoricalDataOps`] aggregate and read bars (latest buckets, last bar,
+//! VWAP, row counts); the inner handles expose the generic CRUD operations.
+//! Timestamps are stored in UTC; bucket boundaries are built in the requested
+//! timezone (default `US/Eastern`).
+//!
+//! # Example
+//!
+//! Three 5-minute AAPL bars; the last two buckets are read and asserted.
+//! Against `TEST_DATABASE_URL` this runs; without it, it is skipped.
+//!
+//! ```rust
+//! use chrono::{Duration, TimeZone, Utc};
+//! use rust_decimal::Decimal;
+//! use trading_app::database::crud::CRUDTrait;
+//! use trading_app::database::db::DbDirect;
+//! use trading_app::database::models::{
+//!     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+//!     HistoricalStockDataPrimaryKeysWoTime,
+//! };
+//! use trading_app::database::models_crud::historical_data::historical_data::{
+//!     HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
+//! };
+//! use trading_app::database::tables::DbTables;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+//! # let pool = sqlx::PgPool::connect(&url).await?;
+//! // Near ET midnight the "today" filter can drop the oldest bar; skip that window.
+//! # if Utc::now().with_timezone(&chrono_tz::America::New_York).time()
+//! #     < chrono::NaiveTime::from_hms_opt(0, 20, 0).unwrap() { return Ok(()); }
+//! let stock = format!("DOC{}", std::process::id());
+//! let now = chrono::DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+//! let mut db = DbDirect::connect(&pool);
+//!
+//! // Three bars, fifteen, ten and five minutes old, closes 100/101/102.
+//! for (minutes, close) in [(15, 100.0), (10, 101.0), (5, 102.0)] {
+//!     db.historical_stock_data()
+//!         .create(&HistoricalStockDataFullKeys {
+//!             stock: stock.clone(),
+//!             primary_exchange: "NASDAQ".into(),
+//!             currency: "USD".into(),
+//!             time: now - Duration::minutes(minutes),
+//!             open: close,
+//!             high: close,
+//!             low: close,
+//!             close,
+//!             volume: Decimal::new(100, 0),
+//!         })
+//!         .await?;
+//! }
+//!
+//! let pk_n = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+//!     stock: stock.clone(),
+//!     primary_exchange: "NASDAQ".into(),
+//!     currency: "USD".into(),
+//! });
+//! let bars = db.historical_data(&AssetType::Stock).read_last_n(pk_n, 5, 2).await?;
+//! assert_eq!(
+//!     bars.full.iter().map(|row| row.get_price()).collect::<Vec<_>>(),
+//!     vec![101.0, 102.0] // oldest first
+//! );
+//!
+//! // The newest complete bucket is the last bar.
+//! let pk_bar = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+//!     stock: stock.clone(),
+//!     primary_exchange: "NASDAQ".into(),
+//!     currency: "USD".into(),
+//! });
+//! let last = db.historical_data(&AssetType::Stock).read_last_bar(pk_bar, 5).await?;
+//! assert_eq!(last.get_price(), 102.0);
+//!
+//! // Clean up.
+//! for minutes in [15, 10, 5] {
+//!     db.historical_stock_data()
+//!         .delete(&HistoricalStockDataPrimaryKeys {
+//!             stock: stock.clone(),
+//!             primary_exchange: "NASDAQ".into(),
+//!             currency: "USD".into(),
+//!             time: now - Duration::minutes(minutes),
+//!         })
+//!         .await?;
+//! }
+//! # Ok(())
+//! # }
+//! ```
+
 use async_trait::async_trait;
 #[cfg(feature = "backtest")]
 use chrono::TimeZone;
@@ -29,20 +136,38 @@ use crate::{
     implement_crud_trait_for_interface,
 };
 
+/// Asset-dispatching handle over the three historical tables.
+///
+/// Built by [`HistoricalDataCRUD::from_exec`]; the variant selects the table
+/// and therefore the key shapes. Stock, future, CFD and cash contracts all map
+/// to [`HistoricalDataCRUD::Stock`]; [`AssetType::Unknown`] panics.
 pub enum HistoricalDataCRUD<'a> {
+    /// `market_data.historical_data` (stock, future, CFD and cash bars).
     Stock(HistoricalStockDataCRUD<'a>),
+    /// `market_data.historical_options_data`.
     Options(HistoricalOptionsDataCRUD<'a>),
+    /// `market_data.historical_forex_data` (separate bid/ask columns).
     Forex(HistoricalForexDataCRUD<'a>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+/// One bar of any asset class.
+///
+/// The variant mirrors the physical table; prefer the class-agnostic getters
+/// ([`HistoricalDataFullKeys::get_price`] and friends) when the caller does not
+/// care which table produced the bar.
 pub enum HistoricalDataFullKeys {
+    /// A stock/future/CFD/cash OHLCV bar.
     Stock(HistoricalStockDataFullKeys),
+    /// An option OHLCV bar (includes the option identity).
     Options(HistoricalOptionsDataFullKeys),
+    /// A forex bid/ask bar; either side may be absent.
     Forex(HistoricalForexDataFullKeys),
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for HistoricalDataFullKeys {
+    /// Always errors: the enum is never decoded from a raw row. The inner
+    /// `CRUD<FK, PK, UK>` decodes the concrete struct first and wraps it.
     fn from_row(_: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
         // This will never be executed because the inner CRUD<FK,PK,UK>
         // decodes the inner concrete struct before wrapping it into this enum.
@@ -52,9 +177,13 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for HistoricalDataFullKeys {
     }
 }
 
+/// Generates the four class-agnostic OHLC getters on
+/// [`HistoricalDataFullKeys`]; forex falls back to the ask column and then the
+/// bid column.
 macro_rules! delegate_price {
-    ($( [$fn_name:ident, $field:ident, $ask_field:ident, $bid_field:ident ]),+ $(,)?) => {
+    ($( [$fn_name:ident, $field:ident, $ask_field:ident, $bid_field:ident, $doc:literal ]),+ $(,)?) => {
         $(
+            #[doc = $doc]
             pub fn $fn_name(&self) -> f64 {
                 match self {
                     Self::Stock(v) => v.$field,
@@ -67,14 +196,39 @@ macro_rules! delegate_price {
 }
 impl HistoricalDataFullKeys {
     delegate_price!(
-        [get_price, close, ask_close, bid_close],
-        [get_open_price, open, ask_open, bid_open],
-        [get_high_price, high, ask_high, bid_high],
-        [get_low_price, low, ask_low, bid_low],
+        [
+            get_price,
+            close,
+            ask_close,
+            bid_close,
+            "Latest close. Forex falls back to the ask close, then the bid close; returns -1.0 when both are absent."
+        ],
+        [
+            get_open_price,
+            open,
+            ask_open,
+            bid_open,
+            "Opening price. Forex falls back to the ask open, then the bid open; returns -1.0 when both are absent."
+        ],
+        [
+            get_high_price,
+            high,
+            ask_high,
+            bid_high,
+            "Session high. Forex falls back to the ask high, then the bid high; returns -1.0 when both are absent."
+        ],
+        [
+            get_low_price,
+            low,
+            ask_low,
+            bid_low,
+            "Session low. Forex falls back to the ask low, then the bid low; returns -1.0 when both are absent."
+        ],
     );
 }
 
 impl HistoricalDataFullKeys {
+    /// Bar timestamp (UTC).
     pub fn get_time(&self) -> DateTime<Utc> {
         match self {
             Self::Stock(v) => v.time,
@@ -83,12 +237,20 @@ impl HistoricalDataFullKeys {
         }
     }
 
+    /// Forex bid open.
+    ///
+    /// # Panics
+    /// Panics for a stock or option bar (they carry a single price series).
     pub fn get_bid_open(&self) -> Option<f64> {
         match self {
             Self::Forex(v) => v.bid_open,
             _ => panic!("Tried to get bid open of non-stock asset"),
         }
     }
+    /// Forex ask open.
+    ///
+    /// # Panics
+    /// Panics for a stock or option bar.
     pub fn get_ask_open(&self) -> Option<f64> {
         match self {
             Self::Forex(v) => v.ask_open,
@@ -96,6 +258,10 @@ impl HistoricalDataFullKeys {
         }
     }
 
+    /// Bar volume.
+    ///
+    /// # Panics
+    /// Panics for a forex bar: forex tables carry no volume column.
     pub fn get_volume(&self) -> Decimal {
         match self {
             Self::Stock(v) => v.volume,
@@ -104,6 +270,13 @@ impl HistoricalDataFullKeys {
         }
     }
 
+    /// Combines separately stored bid and ask forex bars into one bar.
+    ///
+    /// The pair and timestamp come from `bid_data_wrapped`; the OHLC fields are
+    /// copied from their respective side.
+    ///
+    /// # Panics
+    /// Panics unless both inputs are [`HistoricalDataFullKeys::Forex`].
     pub fn from_inter_repr(
         contract: &Contract,
         bid_data_wrapped: &HistoricalDataFullKeys,
@@ -131,6 +304,17 @@ impl HistoricalDataFullKeys {
         })
     }
 
+    /// Builds a bar from one IBKR data point for `contract`.
+    ///
+    /// Stock/future/CFD/cash map to the stock table, options to the option
+    /// table (identity taken from the contract), and forex to the bid/ask table.
+    ///
+    /// # Panics
+    /// - forex with a `what_to_show` other than Bid/Ask;
+    /// - an unknown asset type, or an option contract whose `right` cannot be
+    ///   decoded.
+    ///
+    /// Volume that cannot be represented as a [`Decimal`] is stored as `-1`.
     pub fn from_data(
         contract: &Contract,
         what_to_show: &WhatToShow,
@@ -207,6 +391,12 @@ impl HistoricalDataFullKeys {
         }
     }
 
+    /// Converts an IBKR historical [`ibapi::market_data::historical::Bar`] into
+    /// a storage bar, preserving its series (`Bid`, `Ask` or `Trades`).
+    ///
+    /// # Panics
+    /// Panics on an unsupported historical series, or if the bar timestamp
+    /// cannot be converted to UTC.
     pub fn from_contract_and_bar(
         contract: &Contract,
         what_to_show: &ibapi::market_data::historical::WhatToShow,
@@ -237,15 +427,29 @@ impl HistoricalDataFullKeys {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+/// Time-qualified key for one bar; the variant selects the table.
 pub enum HistoricalDataPrimaryKeys {
+    /// A stock/future/CFD/cash bar.
     Stock(HistoricalStockDataPrimaryKeys),
+    /// Legacy daily-bar key. Current code never produces it; retained for the
+    /// historical enum surface.
     DailyStock(DailyHistoricalStockDataPrimaryKeys),
+    /// An option bar (includes the option identity).
     Options(HistoricalOptionsDataPrimaryKeys),
+    /// A forex bar.
     Forex(HistoricalForexDataPrimaryKeys),
 }
 
 impl HistoricalDataPrimaryKeys {
+    /// Builds the key for `contract` at `time`.
+    ///
+    /// Stock/future/CFD/cash map to the stock table, options to the option
+    /// table and forex pairs to the forex table.
+    ///
+    /// # Panics
+    /// Panics for [`AssetType::Unknown`] or an option contract whose `right`
+    /// cannot be decoded.
     pub fn from_contract(contract: &Contract, time: DateTime<Utc>) -> Self {
         match AssetType::from_str(&contract.security_type) {
             AssetType::CASH | AssetType::Stock | AssetType::CFD | AssetType::Future => {
@@ -284,14 +488,23 @@ impl HistoricalDataPrimaryKeys {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+/// Bar identity without the timestamp: the instrument columns of the table.
 pub enum HistoricalDataPrimaryKeysWoTime {
+    /// Stock/future/CFD/cash instrument identity.
     Stock(HistoricalStockDataPrimaryKeysWoTime),
+    /// Option identity (underlying plus expiry/strike/multiplier/type).
     Options(HistoricalOptionsDataPrimaryKeysWoTime),
+    /// Forex pair.
     Forex(HistoricalForexDataPrimaryKeysWoTime),
 }
 
 impl HistoricalDataPrimaryKeysWoTime {
+    /// Builds the time-less key for `contract`.
+    ///
+    /// # Panics
+    /// Same asset-class mapping and panic conditions as
+    /// [`HistoricalDataPrimaryKeys::from_contract`].
     pub fn from_contract(contract: &Contract) -> Self {
         match AssetType::from_str(&contract.security_type) {
             AssetType::CASH | AssetType::Stock | AssetType::CFD | AssetType::Future => {
@@ -322,14 +535,26 @@ impl HistoricalDataPrimaryKeysWoTime {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+/// Partial update of a bar's OHLCV columns.
 pub enum HistoricalDataUpdateKeys {
+    /// Stock/future/CFD/cash OHLCV.
     Stock(HistoricalStockDataUpdateKeys),
+    /// Option OHLCV.
     Options(HistoricalOptionsDataUpdateKeys),
+    /// Forex bid/ask columns; only the selected side is set by [`Self::from_bar`].
     Forex(HistoricalForexDataUpdateKeys),
 }
 
 impl HistoricalDataUpdateKeys {
+    /// Fills OHLCV from an already-built `bar` for `contract`'s asset class.
+    ///
+    /// Forex takes bid columns first (falling back to ask) and writes only the
+    /// side named by `what_to_show`; volume is `None` for forex.
+    ///
+    /// # Panics
+    /// - forex with a series other than Bid/Ask;
+    /// - an unknown asset class.
     pub fn from_bar(
         contract: &Contract,
         what_to_show: &WhatToShow,
@@ -398,6 +623,10 @@ impl HistoricalDataUpdateKeys {
         }
     }
 
+    /// Historical-series analogue of [`Self::from_bar`].
+    ///
+    /// # Panics
+    /// Panics for an unsupported historical series.
     pub fn from_historical_bar(
         contract: &Contract,
         what_to_show: &ibapi::market_data::historical::WhatToShow,
@@ -421,6 +650,7 @@ impl HistoricalDataUpdateKeys {
 
 #[hotpath::measure_all]
 impl<'a> HistoricalDataCRUD<'a> {
+    /// Borrows the executor of the selected table.
     pub fn exec(&mut self) -> &mut Exec<'a> {
         match self {
             Self::Stock(stk) => &mut stk.crud.exec,
@@ -429,18 +659,28 @@ impl<'a> HistoricalDataCRUD<'a> {
         }
     }
 
+    /// Handle for the stock/future/CFD/cash table.
     pub fn stock(exec: Exec<'a>) -> Self {
         Self::Stock(HistoricalStockDataCRUD::new(exec))
     }
 
+    /// Handle for the options table.
     pub fn option(exec: Exec<'a>) -> Self {
         Self::Options(HistoricalOptionsDataCRUD::new(exec))
     }
 
+    /// Handle for the forex table.
     pub fn forex(exec: Exec<'a>) -> Self {
         Self::Forex(HistoricalForexDataCRUD::new(exec))
     }
 
+    /// Selects the table for `asset_type`.
+    ///
+    /// Stock, future, CFD and cash use the stock table; forex pairs the forex
+    /// table; options the option table.
+    ///
+    /// # Panics
+    /// Panics for [`AssetType::Unknown`].
     pub fn from_exec(asset_type: &AssetType, exec: Exec<'a>) -> Self {
         match asset_type {
             AssetType::Stock | AssetType::Future | AssetType::CFD | AssetType::CASH => {
@@ -461,16 +701,24 @@ implement_crud_trait_for_interface!(
     [Stock, Options, Forex]
 );
 
+/// Which stored column the VWAP read weights by volume.
 pub enum VwapBarValue {
+    /// `close`.
     Close,
+    /// `open`.
     Open,
+    /// `bid_open`.
     BidOpen,
+    /// `bid_close`.
     BidClose,
+    /// `ask_open`.
     AskOpen,
+    /// `ask_close`.
     AskClose,
 }
 
 impl VwapBarValue {
+    /// SQL column name for this choice.
     pub fn as_str(&self) -> String {
         match self {
             Self::Open => "open".to_string(),
@@ -483,8 +731,95 @@ impl VwapBarValue {
     }
 }
 
+/// Read-side analytics over a historical table.
 #[async_trait]
 pub trait HistoricalDataOps {
+    /// Reads up to `limit` time buckets of `timestep_minutes` ending at `now`
+    /// (UTC; `Utc::now()` outside backtests).
+    ///
+    /// Buckets are built in `America/New_York` with `first(open)`,
+    /// `max(high)`, `min(low)`, `last(close)` and `sum(volume)`. SQL returns
+    /// newest-first; the result is reversed to oldest-first. The newest bucket
+    /// must be complete (at least `timestep_minutes / 5` five-minute stock bars,
+    /// or `timestep_minutes` forex bars); older buckets must reach 93% of that.
+    /// Complete buckets go to [`AggregatedBars::full`], the rest to
+    /// [`AggregatedBars::incomplete`].
+    ///
+    /// Under `backtest`, an in-memory bar cache may answer without a DB read.
+    ///
+    /// # Errors
+    /// Returns the SQL error text prefixed with the table kind.
+    ///
+    /// # Example
+    ///
+    /// Three 5-minute AAPL bars (closes 100/101/102) read as two buckets,
+    /// oldest first.
+    ///
+    /// ```rust
+    /// use chrono::{Duration, TimeZone, Utc};
+    /// use rust_decimal::Decimal;
+    /// use trading_app::database::crud::CRUDTrait;
+    /// use trading_app::database::db::DbDirect;
+    /// use trading_app::database::models::{
+    ///     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+    ///     HistoricalStockDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::models_crud::historical_data::historical_data::{
+    ///     HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::tables::DbTables;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+    /// # let pool = sqlx::PgPool::connect(&url).await?;
+    /// // Near ET midnight the "today" filter can drop the oldest bar.
+    /// # if Utc::now().with_timezone(&chrono_tz::America::New_York).time()
+    /// #     < chrono::NaiveTime::from_hms_opt(0, 20, 0).unwrap() { return Ok(()); }
+    /// let stock = format!("HDN{}", std::process::id());
+    /// let now = chrono::DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    /// let mut db = DbDirect::connect(&pool);
+    ///
+    /// for (minutes, close) in [(15, 100.0), (10, 101.0), (5, 102.0)] {
+    ///     db.historical_stock_data()
+    ///         .create(&HistoricalStockDataFullKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///             open: close,
+    ///             high: close,
+    ///             low: close,
+    ///             close,
+    ///             volume: Decimal::new(100, 0),
+    ///         })
+    ///         .await?;
+    /// }
+    ///
+    /// let pk = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+    ///     stock: stock.clone(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    /// });
+    /// let bars = db.historical_data(&AssetType::Stock).read_last_n(pk, 5, 2).await?;
+    /// assert_eq!(
+    ///     bars.full.iter().map(|row| row.get_price()).collect::<Vec<_>>(),
+    ///     vec![101.0, 102.0] // oldest first
+    /// );
+    ///
+    /// for minutes in [15, 10, 5] {
+    ///     db.historical_stock_data()
+    ///         .delete(&HistoricalStockDataPrimaryKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///         })
+    ///         .await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn read_last_n(
         &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
@@ -492,12 +827,164 @@ pub trait HistoricalDataOps {
         limit: u32,
         #[cfg(feature = "backtest")] now: Option<DateTime<Utc>>,
     ) -> Result<AggregatedBars, String>;
+    /// Returns the most recent complete bucket; falls back to a warned
+    /// incomplete bucket when that is all there is.
+    ///
+    /// # Errors
+    /// Errors when both lists are empty, or when both are non-empty (the
+    /// completeness rule should have made that impossible).
+    ///
+    /// # Example
+    ///
+    /// The newest complete 5-minute bucket of three AAPL bars is the
+    /// five-minute-old one (`close == 102`).
+    ///
+    /// ```rust
+    /// use chrono::{Duration, TimeZone, Utc};
+    /// use rust_decimal::Decimal;
+    /// use trading_app::database::crud::CRUDTrait;
+    /// use trading_app::database::db::DbDirect;
+    /// use trading_app::database::models::{
+    ///     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+    ///     HistoricalStockDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::models_crud::historical_data::historical_data::{
+    ///     HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::tables::DbTables;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+    /// # let pool = sqlx::PgPool::connect(&url).await?;
+    /// # if Utc::now().with_timezone(&chrono_tz::America::New_York).time()
+    /// #     < chrono::NaiveTime::from_hms_opt(0, 20, 0).unwrap() { return Ok(()); }
+    /// let stock = format!("HDB{}", std::process::id());
+    /// let now = chrono::DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    /// let mut db = DbDirect::connect(&pool);
+    ///
+    /// for (minutes, close) in [(15, 100.0), (10, 101.0), (5, 102.0)] {
+    ///     db.historical_stock_data()
+    ///         .create(&HistoricalStockDataFullKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///             open: close,
+    ///             high: close,
+    ///             low: close,
+    ///             close,
+    ///             volume: Decimal::new(100, 0),
+    ///         })
+    ///         .await?;
+    /// }
+    ///
+    /// let pk = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+    ///     stock: stock.clone(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    /// });
+    /// let last = db.historical_data(&AssetType::Stock).read_last_bar(pk, 5).await?;
+    /// assert_eq!(last.get_price(), 102.0);
+    ///
+    /// for minutes in [15, 10, 5] {
+    ///     db.historical_stock_data()
+    ///         .delete(&HistoricalStockDataPrimaryKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///         })
+    ///         .await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn read_last_bar(
         &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
         timestep_minutes: u32,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<HistoricalDataFullKeys, String>;
+    /// Volume-weighted average of `vwap_bar_value` over bars since the start of
+    /// the current civil day in `timezone` (default `US/Eastern`).
+    ///
+    /// Returns `None` when no bars exist for today. Backtests bind `now`
+    /// instead of SQL `now()`.
+    ///
+    /// # Errors
+    /// Returns the SQL error text when the aggregate query fails.
+    ///
+    /// # Example
+    ///
+    /// Two bars today: `100` volume at `100`, `300` volume at `102` →
+    /// `(100*100 + 300*102) / 400 = 101.5`.
+    ///
+    /// ```rust
+    /// use chrono::{Duration, TimeZone, Utc};
+    /// use rust_decimal::Decimal;
+    /// use trading_app::database::crud::CRUDTrait;
+    /// use trading_app::database::db::DbDirect;
+    /// use trading_app::database::models::{
+    ///     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+    ///     HistoricalStockDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::models_crud::historical_data::historical_data::{
+    ///     HistoricalDataOps, HistoricalDataPrimaryKeysWoTime, VwapBarValue,
+    /// };
+    /// use trading_app::database::tables::DbTables;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+    /// # let pool = sqlx::PgPool::connect(&url).await?;
+    /// # if Utc::now().with_timezone(&chrono_tz::America::New_York).time()
+    /// #     < chrono::NaiveTime::from_hms_opt(0, 30, 0).unwrap() { return Ok(()); }
+    /// let stock = format!("HDV{}", std::process::id());
+    /// let now = chrono::DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    /// let mut db = DbDirect::connect(&pool);
+    ///
+    /// for (minutes, close, volume) in [(20, 100.0, 100), (10, 102.0, 300)] {
+    ///     db.historical_stock_data()
+    ///         .create(&HistoricalStockDataFullKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///             open: close,
+    ///             high: close,
+    ///             low: close,
+    ///             close,
+    ///             volume: Decimal::new(volume, 0),
+    ///         })
+    ///         .await?;
+    /// }
+    ///
+    /// let pk = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+    ///     stock: stock.clone(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    /// });
+    /// let vwap = db
+    ///     .historical_data(&AssetType::Stock)
+    ///     .read_last_vwap(pk, None, VwapBarValue::Close)
+    ///     .await
+    ///     .expect("vwap query");
+    /// assert_eq!(vwap, Some(101.5));
+    ///
+    /// for minutes in [20, 10] {
+    ///     db.historical_stock_data()
+    ///         .delete(&HistoricalStockDataPrimaryKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///         })
+    ///         .await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn read_last_vwap(
         &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
@@ -505,6 +992,83 @@ pub trait HistoricalDataOps {
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String>;
+    /// Counts up to `n` rows at or after `datetime` (inclusive).
+    ///
+    /// The result is in `0..=n`: callers use it to decide whether enough
+    /// history exists before a read.
+    ///
+    /// # Errors
+    /// Returns the SQL error text when the count query fails.
+    ///
+    /// # Example
+    ///
+    /// Bars 20, 10 and 5 minutes old; counting at or after `now - 10m`
+    /// includes the 10- and 5-minute-old rows (2), not the 20-minute-old one.
+    ///
+    /// ```rust
+    /// use chrono::{Duration, TimeZone, Utc};
+    /// use rust_decimal::Decimal;
+    /// use trading_app::database::crud::CRUDTrait;
+    /// use trading_app::database::db::DbDirect;
+    /// use trading_app::database::models::{
+    ///     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+    ///     HistoricalStockDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::models_crud::historical_data::historical_data::{
+    ///     HistoricalDataOps, HistoricalDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::tables::DbTables;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+    /// # let pool = sqlx::PgPool::connect(&url).await?;
+    /// let stock = format!("HDR{}", std::process::id());
+    /// let now = chrono::DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    /// let mut db = DbDirect::connect(&pool);
+    ///
+    /// for minutes in [20, 10, 5] {
+    ///     db.historical_stock_data()
+    ///         .create(&HistoricalStockDataFullKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///             open: 100.0,
+    ///             high: 100.0,
+    ///             low: 100.0,
+    ///             close: 100.0,
+    ///             volume: Decimal::new(100, 0),
+    ///         })
+    ///         .await?;
+    /// }
+    ///
+    /// let pk = HistoricalDataPrimaryKeysWoTime::Stock(HistoricalStockDataPrimaryKeysWoTime {
+    ///     stock: stock.clone(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    /// });
+    /// let since = (now - Duration::minutes(10)).with_timezone(&chrono_tz::America::New_York);
+    /// let rows = db
+    ///     .historical_data(&AssetType::Stock)
+    ///     .get_rows_since(pk, 10, &since)
+    ///     .await
+    ///     .expect("row count");
+    /// assert_eq!(rows, 2);
+    ///
+    /// for minutes in [20, 10, 5] {
+    ///     db.historical_stock_data()
+    ///         .delete(&HistoricalStockDataPrimaryKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time: now - Duration::minutes(minutes),
+    ///         })
+    ///         .await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn get_rows_since(
         &mut self,
         pk: HistoricalDataPrimaryKeysWoTime,
@@ -513,14 +1077,119 @@ pub trait HistoricalDataOps {
     ) -> Result<i64, String>;
 }
 
+/// Average absolute move since the open, used by noise/volatility sizing.
 #[async_trait]
 pub trait NoiseOps {
+    /// Mean over the last `avg_move_lookback` sessions of
+    /// `abs(close/open - 1)` at the latest session's time of day.
+    ///
+    /// Today's session is excluded.
+    ///
+    /// # Panics
+    /// Panics if the query returns no rows or a row without a computed move.
+    ///
+    /// # Example
+    ///
+    /// Three previous sessions at `10:00` ET: closes `110`, `90`, `105` over
+    /// opens of `100` → mean absolute move `(0.10 + 0.10 + 0.05) / 3`.
+    ///
+    /// ```rust
+    /// use chrono::{Duration, TimeZone, Utc};
+    /// use rust_decimal::Decimal;
+    /// use trading_app::database::crud::CRUDTrait;
+    /// use trading_app::database::db::DbDirect;
+    /// use trading_app::database::models::{
+    ///     AssetType, HistoricalStockDataFullKeys, HistoricalStockDataPrimaryKeys,
+    ///     HistoricalStockDataPrimaryKeysWoTime,
+    /// };
+    /// use trading_app::database::models_crud::historical_data::historical_data::{
+    ///     HistoricalDataOps, NoiseOps,
+    /// };
+    /// use trading_app::database::tables::DbTables;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let Ok(url) = std::env::var("TEST_DATABASE_URL") else { return Ok(()); };
+    /// # let pool = sqlx::PgPool::connect(&url).await?;
+    /// let stock = format!("HDA{}", std::process::id());
+    /// let tz = chrono_tz::America::New_York;
+    /// let today = Utc::now().with_timezone(&tz).date_naive();
+    /// let bar_time = |days_ago: i64| {
+    ///     tz.from_local_datetime(&(today - Duration::days(days_ago)).and_hms_opt(10, 0, 0).unwrap())
+    ///         .unwrap()
+    ///         .with_timezone(&Utc)
+    /// };
+    /// let mut db = DbDirect::connect(&pool);
+    ///
+    /// // Today's 10:00 row defines the time-of-day; its date is excluded.
+    /// let mut times = vec![bar_time(0)];
+    /// for (days_ago, close) in [(3, 110.0), (2, 90.0), (1, 105.0)] {
+    ///     let time = bar_time(days_ago);
+    ///     times.push(time);
+    ///     db.historical_stock_data()
+    ///         .create(&HistoricalStockDataFullKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time,
+    ///             open: 100.0,
+    ///             high: close,
+    ///             low: close,
+    ///             close,
+    ///             volume: Decimal::new(100, 0),
+    ///         })
+    ///         .await?;
+    /// }
+    /// db.historical_stock_data()
+    ///     .create(&HistoricalStockDataFullKeys {
+    ///         stock: stock.clone(),
+    ///         primary_exchange: "NASDAQ".into(),
+    ///         currency: "USD".into(),
+    ///         time: bar_time(0),
+    ///         open: 100.0,
+    ///         high: 100.0,
+    ///         low: 100.0,
+    ///         close: 100.0,
+    ///         volume: Decimal::new(100, 0),
+    ///     })
+    ///     .await?;
+    ///
+    /// let pk = HistoricalStockDataPrimaryKeysWoTime {
+    ///     stock: stock.clone(),
+    ///     primary_exchange: "NASDAQ".into(),
+    ///     currency: "USD".into(),
+    /// };
+    /// let avg = db
+    ///     .historical_data(&AssetType::Stock)
+    ///     .get_avg_move_since_open(pk, 3)
+    ///     .await
+    ///     .expect("average move");
+    /// assert!((avg - 0.25 / 3.0).abs() < 1e-9);
+    ///
+    /// for time in times {
+    ///     db.historical_stock_data()
+    ///         .delete(&HistoricalStockDataPrimaryKeys {
+    ///             stock: stock.clone(),
+    ///             primary_exchange: "NASDAQ".into(),
+    ///             currency: "USD".into(),
+    ///             time,
+    ///         })
+    ///         .await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     #[cfg(not(feature = "backtest"))]
     async fn get_avg_move_since_open(
         &mut self,
         pk: HistoricalStockDataPrimaryKeysWoTime,
         avg_move_lookback: i64,
     ) -> Result<f64, String>;
+    /// Backtest variant: the latest bar is restricted to `time <= now`, so the
+    /// calculation cannot look ahead.
+    ///
+    /// # Panics
+    /// Same as the production variant.
     #[cfg(feature = "backtest")]
     async fn get_avg_move_since_open(
         &mut self,
@@ -530,9 +1199,13 @@ pub trait NoiseOps {
     ) -> Result<f64, String>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+/// Result of [`HistoricalDataOps::read_last_n`], oldest bar first within each
+/// list.
 pub struct AggregatedBars {
+    /// Buckets that met the completeness threshold.
     pub full: Vec<HistoricalDataFullKeys>,
+    /// Buckets below the threshold (the newest bucket is the usual reason).
     pub incomplete: Vec<HistoricalDataFullKeys>,
 }
 
@@ -823,8 +1496,10 @@ impl HistoricalDataOps for HistoricalDataCRUD<'_> {
         vwap_bar_value: VwapBarValue,
         #[cfg(feature = "backtest")] now: DateTime<Utc>,
     ) -> Result<Option<f64>, String> {
+        /// Row shape of the VWAP aggregate.
         #[derive(FromRow)]
         struct Vwap {
+            /// `SUM(value * volume) / NULLIF(SUM(volume), 0)`.
             vwap: f64,
         }
 

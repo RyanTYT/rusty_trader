@@ -22,16 +22,29 @@ use crate::backtester::execution::fill_model::CommissionModel;
 use crate::helpers::contract::build_contract_from_stock;
 use crate::strategy::StrategySpec;
 
-/// The backtest execution mode.
+/// The backtest execution lane.
+///
+/// The two lanes run the same strategies but differ in where state lives, so
+/// their results are not directly comparable (see
+/// [`crate::backtester`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BacktestMode {
-    /// DB-backed (realistic, ~5-10 DB ops/bar).
+    /// DB-backed: real transactions, positions and open orders are written
+    /// and read back (`HistoricalReplay`). Realistic, at roughly 5–10 DB
+    /// operations per bar.
     Db,
-    /// Fast in-memory (mocked CRUDs + in-memory reconcile, ~0 DB ops/bar).
+    /// Fast in-memory: mocked CRUDs plus in-memory reconciliation
+    /// (`InMemoryReplay`). Roughly zero DB operations per bar; used for
+    /// sweeps and the multi-account rollup.
     InMemory,
 }
 
 impl BacktestMode {
+    /// Parses a mode name, case-insensitively: `db`, `in_memory`, or
+    /// `inmemory`.
+    ///
+    /// # Errors
+    /// Returns an error naming the accepted values for anything else.
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "db" => Ok(Self::Db),
@@ -46,12 +59,18 @@ impl BacktestMode {
 /// The lookback window — either a time range or a fixed bar count.
 #[derive(Debug, Clone)]
 pub enum BacktestPeriod {
-    /// Replay bars with `start <= time <= end`.
+    /// Replay bars with `start <= time <= end` (both bounds inclusive).
     TimeRange {
+        /// First instant to replay (inclusive).
         start: DateTime<Utc>,
+        /// Last instant to replay (inclusive).
         end: DateTime<Utc>,
     },
-    /// Replay the last `n` bars (most recent first in the DB, reversed to ASC).
+    /// Replay the last `n` bars: the database returns the newest `n` rows
+    /// (descending) and the loader reverses them into ascending time order.
+    ///
+    /// Db-mode multi runs with warm-up reject this variant, because warm-up
+    /// needs a concrete time boundary.
     NumBars(usize),
 }
 

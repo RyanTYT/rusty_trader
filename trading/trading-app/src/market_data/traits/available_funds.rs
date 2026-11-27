@@ -1,3 +1,16 @@
+//! Disabled account-summary listener: tracks IBKR `AvailableFunds`.
+//!
+//! **This module is not compiled** — `src/market_data/traits/mod.rs` has its
+//! `pub mod available_funds;` line commented out. It is kept as a reference for
+//! the account-summary pattern and must be re-enabled deliberately before use.
+//!
+//! When enabled, [`AccountTracker::begin_receiving_available_funds`] starts an
+//! OS thread that subscribes to `account_summary("All", [AVAILABLE_FUNDS,
+//! "$LEDGER:USD"])`, filters rows for one account and the `AvailableFunds` tag,
+//! converts non-USD values through the USD/SGD IDEALPRO rate, and forwards each
+//! value over a channel to a tokio task that stores it. The
+//! `available_funds_channel_killer` handle cancels the listener when dropped.
+
 use crate::market_data::consolidator::Consolidator;
 use ibapi::prelude::{AccountSummaryResult, AccountSummaryTags, Contract};
 use std::{
@@ -6,13 +19,23 @@ use std::{
 };
 use tokio::sync::mpsc::channel;
 
+/// Reads IBKR `AvailableFunds` for one account on a background thread.
+///
+/// Kept for reference; currently unused because the module is disabled.
 pub trait AccountTracker {
+    /// Starts (or restarts) the listener for `account_raw`.
+    ///
+    /// Replaces any previous killer handle, so only the newest listener stays
+    /// alive. The `weak_consolidator` is used for the USD/SGD conversion price.
     fn begin_receiving_available_funds(
         &self,
         account_raw: &str,
         weak_consolidator: Weak<Consolidator>,
     );
+    /// Drops the alive-checker, which makes the listener cancel its
+    /// subscription and exit on its next idle timeout.
     fn close_available_funds_channel(&self) -> Result<(), String>;
+    /// Last received value, or `Err` if no value has arrived yet.
     fn get_current_available_funds(&self) -> Result<f64, String>;
 }
 

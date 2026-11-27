@@ -39,6 +39,24 @@ pub trait BacktestMethod {
 /// Load the chronological bar stream for the configured contract + period.
 /// The ONLY DB query in the in-memory method (one-time, not per-bar). Shared
 /// by both `HistoricalReplay` + `InMemoryReplay`.
+///
+/// One `market_data.historical_data` query per subscribed contract, run
+/// concurrently and returned in `config.subscribed_contracts` order:
+///
+/// - [`BacktestPeriod::TimeRange`] loads the inclusive window
+///   `start ..= end`, then prepends up to `warmup_bars` bars from just before
+///   `start` (DESC query, reversed to ASC) so warm-up does not consume the
+///   replay window.
+/// - [`BacktestPeriod::NumBars`] loads the newest `n` bars (DESC) and reverses
+///   them to ascending order.
+///
+/// Options are flattened to their underlying local symbol (see
+/// [`get_local_symbol`]), so an option backtest replays the stock bars.
+///
+/// # Errors
+///
+/// Returns `Err` with the failing query and period kind when any contract's
+/// read fails; a partial result is not returned.
 pub async fn load_bars(
     config: &crate::backtester::setup::config::BacktestConfig,
     pool: &sqlx::PgPool,
@@ -159,6 +177,19 @@ pub async fn load_bars(
     Ok(data)
 }
 
+/// Transpose per-contract bar vectors into one row per unique timestamp.
+///
+/// The output has one row per timestamp in the union of all contracts'
+/// `time` values (ascending) and one column per contract, in input order.
+/// Missing bars are `None`, so the replay loop can advance time even when a
+/// contract has no bar at that instant.
+///
+/// # Known limitations
+///
+/// - If the first contract has no bars, the whole result is empty even when
+///   later contracts do have data.
+/// - A contract with an empty vector panics (integer underflow at
+///   `len() - 1`) when the loop reaches it.
 #[must_use]
 pub fn transpose(
     matrix: Vec<Vec<HistoricalDataFullKeys>>,

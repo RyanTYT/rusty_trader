@@ -21,8 +21,13 @@ use ibapi::{
     orders::{ExecutionFilter, Executions, Orders},
 };
 
+/// How long an idle subscription waits before it is treated as finished.
 const SYNC_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Turns a subscription into an owning, lazy iterator.
+///
+/// Yields `Ok` items until the subscription idles for
+/// [`SYNC_IDLE_TIMEOUT`] or ends; a terminal error is yielded once as `Err`.
 macro_rules! timeout_iter {
     ($subscription:expr) => {{
         let subscription = $subscription;
@@ -42,19 +47,48 @@ macro_rules! timeout_iter {
     }};
 }
 
+/// Streams the broker state the syncer reconciles against.
+///
+/// Every method opens a subscription and returns an iterator that owns it.
+/// Items arrive lazily; the iterator ends after ten seconds without an item,
+/// and a stream error is yielded as the final `Err`. Dropping the iterator
+/// cancels the subscription, so callers should not collect unless they need
+/// the whole stream.
+///
+/// # Panics
+///
+/// The `Client` implementation panics when the subscription cannot be created
+/// (for example, an unknown execution filter); stream errors afterwards are
+/// reported as `Err` values.
 pub trait PositionsTracker {
+    /// Streams executions matching `filter`.
+    ///
+    /// Yields [`Executions`] values: fills, commission reports and notices,
+    /// interleaved in broker order.
     fn get_executions(
         &self,
         filter: ExecutionFilter,
     ) -> impl Iterator<Item = Result<Executions, Error>>;
 
+    /// Streams the resting open-order book.
+    ///
+    /// `OrderData` and `OrderStatus` arrive as separate items keyed by
+    /// `perm_id`; the caller is responsible for pairing them.
     fn get_all_open_orders(&self) -> impl Iterator<Item = Result<Orders, Error>>;
 
+    /// Streams account values for `account_id`.
+    ///
+    /// Ends with an `End` marker; cash balances arrive as `AccountValue` rows
+    /// whose `key` is `"CashBalance"`.
     fn get_account_updates(
         &self,
         account_id: &AccountId,
     ) -> impl Iterator<Item = Result<AccountUpdate, Error>>;
 
+    /// Streams positions, optionally filtered by account and model.
+    ///
+    /// `None` means "no filter". Each position is followed by an eventual
+    /// `PositionEnd` marker for its batch.
     fn get_positions_multi(
         &self,
         account_id: Option<&AccountId>,
@@ -62,6 +96,7 @@ pub trait PositionsTracker {
     ) -> impl Iterator<Item = Result<PositionUpdateMulti, Error>>;
 }
 
+/// Forwards through an `Arc`, so shared fakes and clients behave the same.
 impl<T> PositionsTracker for Arc<T>
 where
     T: PositionsTracker,
@@ -93,6 +128,7 @@ where
     }
 }
 
+/// Live implementation over the IB subscription API.
 impl PositionsTracker for Client {
     fn get_executions(
         &self,

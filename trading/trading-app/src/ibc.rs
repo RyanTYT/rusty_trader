@@ -1,3 +1,28 @@
+//! IB Gateway lifecycle via IBC (IBController), inside the Linux container.
+//!
+//! One gateway is started per supervised run. Startup spawns
+//! `/IBCLinux-3.21.2/scripts/ibcstart.sh` in paper mode with the container's
+//! hard-coded paths, watches its stdout/stderr for `"Login has completed"`
+//! (success) or `"IBC returned exit status"` (failure) within `120 s`, then
+//! proves the API port answers a real handshake. Shutdown sends `STOP` /
+//! `EXIT` / `quit` to the IBC command server, waits `20 s`, force-kills the
+//! process group if needed, and only reports success once both ports have been
+//! released.
+//!
+//! Invariants:
+//!
+//! - ownership is never leaked through normal control flow —
+//!   [`with_gateway`](crate::ibc::with_gateway) /
+//!   [`with_gateway_retry`](crate::ibc::with_gateway_retry) are the only
+//!   supported entry points and always shut down;
+//! - [`IBGateway`](crate::ibc::IBGateway)'s `Drop` is a panic/cancellation
+//!   safety net only: it issues a non-blocking `SIGKILL` and logs loudly,
+//!   because a sync `Drop` cannot run the graceful handshake;
+//! - retries wrap **start only**; by the time the closure runs exactly one
+//!   gateway is live;
+//! - a shutdown failure is returned as `Err` even when the work itself
+//!   succeeded, because a stuck port breaks the next start.
+
 use std::future::Future;
 
 use tokio::{
@@ -8,13 +33,20 @@ use tokio::{
     time::{Duration, Instant, timeout},
 };
 
+/// How long IBC may take to print a readiness (or failure) line.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a graceful `STOP`/`EXIT`/`quit` may take before a forced kill.
 const GRACEFUL_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
+/// Poll cadence while waiting for ports to reach the expected state.
 const PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Total budget for one port-state probe.
 const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// IB Gateway API port (host side).
 const GATEWAY_PORT: &str = "localhost:4002";
+/// IBC command server, connect form.
 const COMMAND_SERVER_ADDR: &str = "127.0.0.1:7462";
+/// IBC command server, nominal host form (used for the release check).
 const COMMAND_SERVER_PORT: &str = "localhost:7462";
 
 /// Owns a running IB Gateway child process.
@@ -228,6 +260,9 @@ impl IBGateway {
         Ok(())
     }
 
+    /// Best-effort graceful stop: connect to IBC's command server and send
+    /// `STOP`, `EXIT`, `quit` in order, flushing after each. Errors only on
+    /// connect/write; a failed flush is logged.
     async fn send_stop_commands() -> Result<(), String> {
         let mut stream = tokio::net::TcpStream::connect(COMMAND_SERVER_ADDR)
             .await
@@ -431,6 +466,16 @@ async fn wait_for_port(
     wait_for_ports(can_be_connected, &[port], timeout_dur).await
 }
 
+/// Wait until every port reaches the requested state.
+///
+/// "Connected" means the full TWS handshake probe succeeded, not merely that
+/// the TCP port accepts a connection: Gateway can listen while still
+/// un-negotiated, and treating that as ready caused flapping starts. Ports
+/// that already settled are skipped on later polls.
+///
+/// # Errors
+///
+/// Times out after `timeout_dur`; the message lists the ports still unsettled.
 async fn wait_for_ports(
     can_be_connected: bool,
     ports: &[&str],

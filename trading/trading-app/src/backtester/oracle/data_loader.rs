@@ -1,13 +1,17 @@
-//! Data loader — populates `market_data.*` for the backtest period.
+//! Data loader — ensures `market_data.historical_data` covers the backtest
+//! period before the replay starts.
 //!
-//! Strategy:
-//! 1. Check existing DB data using `HistoricalDataCRUD` to determine missing ranges per contract.
-//! 2. For missing ranges:
-//!    a. Try IBKR: boot gateway once using `with_gateway_retry` -> `Client::connect` -> iterate
-//!       through contracts and fetch missing intervals via `client.historical_data`.
-//!       For Forex: fetch BOTH Bid + Ask.
-//!    b. Fall back to Alpaca REST for any contract ranges IBKR yields no data for.
-//! 3. Refresh `daily_ohlcv` continuous aggregate.
+//! Only the `TimeRange` lane calls this, and only when at least one contract
+//! has no bars (`run_backtest`'s offline-mode check). The loader:
+//! 1. reads the existing bars per contract and derives the missing leading and
+//!    trailing ranges — interior holes are not detected;
+//! 2. boots the IBKR gateway once and pages 30-day windows backwards over
+//!    regular trading hours (FX fetches bid and ask; everything else trades);
+//! 3. falls back to Alpaca REST for stock ranges IBKR returned nothing for
+//!    (requires `ALPACA_API_KEY` / `ALPACA_API_SECRET`);
+//! 4. refreshes the continuous aggregate — currently a no-op because the
+//!    `daily_ohlcv` aggregate was removed — and warns about contracts that
+//!    still have no bars.
 
 use crate::database::tables::DbTables;
 use chrono::{DateTime, TimeZone, Utc};
@@ -32,11 +36,25 @@ use crate::ibc::with_gateway_retry;
 /// Defines a range of missing data that needs to be fetched.
 #[derive(Debug, Clone, Copy)]
 struct MissingRange {
+    /// First instant of the gap (inclusive).
     start: DateTime<Utc>,
+    /// Last instant of the gap (inclusive).
     end: DateTime<Utc>,
 }
 
-/// Entry point. Dynamically checks existing database bars and fetches only missing data.
+/// Entry point: checks existing database bars and fetches only the data that
+/// is missing at the edges of `[start, end]`.
+///
+/// Existing bars are counted with `read_last_n`; a contract with no bars gets
+/// the whole range. IBKR is attempted first for every gap in one gateway
+/// session, then Alpaca fills stock gaps that IBKR returned nothing for.
+/// Finally the loader re-checks each contract and warns when it still has no
+/// bars — it never fails the run for missing data.
+///
+/// # Errors
+/// Returns a string when the initial database read fails or when an Alpaca
+/// fallback fails (missing credentials, HTTP error, malformed payload).
+/// IBKR failures are logged and degraded to an empty result.
 pub async fn load_market_data(
     contracts: &[Contract],
     start: DateTime<Utc>,
@@ -131,6 +149,14 @@ pub async fn load_market_data(
 }
 
 /// Queries the database to identify gap ranges in `[start, end]`.
+///
+/// Only the leading gap (before the earliest stored bar) and the trailing gap
+/// (after the latest stored bar) are returned; an interior hole between two
+/// stored bars is invisible to this check. With no stored bars the whole range
+/// is returned.
+///
+/// # Errors
+/// Returns a string when the underlying `read_last_n` query fails.
 async fn determine_missing_ranges(
     crud: &mut HistoricalDataCRUD<'_>,
     pk_wo_time: &HistoricalDataPrimaryKeysWoTime,
@@ -179,7 +205,13 @@ async fn determine_missing_ranges(
 
 // ─── IBKR ──────────────────────────────────────────────────────────────────
 
-/// Boots the IBKR Gateway ONCE and iterates through all missing ranges for all contracts.
+/// Boots the IBKR Gateway once and iterates through all missing ranges for
+/// all contracts.
+///
+/// Returns `(contract index, range start) -> chunks fetched`; a range that
+/// errored records `0`, and a failed gateway session returns an empty map (the
+/// caller then falls back to Alpaca where applicable). The two startup
+/// attempts are made by `with_gateway_retry`.
 async fn try_ibkr(
     contracts: &[Contract],
     missing_map: &HashMap<usize, Vec<MissingRange>>,
@@ -247,7 +279,14 @@ async fn try_ibkr(
     }
 }
 
-/// Paginate `client.historical_data` backwards from `end` to `start`.
+/// Fetch one gap for one contract: FX requests bid *and* ask, everything else
+/// requests trades. Bar size is 1 minute for FX and 5 minutes otherwise.
+///
+/// Returns the number of 30-day chunks fetched (summed over both directions
+/// for FX).
+///
+/// # Errors
+/// Propagates the first pagination failure.
 async fn paginate_historical_data(
     client: &Client,
     contract: &Contract,
@@ -288,6 +327,19 @@ async fn paginate_historical_data(
     Ok(total)
 }
 
+/// Pages `client.historical_data` backwards in ~30-day windows from `end`
+/// towards `start` for a single `what_to_show`.
+///
+/// The still-forming current bar (the bar whose timestamp equals the
+/// wall-clock-aligned interval) is skipped. Each bar is upserted with
+/// `create_or_update`; an upsert failure is logged and does not abort the
+/// page. A one-second sleep separates windows.
+///
+/// Returns the number of chunks fetched.
+///
+/// # Errors
+/// Returns a string when the request itself fails (IBKR error or cursor
+/// conversion).
 async fn paginate_single_direction(
     client: &Client,
     contract: &Contract,
@@ -382,6 +434,7 @@ async fn paginate_single_direction(
     Ok(total)
 }
 
+/// Human-readable name for the IBKR price direction, used only in logs.
 fn what_to_show_str(w: &WhatToShow) -> &'static str {
     match w {
         WhatToShow::Bid => "Bid",
@@ -393,6 +446,16 @@ fn what_to_show_str(w: &WhatToShow) -> &'static str {
 
 // ─── Alpaca fallback ───────────────────────────────────────────────────────
 
+/// Alpaca REST fallback for a single stock range (5-minute raw bars).
+///
+/// Reads `ALPACA_API_KEY` and `ALPACA_API_SECRET` from the environment, follows
+/// `next_page_token`, skips timestamps already present, and upserts the rest.
+/// Only stock contracts are meaningful here: every bar is written as a
+/// `HistoricalDataFullKeys::Stock` row.
+///
+/// # Errors
+/// Returns a string when the credentials are missing, the HTTP request fails,
+/// the payload cannot be parsed, or the response omits `bars`.
 async fn try_alpaca_range(
     contract: &Contract,
     start: DateTime<Utc>,
@@ -465,6 +528,8 @@ async fn try_alpaca_range(
 
             let pk = HistoricalDataPrimaryKeys::from_contract(contract, time);
 
+            // Skip only rows that actually exist: `read` returns `Ok(None)` for
+            // a missing key, so `is_ok()` would have skipped every bar.
             if matches!(crud.read(&pk).await, Ok(Some(_))) {
                 continue;
             }
@@ -505,6 +570,13 @@ async fn try_alpaca_range(
 
 // ─── Continuous aggregate refresh ─────────────────────────────────────────
 
+/// Refreshes the continuous aggregate covering the requested period.
+///
+/// The baseline schema no longer defines `market_data.daily_ohlcv` (the
+/// aggregate was removed with the deprecated daily table), so there is nothing
+/// to refresh. The function is kept as the stable hook for the TimeRange entry
+/// points and is deliberately a no-op: issuing the old `CALL` would fail and
+/// log an error on every run.
 pub async fn refresh_continuous_aggregate(
     _pool: &PgPool,
     _start: chrono::DateTime<chrono::Utc>,

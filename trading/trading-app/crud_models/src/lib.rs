@@ -43,7 +43,7 @@ pub fn extract_primary_keys(input: TokenStream) -> TokenStream {
 
     quote! {
     #[derive(
-        Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable
+        Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, DeriveInsertable
     )]
             pub struct #new_name {
                #(#primary_key_fields),*
@@ -96,7 +96,7 @@ pub fn extract_primary_keys_wo_time(input: TokenStream) -> TokenStream {
 
     quote! {
     #[derive(
-        Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable
+        Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, DeriveInsertable
     )]
             pub struct #new_name {
                #(#primary_key_fields),*
@@ -155,7 +155,7 @@ pub fn extract_full_keys(input: TokenStream) -> TokenStream {
 
     quote! {
     #[derive(
-        Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable
+        Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, DeriveInsertable
     )]
             pub struct #new_name {
                 #(#full_key_fields),*
@@ -204,7 +204,7 @@ pub fn extract_update_keys(input: TokenStream) -> TokenStream {
 
     quote! {
     #[derive(
-        Debug, Clone, Serialize, Deserialize, FromRow, DeriveInsertable
+        Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, DeriveInsertable
     )]
             pub struct #new_name {
                 #(#update_key_fields),*
