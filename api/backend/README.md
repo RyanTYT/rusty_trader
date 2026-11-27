@@ -1,7 +1,9 @@
 # Trading Bot Backend (Rust)
 
-This backend exposes a set of REST API routes to manage and monitor a trading system.  
-It is built in **Rust** with a focus on clarity, safety, and extensibility.
+This backend exposes a set of REST API routes to manage and monitor a trading system.
+It is built in **Rust** with a focus on clarity, safety, and extensibility, and listens on
+port **3000** (proxying to `trading-bot` on 8000 and `llm_service` on 8001). Requests must
+carry `Authorization: Bearer $BACKEND_BEARER_TOKEN`.
 
 ---
 
@@ -20,6 +22,16 @@ It is built in **Rust** with a focus on clarity, safety, and extensibility.
 
 ---
 
+### 💹 Prices, Contracts & Positions
+- **GET** `/ticker/price` → Latest price for a ticker.
+- **GET** `/contracts/stock` → Resolve stock contracts (proxied to `trading-bot`).
+- **GET** `/exchange_rate` → FX rate between two currencies.
+- **GET** `/strategy/ticker` → Strategy/ticker detail for the UI.
+- **GET** `/current_positions` → Grouped current positions across stocks and options.
+- **POST** `/positions/update` → Apply a manual position update.
+
+---
+
 ### ⚙️ Strategy & Account Control
 - **POST** `/strategy/pause` → Pause a strategy.
 - **POST** `/strategy/resume` → Resume a strategy.
@@ -33,12 +45,34 @@ It is built in **Rust** with a focus on clarity, safety, and extensibility.
 - **GET** `/strategy/all` → Read all strategies.
 - **PUT** `/strategy` → Update a strategy.
 - **DELETE** `/strategy` → Delete a strategy.
+- **GET** `/strategy/capital` → Per-strategy capital allocation.
+
+---
+
+### 🧠 News & Research (proxied to `llm_service`)
+- **POST** `/news_ideas/update_macro` → Refresh the macro thesis.
+- **POST** `/news_ideas/update_industries` → Refresh industry notes.
+- **POST** `/news_ideas/ticker_selector` → Pick candidate tickers.
+- **POST** `/news_ideas/idea_generator` → Generate trade ideas.
+- **POST** `/news_ideas/deep_dive` → Deep-dive a single name.
+- **POST** `/news_ideas/positions_proposer` → Build a portfolio proposal.
+- **POST** `/news_ideas/counter_proposer` → Critique the proposal.
+- **GET** `/news_ideas/settings` → Read prompt/provider settings.
+- **PATCH** `/news_ideas/settings/options_mode` → Toggle the options research mode.
+- **GET** `/proposal/latest` → Latest portfolio proposal.
+- **GET** `/counter_proposal/latest` → Latest counter-proposal.
 
 ---
 
 ### 📝 Logs
 - **GET** `/logs` → List available log files.
 - **GET** `/logs/:filename` → Read a specific log file.
+
+---
+
+### 📈 Observability
+- **GET** `/prometheus/query` → Instant PromQL query (proxied).
+- **GET** `/prometheus/query_range` → Range PromQL query (proxied).
 
 ---
 
@@ -132,11 +166,40 @@ It is built in **Rust** with a focus on clarity, safety, and extensibility.
 
 ---
 
+### 📜 Historical Volatility Data (CRUD)
+- **POST** `/historical_volatility_data` → Create entry.
+- **GET** `/historical_volatility_data` → Read entry.
+- **GET** `/historical_volatility_data/all` → Read all entries.
+- **PUT** `/historical_volatility_data` → Update entry.
+- **DELETE** `/historical_volatility_data` → Delete entry.
+
+---
+
 ---
 
 ## 🚀 Getting Started
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/RTYT/rusty_trader.git
+   git clone https://github.com/RyanTYT/rusty_trader.git
    cd rusty_trader
+   ```
+
+2. Copy the environment file and set the database credentials plus `BACKEND_BEARER_TOKEN`:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Run the stack (backend is part of the platform group):
+   ```bash
+   scripts/up.sh platform
+   ```
+
+4. The API is then on `http://localhost:3000`; every request needs
+   `Authorization: Bearer $BACKEND_BEARER_TOKEN`. `GET /check-health` is the liveness probe.
+
+For a local build instead of Docker:
+```bash
+cd api/backend
+cargo run
+```

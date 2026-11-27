@@ -2,7 +2,7 @@
 
 The Rust trading bot at the core of [rusty_trader](../../README.md). It connects to IB Gateway via a sync `ibapi` fork, ingests real-time 5-second bars, runs strategies over consolidated bars, reconciles state against the broker, and self-heals through IBKR's nightly restarts and connection drops.
 
-> **Navigating the monorepo:** For the backend REST API, see [`api/backend/README.md`](../api/backend/README.md). For the LLM research pipeline, see [`ai/llm_service/README.md`](../ai/llm_service/README.md). For the database schema, see [`migrations/README.md`](migrations/README.md).
+> **Navigating the monorepo:** For the backend REST API, see [`api/backend/README.md`](../../api/backend/README.md). For the LLM research pipeline, see [`ai/llm_service/README.md`](../../ai/llm_service/README.md). For the database schema, see [`migrations/README.md`](migrations/README.md).
 
 ---
 
@@ -144,12 +144,41 @@ flowchart TB
 
 ## Database & CRUD methods
 
-A three-tier design that gets ~98 method bodies (7 operations × ~14 tables) from one template. Design leverages `Option`-ness to deduce the schema metadata.
+Every query runs on an explicit executor. Two session types implement `DbConn`:
+
+- **`DbDirect`** — `DbDirect::connect(&pool)` for statement-at-a-time work (a connection is checked out per statement). `DbDirect::hold(&pool).await` keeps one `PoolConnection` for a longer sequence. No transaction, no isolation.
+- **`DbTxn`** — `DbTxn::begin(&pool).await?` owns a `sqlx::Transaction`. Everything is atomic until `commit()`; dropping it rolls back.
+
+`DbTables` (blanket-implemented for every `DbConn`) is the table registry: `db.open_orders(&asset)`, `db.stock_transactions()`, `db.historical_data(&asset)`, and so on. Each accessor returns a CRUD handle borrowing that session's executor, so a handle cannot outlive its session.
 
 ```rust
-// database/models.rs:280 — Option-ness determines key-set membership
+use trading_app::database::{db::DbDirect, tables::DbTables};
+
+let mut db = DbDirect::connect(&pool);
+let mut orders = db.open_orders(&asset_type);
+let working = orders.read_all().await?;
+```
+
+Atomic multi-table writes are the core pattern of the execution handlers:
+
+```rust
+use trading_app::database::db::DbTxn;
+
+let mut db = DbTxn::begin(&pool).await?;
+db.open_orders(&asset).delete(&pk).await?;
+db.stock_transactions().create(&transaction).await?;
+db.current_positions(&asset).update_positions_additive(cp_pk, cp_uk).await?;
+db.commit().await?;
+```
+
+Reads inside the transaction see its own writes; any failed statement drops `db` and rolls the group back.
+
+Key sets still come from `Option`-ness. The four derives generate the insert shape, the identity, and the nullable SET targets:
+
+```rust
+// database/models.rs:422 — Option-ness determines key-set membership
 #[derive(
-    Debug, Clone, Serialize, Deserialize,
+    Debug, PartialEq, Clone, Serialize, Deserialize,
     ExtractFullKeys,      // all fields, Option<T> unwrapped → insert shape
     ExtractPrimaryKeys,   // non-Option fields only → WHERE-clause identity
     ExtractUpdateKeys,    // only Option<T> fields, kept as Option → nullable SET targets
@@ -164,41 +193,27 @@ pub struct OpenStockOrders {
     pub currency: Option<String>,
     pub time: Option<DateTime<Utc>>,
     pub quantity: Option<f64>,
+    pub parent_order_id: Option<i32>,
     pub executions: Option<Vec<String>>,
     pub filled: Option<f64>,
 }
 ```
 
-`DeriveInsertable` generates column-name lists and `bind_*` methods. Its `opt_column_names()` is runtime-dynamic, so `update()` emits SQL with only the columns actually set — partial updates for free.
+`DeriveInsertable` generates column lists and `bind_*` helpers; `opt_column_names()` is runtime-dynamic, so `update()` emits SQL containing only the columns actually set.
 
-A generic `CRUD<FK, PK, UK>` blanket impl provides all seven CRUD operations for any key-set triple implementing `Insertable`. Two delegation macros layer further: one for single-table wrappers, one for enum dispatch.
+`CRUD<'a, FK, PK, UK>` holds the table name plus `Exec<'a>` and provides the seven operations. Two delegation macros layer on top: `implement_all_crud_methods!` for concrete table wrappers, `implement_crud_trait_for_interface!` for the stock/option interface enums. A wrapper is just:
 
-Interface enums (`OpenOrdersCRUD`, `CurrentPositionsCRUD`, `TransactionsCRUD`, `TargetPositionsCRUD`, `HistoricalDataCRUD`) dispatch by `AssetType` via a `from(asset_type, pool)` constructor that collapses 7 asset-type variants into 2 storage shapes (futures/CFD/forex/cash share the stock schema). Variant mismatch returns `Err` — a runtime guard for an invariant the type system can't express.
-
-Bulk insert uses a separate high-throughput tier: temp table → binary `COPY IN` → dedup (reverse iteration + `HashSet` = last-write-wins) → `INSERT ... ON CONFLICT DO UPDATE`. A background batching channel flushes on size/time/close triggers, with RAII flush on `Drop`.
-
-For the full table schema (columns, types, triggers), see [`migrations/README.md`](migrations/README.md).
-
-```mermaid
-flowchart TB
-    MODEL["Model struct<br/>OpenStockOrders + 4 derives"]
-    MODEL --> FK["FullKeys (insert shape)"]
-    MODEL --> PK["PrimaryKeys (WHERE clause)"]
-    MODEL --> UK["UpdateKeys (nullable SET)"]
-    MODEL --> INS["DeriveInsertable<br/>bind_* + opt_column_names()"]
-    FK --> CRUD["CRUD&lt;FK, PK, UK&gt; — 7 operations"]
-    PK --> CRUD
-    UK --> CRUD
-    INS -.-> CRUD
-    CRUD --> WRAPPER["per-table CRUD leaf<br/>+ implement_all_crud_methods!"]
-    WRAPPER --> ENUM["Interface enum<br/>from(asset_type, pool)<br/>7 variants → 2 schemas"]
-
-    style MODEL stroke:#dea584,stroke-width:2px
-    style CRUD stroke:#dea584,stroke-width:2px
-    style ENUM stroke:#dea584,stroke-width:2px
+```rust
+pub struct OpenStockOrdersCRUD<'a> {
+    crud: CRUD<'a, OpenStockOrdersFullKeys, OpenStockOrdersPrimaryKeys, OpenStockOrdersUpdateKeys>,
+}
 ```
 
----
+Interface enums (`OpenOrdersCRUD`, `CurrentPositionsCRUD`, `TransactionsCRUD`, `TargetPositionsCRUD`, `HistoricalDataCRUD`) dispatch on `AssetType` via `from_exec(asset_type, exec)`, collapsing seven asset-type variants into two storage shapes (futures/CFD/forex/cash share the stock schema). A key-variant mismatch returns `DbError::KeyVariantMismatch` rather than writing to the wrong table.
+
+Bulk insert is a separate high-throughput tier: a background task batches rows, dedupes by primary key (last write wins), binary-`COPY`s into a staging table, then merges with `INSERT ... ON CONFLICT DO UPDATE`. `BatchDbCreator::flush().await` drains the channel, waits for the final merge, and returns; `Drop` only signals shutdown, so call `flush()` when the data must be visible.
+
+For the full table schema (columns, types, triggers), see [`migrations/README.md`](migrations/README.md).
 
 ## Execution
 
@@ -207,26 +222,29 @@ flowchart TB
 The key pattern: **optimistic order rows**. `place_order` writes a DB row keyed by `perm_id = -1` (a sentinel) *before* IBKR confirms, then returns the `order_id` immediately:
 
 ```rust
-// execution/order_engine.rs:111 — place_order is a static fn, returns i32
-pub fn place_order(
+// execution/order_engine.rs:234 — generic over the order router; returns before IBKR confirms
+pub fn place_order<T: OrderRouter>(
     handle: tokio::runtime::Handle,
     pool: PgPool,
-    weak_client: &Weak<Client>,
+    weak_client: &Weak<T>,
     order_ibkr: OrderIBKR,
 ) -> i32 {
-    let client = weak_client.upgrade().unwrap();
-    let order_id = client.next_order_id();
-    std::thread::spawn(move || {
-        client.submit_order(order_id, &order_ibkr.contract, &order_ibkr.order);
-        // ...
-        let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);  // sentinel
-        let uk = OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
-        handle.spawn(async move {
-            let open_orders_crud = OpenOrdersCRUD::from(&asset_type, pool);
-            open_orders_crud.create_or_update(&pk, &uk).await;  // optimistic DB row
-        });
+    let client = weak_client.upgrade().expect("Client died when trying to place order");
+    let order_id = client.place_local_order(&order_ibkr);
+    if order_id == -1 {
+        return -1;
+    }
+
+    let asset_type = AssetType::from_str(&order_ibkr.contract.security_type);
+    let pk = OpenOrdersPrimaryKeys::new(&asset_type, -1, order_id);   // sentinel
+    let uk = OpenOrdersUpdateKeys::new(&asset_type, &order_ibkr.contract, &order_ibkr.order);
+    handle.spawn(async move {                                        // optimistic row
+        let mut db = DbDirect::connect(&pool);
+        if let Err(e) = db.open_orders(&asset_type).create_or_update(&pk, &uk).await {
+            tracing::error!("optimistic open order failed: {e:?}");
+        }
     });
-    order_id  // returned before IBKR confirms
+    order_id
 }
 ```
 
@@ -469,21 +487,19 @@ stateDiagram-v2
 
 ## Testing
 
-Three test binaries, each with a different dependency profile:
+Tests live under `tests/`, mirroring `src/`: one binary per domain, shared helpers in `tests/common/`. There is no live-IBKR requirement — brokers are faked at the trait boundary.
 
-| Binary | Tests | Needs | How to run |
-|---|---|---|---|
-| `unit_tests` | 278 passing | Nothing (offline) | `SQLX_OFFLINE=true cargo test --test unit_tests` |
-| `integration_tests` | 168 passing (18 per-table CRUD + 3 advanced DB test files) | PostgreSQL | `DATABASE_URL=… cargo test --test integration_tests` |
-| `smoke_tests` | 91 passing (16 `#[ignore]`d live tests | IB Gateway + PostgreSQL | `cargo test --test smoke_tests -- --ignored` |
+| Suite | Needs | Command |
+|---|---|---|
+| `--lib` | nothing (offline) | `SQLX_OFFLINE=true cargo test --lib` |
+| `database` | PostgreSQL test DB | `TEST_DATABASE_URL=… cargo test --test database -- --include-ignored` |
+| `execution` | PostgreSQL; fake IBKR | `TEST_DATABASE_URL=… cargo test --test execution -- --include-ignored --skip known_bug` |
+| `market_data`, `server`, `init_app`, `schedule`, `helpers` | mostly offline | `cargo test --test <suite>` |
+| `backtester` | `backtest` feature | `cargo test --test backtester --features backtest` |
 
-The offline unit suite (275 tests, no DB/IBKR) is the bulk of coverage. It tests the pure functions that the sync architecture keeps pure: FX attachment math, bar aggregation, rolling stats, `HashContract` hash/eq, FX datetime predicates. The `test_internals` seam (above) is what makes this possible — `pub(crate)` functions become reachable from `tests/` without touching prod visibility.
-
-Integration tests cover per-table CRUD (variant dispatch, mismatch `Err`), advanced DB operations (`update_positions_additive` weighted-avg / cross-direction / zero, `read_last_n`, `read_last_vwap`, `get_target_pos_diff_by_pk`, bulk `COPY IN` + dedup + merge), and bulk insert.
-
-Smoke tests run against a live IB Gateway + PostgreSQL: 11 smoke tests + 5 comprehensive flow tests (find trading contracts, full place/reverse/zero flow, edge cases for invalid contract / market closed / cancel open order).
-
----
+- `database` mirrors `src/database`: a shared `crud_suite!` runs every table under both `DbDirect` and `DbTxn`, plus ops queries, concurrency/atomicity, and batch flush.
+- `execution` combines Rust tests with JSON scenario suites (order-engine outcomes, syncer passes, event handlers, FX funding); `--skip known_bug` omits cases pinned to documented defects.
+- DB suites truncate all test tables at setup and teardown — point `TEST_DATABASE_URL` at a dedicated database.
 
 ## Extending it
 
@@ -499,8 +515,9 @@ That's the entire wiring — the macro generates the enum variant, the `Hash`-by
 
 1. Define the model struct in `database/models.rs` with the four key-set derives (`ExtractFullKeys + ExtractPrimaryKeys + ExtractUpdateKeys + DeriveInsertable`) and `FromRow`.
 2. Create the table in a new migration under [`migrations/`](migrations/README.md).
-3. Add a per-table CRUD leaf in `database/models_crud/` (a thin wrapper around `CRUD<…FullKeys, …PrimaryKeys, …UpdateKeys>` + the `implement_all_crud_methods!` macro + a `new(pool)` with the table name).
-4. If it follows the stock/option duality, add a variant to the relevant interface enum (`OpenOrdersCRUD`, etc.) and its parallel key enums.
+3. Add a per-table CRUD leaf in `database/models_crud/` — a thin wrapper around `CRUD<'a, …FullKeys, …PrimaryKeys, …UpdateKeys>` with `new(exec)` and the `implement_all_crud_methods!` macro.
+4. Add an accessor for it on `DbTables` in `database/tables.rs`.
+5. If it follows the stock/option duality, add a variant to the relevant interface enum (`OpenOrdersCRUD`, etc.) and its parallel key enums.
 
 ### Use the test seam
 

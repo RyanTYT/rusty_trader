@@ -336,13 +336,15 @@ Audit trail for cancelled orders.
 
 ### Staged-commission triggers
 
-Solve the executions-vs-commissions event-ordering race: a commission may arrive before or after its matching transaction. Three triggers cooperate:
+Solve the executions-vs-commissions event-ordering race: a commission may arrive before or after its matching transaction. Three triggers cooperate; the **latest commission wins**.
 
 | Trigger | Event | Table | Function |
 |---|---|---|---|
-| `trg_try_apply_commission_stocks` | BEFORE INSERT OR UPDATE | `trading.staged_commissions` | Tries to apply `NEW.fees` to a matching transaction (stock first, then option) where `fees = 0`. If applied, returns NULL (prevents staging). Otherwise returns NEW (stages the row). |
-| `trg_apply_staged_commission_stocks` | AFTER INSERT | `trading.stock_transactions` | When a new stock transaction arrives, checks for a matching staged commission and applies it, then deletes the staging row. |
+| `trg_try_apply_commission_stocks` | BEFORE INSERT OR UPDATE | `trading.staged_commissions` | Locks the matching transaction row (`SELECT … FOR UPDATE`, stock first then option) and overwrites `fees` with `NEW.fees`. If a transaction row exists, returns NULL (do not stage). Otherwise returns NEW (stage the row). |
+| `trg_apply_staged_commission_stocks` | AFTER INSERT | `trading.stock_transactions` | When a new stock transaction arrives, a data-modifying CTE copies the latest staged fee onto it and deletes only the staging row(s) it applied. |
 | `trg_apply_staged_commission_options` | AFTER INSERT | `trading.option_transactions` | Same as above for option transactions. |
+
+The `FOR UPDATE` lock is what closes the race: a fill committing its transaction and a commission deciding whether to stage serialise on the same row, so the fee is applied exactly once instead of landing on neither or both.
 
 ### `last_updated` triggers
 

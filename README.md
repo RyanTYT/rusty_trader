@@ -1,189 +1,116 @@
 # rusty_trader
 
-A personal live-trading system written in Rust and Python against Interactive Brokers' (IBKR) API. It scrapes financial news, runs an LLM research pipeline that produces portfolio proposals, feeds them to a Rust trading bot that ingests real-time market data, executes strategies over consolidated bars, reconciles state against the broker, and self-heals through IBKR's nightly restarts and connection drops.
+A personal live-trading stack for Interactive Brokers (IBKR). A Rust trading bot ingests real-time bars, runs strategies, places and reconciles orders against the broker, and self-heals through IBKR's nightly restarts; around it sit a Rust REST API, a Python LLM research pipeline, a news scraper, and a Python research/backtest lab.
 
-> **Scope:** This has so far been run against a paper-trading account at personal scale. It is not production financial infrastructure and makes no claims about fitness for live capital.
+> **Scope:** run against a paper-trading account at personal scale. This is not production financial infrastructure and makes no claims about fitness for live capital.
 
-## Services
+## What's in the repo
 
-| Service                                 | Lang   | Port | Description                                                                                       |
-| --------------------------------------- | ------ | ---- | ------------------------------------------------------------------------------------------------- |
-| [`trading/trading-app/`](trading/trading-app/README.md) | Rust   | 8000 | The trading bot: sync `ibapi`, real-time bars, strategy execution, order management, self-healing |
-| [`backend/`](api/backend/README.md)         | Rust   | 3000 | REST API: CRUD for positions/orders/transactions, portfolio, strategy control, notifications      |
-| [`llm_service/`](ai/llm_service/README.md) | Python | 8001 | LLM research pipeline: KB triage (STALE/COMPRESS/KEEP) → 5-stage proposal → counter-proposer      |
-| [`ai/scraper/`](ai/scraper/)                  | Rust   | —    | Playwright article scraper → feeds `llm_service`                                                  |
-| [`api/hotpath-console/`](api/hotpath-console/)  | —      | —    | Debug console sharing network with `trading-bot`                                                  |
-| `infra/ib-gateway/`                                   | —      | 4002 | IB Gateway (TWS) Docker image                                                                     |
+| Path | What it is | Port | Docs |
+| --- | --- | --- | --- |
+| [`trading/trading-app/`](trading/trading-app/) | Rust core: sync `ibapi`, SPMC bar rings, strategies, order engine, reconciliation, self-healing | 8000 | [`README`](trading/trading-app/README.md) · [`migrations`](trading/trading-app/migrations/README.md) |
+| [`api/backend/`](api/backend/) | Rust REST API for portfolio, strategies, positions, orders, transactions, logs | 3000 | [`README`](api/backend/README.md) |
+| [`ai/llm_service/`](ai/llm_service/) | Python FastAPI research pipeline: KB triage → proposal → counter-proposer | 8001 | [`README`](ai/llm_service/README.md) |
+| [`ai/scraper/`](ai/scraper/) | Rust scraper: RSS + Playwright, dedupes articles, feeds `llm_service` | — | [`src`](ai/scraper/src/main.rs) |
+| [`stratlab/`](stratlab/) | Python research and backtesting lab (bars, costs, metrics, engine) | — | [`README`](stratlab/README.md) |
+| [`compose/`](compose/) · [`infra/`](infra/) | Docker stacks and the IB Gateway/IBC image | 4002 | [`README`](compose/README.md) |
+| [`scripts/`](scripts/) | Build, release, deploy, and the IBKR data puller | — | [`data_puller`](scripts/data_puller/README.md) |
 
-The full system — services, shared volumes, and key DB tables:
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph scraper["scraper (Rust)"]
-        PW["Playwright<br/>headless browser"]
-    end
-
-    subgraph llm["llm_service (Python :8001) — research pipeline"]
-        KBA["KB agents<br/>STALE / COMPRESS / KEEP"]
-        PIPE["5-stage pipeline<br/>idea → ticker → deep_dive<br/>→ proposer → counter-proposer"]
-        KBA --> PIPE
-    end
-
-    subgraph backend["backend (Rust :3000)"]
-        API["REST API + Bearer auth<br/>portfolio · strategy · positions<br/>orders · transactions · logs"]
-    end
-
-    subgraph trading["trading-bot (Rust :8000) — core system"]
-        PROD("⚙ producer thread<br/>(1/contract)")
-        RING[("SPMC ring<br/>Bar, 128, 10")]
-        DBC("⚙ DB consumer")
-        subgraph strat["strategy threads"]
-            direction TB
-            STRAT_MANUAL("⚙ Manual strategy thread<br/>on_bar_update")
-            STRAT_NOISE("⚙ Noise strategy thread<br/>on_bar_update")
-            STRAT_MANUAL ~~~ STRAT_NOISE
-        end
-        OE["order engine"]
-        PROD -->|"try_push"| RING
-        RING --> DBC
-        RING --> STRAT_MANUAL
-        RING --> STRAT_NOISE
-        STRAT_MANUAL -->|"BarUpdateOutcome"| OE
-        STRAT_NOISE -->|"BarUpdateOutcome"| OE
-    end
-
-    subgraph tws["tws — IB Gateway :4002"]
-        IBKR["IBKR API"]
-    end
-
-    subgraph db["TimescaleDB :5432"]
-        ST["trading.strategy"]
-        TP["trading.target_positions"]
-        CP["trading.current_positions"]
-        OO["trading.open_orders"]
-        TX["trading.transactions"]
-        HD["market_data.historical_data"]
-    end
-
-    PW -->|"scraped articles"| SA[("scraped_articles")]
-    SA --> KBA
-    PIPE -->|"Pydantic proposals"| API
-    KBA -->|"KB entries"| KBE[("knowledge_base")]
-    KBE --> API
-    API -->|"writes targets<br/>(Manual)"| TP
-    API -.-> ST
-    API -.-> CP
-    API -->|"REST"| STRAT_MANUAL
-    IBKR -->|"5s bars"| PROD
-    OE -->|"submit_order"| IBKR
-    DBC --> HD
-    STRAT_MANUAL -.->|"reads targets"| TP
-    OE -.-> OO
-    OE -.-> TX
-    OE -.-> CP
-
-    style trading stroke:#dea584,stroke-width:2px
-    style strat stroke:#dea584,stroke-dasharray:5 5
-    style llm stroke:#3776ab,stroke-width:2px
-    style scraper stroke:#dea584,stroke-width:2px
-    style backend stroke:#dea584,stroke-width:2px
-    style db stroke:#666,stroke-width:2px
-    style tws stroke:#666,stroke-width:2px
+    SCRAPER["scraper<br/>(Rust)"] --> ARTICLES[("scraped_articles")]
+    ARTICLES --> LLM["llm_service<br/>(Python :8001)"]
+    LLM --> KB[("knowledge_base")]
+    LLM -->|"proposals"| API["backend<br/>(Rust :3000)"]
+    KB --> API
+    API -->|"targets"| TP[("trading.target_*_positions")]
+    API -->|"REST"| BOT["trading-bot<br/>(Rust :8000)"]
+    IBKR["IB Gateway :4002"] <-->|"sync ibapi"| BOT
+    BOT -->|"bars, orders,<br/>positions, fills"| DB[("TimescaleDB :5432")]
+    API --> DB
 ```
 
-## Architecture at a glance
+The defining constraint in `trading-app` is that **`ibapi` is compiled with its `sync` feature**: every IBKR call blocks, so blocking I/O lives on `std::thread`s while DB work runs on tokio, bridged by `Handle`. That split keeps the strategy layer pure. For the reasoning, see [Threading model & sync ibapi](trading/trading-app/README.md#threading-model--sync-ibapi).
 
-The defining design decision in `trading-app` is that **`ibapi` is compiled with its `sync` feature** — every IBKR call blocks, forcing a split-world architecture (blocking I/O on `std::thread`s, async DB on tokio, bridged by `Handle`). The sync architecture keeps the strategy layer pure — adding a strategy is one line:
+Inside the bot, one producer thread per contract pushes 5-second bars into a lock-free SPMC ring; DB and strategy consumers aggregate them independently; the strategy returns a `BarUpdateOutcome`, and the order engine owns placement, FX funding, and reconciliation.
 
-```rust
-// trading/trading-app/src/strategy/strategy.rs:110
-strategy_enum! {
-    Noise(Noise),
-    Manual(Manual),
-    Unknown(Unknown)
-}
-```
+## Quickstart (dev)
 
-For the full reasoning (why sync, the `Handle::block_on` bridge, costs), see [`trading/trading-app/README.md`](trading/trading-app/README.md#threading-model--sync-ibapi).
-
-## The data plane
-
-```mermaid
-flowchart TB
-    IBKR["IBKR TWS"] -->|"5s bars<br/>(sync realtime_bars)"| PROD("⚙ producer thread<br/>(1/contract)")
-    PROD -->|"try_push<br/>(50×, else drop)"| RING[("SPMC ring<br/>Bar, 128, 10<br/>lock-free, cache-aligned")]
-    RING --> DBC("⚙ DB consumer<br/>aggregate_bars → create_or_update(DB)<br/>→ live_prices moka cache")
-    RING --> STRAT("⚙ strategy thread<br/>sort_consumers → spin-pop<br/>aggregate_bars → dispatch_bar<br/>→ on_bar_update (sync)<br/>→ handle_bar_update_outcome")
-
-    style PROD stroke:#dea584,stroke-width:2px
-    style DBC stroke:#dea584,stroke-width:2px
-    style STRAT stroke:#dea584,stroke-width:2px
-    style RING stroke:#dea584,stroke-width:2px
-    style IBKR stroke:#666,stroke-width:2px
-```
-
-## Subsystem tour
-
-Each subsystem is documented in [`trading/trading-app/README.md`](trading/trading-app/README.md) with verified code snippets:
-
-- **[Database & CRUD](trading/trading-app/README.md#database--crud-methods)** — proc-macro derives, generic `CRUD<FK,PK,UK>`, interface enum dispatch, bulk insert. Full schema: [`migrations/README.md`](trading/trading-app/migrations/README.md).
-- **[Execution](trading/trading-app/README.md#execution)** — optimistic order rows (`perm_id=-1`), FX attachments, redb `OrderStore`, order-update stream, startup reconciliation.
-- **[Strategy](trading/trading-app/README.md#strategy)** — `strategy_enum!` macro, `BarUpdateOutcome`, rolling stats, `proportional_integer_reduce`.
-- **[Scheduling](trading/trading-app/README.md#scheduling--pure-helpers)** — three-tier purity model, `HashContract` hash/eq split, `sync_timeout`.
-- **[Lifecycle](trading/trading-app/README.md#lifecycle--self-healing)** — `AppReturnState` restart loop, log-stream-as-control-plane, `IBGateway` non-constructibility, `test_internals` seam.
-- **[Testing](trading/trading-app/README.md#testing)** — 3-tier suite (275 unit / 18 integration / 16 live-IBKR smoke).
-
-## Environment
-
-From [`.env.example`](.env.example):
-
-| Var                                                           | Purpose                                       |
-| ------------------------------------------------------------- | --------------------------------------------- |
-| `TRADING_DB_URL`                                              | Postgres connection string for trading-bot    |
-| `TEST_TRADING_DB_URL`                                         | Separate Postgres for tests (port 5433)       |
-| `ASYNC_TRADING_DB_URL`                                        | Asyncpg connection string (Python backend)    |
-| `DB_USER` / `DB_PW` / `DB_DB`                                 | Postgres credentials (used by docker-compose) |
-| `BACKEND_BEARER_TOKEN`                                        | Bearer token for backend REST API             |
-| `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | LLM provider keys                             |
-| `ALPACA_API_KEY` / `ALPACA_API_SECRET`                        | Alpaca market data keys                       |
-| `TRADING_BOT_URL`                                             | Backend → trading-bot inter-service URL       |
-
-## Build & test
+Prerequisites: Docker Compose v2, a Rust toolchain (edition 2024), and an IBKR paper account.
 
 ```sh
-docker-compose up                    # full stack (IB Gateway + db + all services)
-cd trading-app && cargo check --lib  # type-check the library
+# 1. Configuration
+cp .env.example .env            # set DB_USER / DB_PW / DB_DB and any API keys
+# IB Gateway credentials: edit infra/ib-gateway/IBCMacos-3.20.0/config.ini locally; never commit it
+
+# 2. Start the trading stack (db, IB Gateway, trading-bot, hotpath-console)
+scripts/up.sh trading
+
+# 3. Optionally bring up the API + research services, or everything
+scripts/up.sh platform
+scripts/up.sh all               # trading + platform + monitoring
 ```
 
-Three test binaries in `trading/trading-app/`:
+Ports on the host: `8000` trading-bot, `3000` backend, `8001` llm_service, `4002` IB Gateway (API), `5432` TimescaleDB. Migrations run automatically when the bot starts (`sqlx::migrate!`), so the first boot creates the schema.
 
-| Binary              | Tests                                                 | Needs                   |
-| ------------------- | ----------------------------------------------------- | ----------------------- |
-| `unit_tests`        | 278 tests, green                                      | Nothing (offline)       |
-| `integration_tests` | 168 tests, 18 per-table CRUD + advanced DB ops, green | PostgreSQL              |
-| `smoke_tests`       | 91 tests, 16 components, green                        | IB Gateway + PostgreSQL |
+`compose/README.md` covers dev builds vs prebuilt images, release tags, deployment, and rollback; `scripts/up.sh tests` starts the `test-db` on port `5433`.
+
+## Tests
 
 ```sh
-SQLX_OFFLINE=true cargo test --test unit_tests          # offline, bulk of coverage
-DATABASE_URL=… cargo test --test integration_tests       # needs Postgres
-cargo test --test smoke_tests -- --ignored              # needs live IB Gateway
+cd trading/trading-app
+
+# Offline unit tests (bulk of coverage)
+SQLX_OFFLINE=true cargo test --lib
+
+# Mirrored suites: database, execution, market_data, server, init_app, schedule, helpers
+cargo test --test market_data
+cargo test --test server
+
+# DB-backed suites (needs test-db; it truncates tables between tests)
+TEST_DATABASE_URL=postgres://$DB_USER:$DB_PW@127.0.0.1:5433/$DB_DB \
+  cargo test --test database -- --include-ignored
+TEST_DATABASE_URL=postgres://$DB_USER:$DB_PW@127.0.0.1:5433/$DB_DB \
+  cargo test --test execution -- --include-ignored --skip known_bug
+
+# Backtester (feature-gated)
+cargo test --test backtester --features backtest
 ```
 
-## Known rough edges & debt
+`tests/database` mirrors `src/database` table-by-table plus ops/concurrency suites; `tests/execution` combines Rust tests with JSON scenario suites (order-engine outcomes, syncer passes, event handlers, FX funding). `--skip known_bug` filters tests pinned to known defects.
 
-- **Orphaned/dead files** — `threshold_rebalancing.rs`, `frac_mom_weekly_pos.rs`, `available_funds.rs`, `strategy_scheduler.rs` (non-compiling or commented out).
-- **Forex `read_last_vwap` SQL** references non-existent columns — copy-paste from stock branch.
-- **`IbkrState::async_drop`** consolidator spin-loop is a busy-wait with no sleep — hangs teardown if a clone leaks.
-- **`sync_timeout` leaks threads on timeout** — Rust threads can't be cancelled.
-- **Hardcoded deployment specifics** — paper account id, IBC install path, SGD base currency in source, not env.
-- **Magic numbers** — `$1000` FX tolerance, `MAX_SUB_TRY_TIMES=50`, `HOT_WINDOW=200ms`. Tuned-in-practice, not parameterized.
-- **`order_ref` overloaded as `"{strategy}:{price}"`** — stringly-typed contract with `.expect()` on parse.
-- **FX calendar** uses a minimal 3-holiday set — `nyse-holiday-cal` might be better.
-- **Permission stalls** — `get_current_price` can hang 30-45s per contract; multiply by N option contracts and `PendingDbQuery` can exceed the 1-min FX bar threshold. Check `api/hotpath-console` first.
+## Backtesting
 
-## My journey
+```sh
+cd trading/trading-app
+cargo run --bin backtest --features backtest
+```
 
-For the design memoir — the reasoning behind the architecture, the dead ends, and what I learned building this — see **[My journey →](YOUR_JOURNEY_URL)** on my personal page.
+The binary reads `backtest.json` from the working directory (schema documented at the top of [`src/bin/backtest.rs`](trading/trading-app/src/bin/backtest.rs)). `mode` selects the `db` lane (real TimescaleDB reads/writes, fills at bar close) or the `in_memory` lane (no DB writes); both replay the same strategies.
+
+For research outside Rust, `stratlab` carries the bar/cost/metrics/engine library and the CLI, providing an easy interface for LLMs to work with the architecture design and test, backtest and iterate strategies.
+
+## Where to read next
+
+- [`trading/trading-app/README.md`](trading/trading-app/README.md) — threading model, database/CRUD and transaction layer, execution, lifecycle, testing.
+- [`trading/trading-app/migrations/README.md`](trading/trading-app/migrations/README.md) — the schema: every table, index, trigger, and retention option.
+- [`compose/README.md`](compose/README.md) — stacks, ports, volumes, release/deploy/rollback.
+- [`api/backend/README.md`](api/backend/README.md) — REST routes and how the UI drives strategies.
+- [`stratlab/README.md`](stratlab/README.md) — research workflow, cost model, parity checks, and known gaps.
+
+## Design notes & limits
+
+- **Sync `ibapi` is deliberate** — it forces blocking calls off the async runtime, at the cost of a thread-per-contract model and `Handle::block_on` bridges.
+- **Strategies are private.** Only the framework, the `manual`/`unknown`/`noise` examples, and the public gates are in this repo; real strategies I'm testing/running aren't included.
+- **Paper scale.** Hard-coded SGD base currency and account id, tuned-in-practice constants, and a minimal FX holiday calendar.
+- **Thread leaks on timeout.** `sync_timeout` cannot cancel a wedged Rust thread, and a leaked consolidator reference can stall teardown.
+- **Stringly `order_ref`.** Parked orders carry `"{strategy}:{price}"` conventions parsed at runtime, all orders submitted carry "{strategy}" as order_ref.
+
+## Journal
+
+The design memoir — reasoning, dead ends, and what I learned building this — is at **[My journey →](https://ryantyt.github.io/RTYT/journal/summer-trading-1/)**.
 
 ---
 
